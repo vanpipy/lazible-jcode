@@ -196,12 +196,6 @@ enabled = true
 imported = true
 
 [[launch_hotkeys.entries]]
-chord = "cmd+;"
-dir = "/home/leroy/Project/busyming-qipda"
-label = "busyming-qipda"
-self_dev = false
-
-[[launch_hotkeys.entries]]
 chord = "cmd+'"
 dir = "$HOME"
 label = "home"
