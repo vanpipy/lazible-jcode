@@ -1,0 +1,29 @@
+# secrets / live config (should never reach git)
+# Allow the sanitized config.toml snapshot + example files
+config/*
+!config/*.example
+!config/config.toml
+# But NEVER let a real mcp.json with tokens slip in
+config/mcp.json
+
+# per-skill local overrides (never committed)
+skills/*/SKILL.md.local
+
+# macOS
+.DS_Store
+
+# editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# build artifacts (none here, but be safe)
+target/
+build/
+dist/
+*.log
+
+# shell installer scratch
+*.download
+installer.tmp

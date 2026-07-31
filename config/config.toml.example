@@ -1,0 +1,65 @@
+# Reference ~/.jcode/config.toml
+# Copy this file to ~/.jcode/config.toml and uncomment/edit the sections you want.
+# Anything left commented is the upstream default.
+
+# ── Display ────────────────────────────────────────────────────────────────────
+[display]
+emoji = true                       # set false to strip emoji from TUI/CLI output
+
+# ── Provider defaults ───────────────────────────────────────────────────────────
+[provider]
+# default_provider = "openai-compatible"
+# default_model = "gpt-4o"
+
+# ── Built-in named profile: OpenAI-compatible endpoint ─────────────────────────
+# Each [providers.<name>] block configures an OpenAI-compatible API. The
+# api_key_env field names an environment variable that holds the secret; the
+# env_file field points at a file jcode sources before launching.
+#
+# Then run:
+#   printf '%s' "$MY_KEY" | jcode provider add <name> --base-url ... --model ... \
+#     --api-key-stdin --set-default
+#
+# to create the entry non-interactively.
+
+# [providers.openrouter]
+# type = "openai-compatible"
+# base_url = "https://openrouter.ai/api/v1"
+# api_key_env = "OPENROUTER_API_KEY"
+# default_model = "anthropic/claude-3.5-sonnet"
+
+# [providers.openrouter.models]
+# id = "anthropic/claude-3.5-sonnet"
+# context_window = 200000
+
+# ── Per-model context window override ──────────────────────────────────────────
+# Set this when the endpoint's /v1/models response is missing or wrong, so jcode
+# does not fall back to the generic 200k default.
+
+# [[providers.openrouter.models]]
+# id = "anthropic/claude-3.5-sonnet"
+# context_window = 200000
+
+# ── Extra request-body fields ──────────────────────────────────────────────────
+# Some backends (e.g. NVIDIA NIM DeepSeek-V4) require non-standard top-level
+# fields in the chat/completions body. Use [providers.<name>.extra_body.<key>].
+# Keys here override jcode-generated fields of the same name.
+
+# [providers.nvidia-nim.extra_body.chat_template_kwargs]
+# thinking = true
+# reasoning_effort = "high"
+
+# ── Streaming idle timeout ─────────────────────────────────────────────────────
+# Raise this for slow reasoning models that think silently before emitting.
+
+# [provider]
+# stream_idle_timeout_secs = 240     # default 180; high effort auto-scales to 2x
+
+# ── Memory / ambient mode ──────────────────────────────────────────────────────
+# [memory]
+# enabled = true
+# consolidate_every_turns = 50
+
+# ── Swarm ──────────────────────────────────────────────────────────────────────
+# [swarm]
+# max_concurrent_agents = 4

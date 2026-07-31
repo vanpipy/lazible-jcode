@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "Reference ~/.jcode/mcp.json.",
+    "Both canonical mcpServers and legacy servers keys are accepted.",
+    "jcode currently supports stdio (command-based) servers only; http/sse",
+    "entries are recognized and skipped with a log line.",
+    "On first run, jcode imports MCP servers from ~/.claude.json (falling",
+    "back to ~/.claude/mcp.json) and ~/.codex/config.toml if this file does",
+    "not exist yet."
+  ],
+  "mcpServers": {
+    "filesystem": {
+      "_comment": "Example stdio MCP server. Replace the path with a real binary.",
+      "command": "/path/to/mcp-filesystem-server",
+      "args": ["--root", "/workspace"],
+      "env": {},
+      "shared": true
+    }
+  }
+}
