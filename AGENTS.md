@@ -15,6 +15,13 @@ code lives here.
   real `~/.jcode/skills/` install. Treat them as upstream artifacts: do not
   rewrite their semantics; if a local divergence is needed, add a `local-*`
   skill beside them instead.
+- The `swarm/` directory carries the root session's swarm coordination config
+  (`swarm-prompt.md`) and worker role templates (`roles/<name>.md`). It is
+  **not** a skill (no `SKILL.md` frontmatter, not auto-loaded by trigger). It
+  is the literal prompt content the root session reads when constructing
+  spawn calls. Install it via `skills/copy-from-jcode/copy-from-jcode.sh
+  --install` which symlinks `swarm/swarm-prompt.md` → `~/.jcode/swarm-prompt.md`
+  and `swarm/roles/` → `~/.jcode/roles/`.
 - Config templates under `config/*.example` are **reference only**. Live config
   lives in `~/.jcode/`. Use `skills/copy-from-jcode/copy-from-jcode.sh` to pull
   a machine's `~/.jcode/` into this repo.
@@ -31,11 +38,16 @@ code lives here.
 ## Commit conventions
 
 - One skill per commit when possible.
+- One swarm role per commit is preferred when iterating on a single role's
+  prompt. Bundle multiple roles only when intentionally rotating the whole set.
 - Keep commit subjects under 72 chars; body explains *why*, not *what*.
 - `type(scope): summary` style. e.g. `feat(install): add --dry-run flag`.
 - When porting a skill from upstream jcode, use `chore(skills): import <name>
   from ~/.jcode/skills` and add a one-line note about why (version bump,
   local divergence, etc.).
+- Swarm config (`swarm-prompt.md`, `roles/*.md`) uses `feat(swarm): ...` or
+  `chore(swarm): ...` scope; bundle them with their corresponding script
+  changes when the script depends on the new shape.
 
 ## Things an agent must not do
 

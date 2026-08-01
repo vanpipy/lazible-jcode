@@ -5,15 +5,19 @@
 #   (default)  PULL  ~/.jcode/skills/  →  $REPO_ROOT/skills/
 #   --install  INSTALL  $REPO_ROOT/skills/  →  ~/.jcode/skills/  (symlinks)
 #
+# Swarm config (swarm-prompt.md + roles/*.md) is bundled by default — it
+# contains no secrets and is project-agnostic. Pass --exclude-swarm to skip.
+#
 # Config files (config.toml, mcp.json) are NOT copied by default — they
 # contain per-machine secrets. Pass --include-config / --include-mcp to
 # override, but the script will print a warning.
 #
 # Usage:
-#   copy-from-jcode.sh                       # pull skills
-#   copy-from-jcode.sh --install            # install skills (symlink)
+#   copy-from-jcode.sh                       # pull skills + swarm
+#   copy-from-jcode.sh --install            # install skills + swarm (symlinks)
 #   copy-from-jcode.sh --include-config     # also copy config.toml
 #   copy-from-jcode.sh --include-mcp        # also copy mcp.json
+#   copy-from-jcode.sh --exclude-swarm      # skip swarm config
 #   copy-from-jcode.sh --force              # overwrite existing files
 #   copy-from-jcode.sh --dry-run            # plan only
 #   copy-from-jcode.sh --help
@@ -26,6 +30,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DIRECTION="pull"          # pull | install
 INCLUDE_CONFIG=0
 INCLUDE_MCP=0
+INCLUDE_SWARM=1           # default ON — swarm config is project-agnostic markdown
 FORCE=0
 DRY_RUN=0
 SKIP_SECRETS_CHECK=0
@@ -43,6 +48,8 @@ Direction (choose one):
 Content filters (pull direction only):
   --include-config       Also copy ~/.jcode/config.toml  (warns: may contain secrets)
   --include-mcp          Also copy ~/.jcode/mcp.json     (warns: may contain secrets)
+  --exclude-swarm        Skip swarm config (default is to include it)
+  --include-swarm        Force include swarm config (default is already on)
 
 Behavior:
   --force                Overwrite existing files / replace non-symlinks
@@ -52,6 +59,9 @@ Behavior:
 
 Environment:
   JCODE_HOME             Override ~/.jcode path
+
+By default, swarm config (swarm-prompt.md + roles/*.md) is included in both
+directions. It is project-agnostic markdown, never contains secrets.
 EOF
 }
 
@@ -60,6 +70,8 @@ while [[ $# -gt 0 ]]; do
     --install)        DIRECTION="install"; shift ;;
     --include-config) INCLUDE_CONFIG=1; shift ;;
     --include-mcp)    INCLUDE_MCP=1; shift ;;
+    --include-swarm)  INCLUDE_SWARM=1; shift ;;
+    --exclude-swarm)  INCLUDE_SWARM=0; shift ;;
     --force)          FORCE=1; shift ;;
     --dry-run)        DRY_RUN=1; shift ;;
     --allow-secrets)  SKIP_SECRETS_CHECK=1; shift ;;
@@ -127,6 +139,38 @@ do_pull() {
       info "pulled $name"
       pulled=$((pulled+1))
     done
+  fi
+
+  # ── swarm pull ────────────────────────────────────────────────────────────
+  if [[ "$INCLUDE_SWARM" == "1" ]]; then
+    local src_swarm_prompt="$JCODE_HOME/swarm-prompt.md"
+    local dst_swarm_dir="$REPO_ROOT/swarm"
+    mkdir -p "$dst_swarm_dir/roles"
+
+    if [[ -f "$src_swarm_prompt" ]]; then
+      if [[ -e "$dst_swarm_dir/swarm-prompt.md" ]] && [[ "$FORCE" != "1" ]]; then
+        warn "skip swarm-prompt.md — already in repo (use --force to overwrite)"
+      else
+        run cp "$src_swarm_prompt" "$dst_swarm_dir/swarm-prompt.md"
+        info "pulled swarm-prompt.md"
+      fi
+    fi
+
+    local src_roles="$JCODE_HOME/roles"
+    if [[ -d "$src_roles" ]]; then
+      for role_file in "$src_roles"/*.md; do
+        [[ -f "$role_file" ]] || continue
+        local role_name
+        role_name="$(basename "$role_file")"
+        local dst_role="$dst_swarm_dir/roles/$role_name"
+        if [[ -e "$dst_role" ]] && [[ "$FORCE" != "1" ]]; then
+          warn "skip role $role_name — already in repo (use --force to overwrite)"
+          continue
+        fi
+        run cp "$role_file" "$dst_role"
+        info "pulled role $role_name"
+      done
+    fi
   fi
 
   if [[ "$INCLUDE_CONFIG" == "1" ]]; then
@@ -200,6 +244,70 @@ do_install() {
     info "linked $name → $skill_dir"
     installed=$((installed+1))
   done
+
+  # ── swarm install ─────────────────────────────────────────────────────────
+  if [[ "$INCLUDE_SWARM" == "1" ]] && [[ -d "$REPO_ROOT/swarm" ]]; then
+    install_swarm_file() {
+      local src="$1" dst="$2" label="$3"
+      [[ -f "$src" ]] || return 0
+      if [[ -L "$dst" ]]; then
+        local link_target
+        link_target="$(readlink "$dst")"
+        if [[ "$link_target" == "$src" ]]; then
+          info "already linked $label → $src"
+          skipped=$((skipped+1)); return 0
+        fi
+        if [[ "$FORCE" != "1" ]]; then
+          warn "skip $label — symlink points elsewhere: $link_target"
+          skipped=$((skipped+1)); return 0
+        fi
+        run rm -f "$dst"
+      elif [[ -e "$dst" ]]; then
+        if [[ "$FORCE" != "1" ]]; then
+          warn "skip $label — $dst exists and is not a symlink"
+          skipped=$((skipped+1)); return 0
+        fi
+        run rm -f "$dst"
+      fi
+      run ln -s "$src" "$dst"
+      info "linked $label → $src"
+      installed=$((installed+1))
+    }
+
+    install_swarm_dir() {
+      local src="$1" dst="$2" label="$3"
+      [[ -d "$src" ]] || return 0
+      if [[ -L "$dst" ]]; then
+        local link_target
+        link_target="$(readlink "$dst")"
+        if [[ "$link_target" == "$src" ]]; then
+          info "already linked $label → $src"
+          skipped=$((skipped+1)); return 0
+        fi
+        if [[ "$FORCE" != "1" ]]; then
+          warn "skip $label — symlink points elsewhere: $link_target"
+          skipped=$((skipped+1)); return 0
+        fi
+        run rm -f "$dst"
+      elif [[ -e "$dst" ]]; then
+        if [[ "$FORCE" != "1" ]]; then
+          warn "skip $label — $dst exists and is not a symlink"
+          skipped=$((skipped+1)); return 0
+        fi
+        run rm -rf "$dst"
+      fi
+      run ln -s "$src" "$dst"
+      info "linked $label → $src"
+      installed=$((installed+1))
+    }
+
+    install_swarm_file "$REPO_ROOT/swarm/swarm-prompt.md" \
+                       "$JCODE_HOME/swarm-prompt.md" \
+                       "swarm-prompt.md"
+    install_swarm_dir  "$REPO_ROOT/swarm/roles" \
+                       "$JCODE_HOME/roles" \
+                       "roles/"
+  fi
 
   info "installed=$installed skipped=$skipped"
 }

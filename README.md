@@ -42,6 +42,15 @@ lazible-jcode/
 │   │   └── SKILL.md                   # Copied from a live ~/.jcode/skills
 │   └── rn-dev/
 │       └── SKILL.md                   # Copied from a live ~/.jcode/skills
+├── swarm/                              # Generic swarm coordination + worker role templates
+│   ├── swarm-prompt.md                 # Bundled root-session prompt (becomes ~/.jcode/swarm-prompt.md)
+│   └── roles/                          # Worker persona templates (reviewer, implementer, ...)
+│       ├── reviewer.md
+│       ├── implementer.md
+│       ├── investigator.md
+│       ├── migrator.md
+│       ├── test-writer.md
+│       └── doc-writer.md
 ├── scripts/
 │   ├── install.sh                     # Repo-level installer (mirrors jcode.sh/install)
 │   ├── uninstall.sh
@@ -91,11 +100,30 @@ skill-role: guidance
 ---
 ```
 
+## Swarm config
+
+The `swarm/` directory carries the root session's swarm coordination rules and
+six worker role templates. Unlike `skills/`, this is **not** workflow guidance
+the model triggers on; it is the literal prompt + persona content the root
+session reads when constructing spawn calls.
+
+- `swarm/swarm-prompt.md` — project-agnostic guidance for the root session and
+  every spawned worker (model routing, when to spawn, communication discipline,
+  verification gates). Installed to `~/.jcode/swarm-prompt.md`.
+- `swarm/roles/*.md` — six persona templates (`reviewer`, `implementer`,
+  `investigator`, `migrator`, `test-writer`, `doc-writer`). Installed as
+  `~/.jcode/roles/*.md`.
+
+Sync both directions with `skills/copy-from-jcode/copy-from-jcode.sh` (default
+behavior). The `--exclude-swarm` flag skips swarm handling if a project wants
+only skills.
+
 ## What is and isn't committed
 
 | File / dir | Committed? | Why |
 |---|---|---|
 | `skills/<name>/SKILL.md` | ✅ | Skills are pure markdown; safe |
+| `swarm/**/*.md` | ✅ | Generic swarm config + role templates; no secrets, no per-project state |
 | `config/*.example` | ✅ | Reference only, no secrets |
 | `config/config.toml` | ✅ | Live snapshot; no API keys live here, only model names and keybindings |
 | `config/mcp.json` | ❌ | Contains live MCP server tokens — **must remain local** |

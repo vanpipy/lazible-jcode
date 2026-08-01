@@ -1,6 +1,6 @@
 ---
 name: copy-from-jcode
-description: Use when the user wants to snapshot their live jcode config (~/.jcode/) into the lazible-jcode repo, or sync installed skills from the system into the repo's skills/ directory. Also handles the reverse: install the repo's skills into ~/.jcode/skills/.
+description: Use when the user wants to snapshot their live jcode config (~/.jcode/) into the lazible-jcode repo, or sync installed skills from the system into the repo's skills/ directory. Also handles the reverse: install the repo's skills into ~/.jcode/skills/. By default, also syncs the swarm config (~/.jcode/swarm-prompt.md + ~/.jcode/roles/) to the repo's swarm/ directory and back; pass --exclude-swarm to skip.
 allowed-tools: bash, read, write, edit, agentgrep, todo
 ---
 
@@ -57,14 +57,18 @@ Run the companion script:
 
 Behavior:
 
+- Copies every `SKILL.md` from `$JCODE_HOME/skills/*/SKILL.md` into
+  `$REPO_ROOT/skills/<name>/SKILL.md`. This is the safe default because
+  skills contain no secrets.
+- Copies swarm config by default (no secrets, project-agnostic):
+  - `$JCODE_HOME/swarm-prompt.md` → `$REPO_ROOT/swarm/swarm-prompt.md`
+  - `$JCODE_HOME/roles/*.md` → `$REPO_ROOT/swarm/roles/<name>.md`
+  Pass `--exclude-swarm` to skip.
 - Copies `$JCODE_HOME/config.toml` to `$REPO_ROOT/config/config.toml` only if
   the user passes `--include-config`. Default: skipped (config contains
   secrets + per-machine provider IDs).
 - Copies `$JCODE_HOME/mcp.json` to `$REPO_ROOT/config/mcp.json` only with
   `--include-mcp`. Default: skipped.
-- Copies every `SKILL.md` from `$JCODE_HOME/skills/*/SKILL.md` into
-  `$REPO_ROOT/skills/<name>/SKILL.md`. This is the safe default because
-  skills contain no secrets.
 - Files in `$REPO_ROOT/skills/` that are not present in `$JCODE_HOME/skills/`
   are left alone (this repo can carry skills not yet installed locally).
 
@@ -81,6 +85,10 @@ Behavior:
 - For each subdirectory of `$REPO_ROOT/skills/` that contains a `SKILL.md`,
   create a symlink at `$JCODE_HOME/skills/<name>` pointing to
   `$REPO_ROOT/skills/<name>`.
+- Symlink swarm config when present in the repo:
+  - `$REPO_ROOT/swarm/swarm-prompt.md` → `$JCODE_HOME/swarm-prompt.md`
+  - `$REPO_ROOT/swarm/roles/` → `$JCODE_HOME/roles/`
+  Pass `--exclude-swarm` to skip.
 - Skip already-symlinked entries (idempotent).
 - Refuse to overwrite a real directory unless `--force`.
 
