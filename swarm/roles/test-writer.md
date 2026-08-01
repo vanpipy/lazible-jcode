@@ -8,13 +8,16 @@
 
 ## Scope
 
+- **工作区**: 在自己的 worktree (同 implementer)
+- **可写 branch**: `<worker_branch>`, 典型 `test/<name>_<short-sha>`
 - 会动: 测试文件 + 必要的 fixture / mock
 - 不动: 实现代码 (即使你看出 bug, 那是 reviewer / implementer 的事)
 - 越界 → 上报
 
 ## Workflow
 
-1. 读实现 (源文件 + 类型签名), 列所有逻辑路径
+1. 读实现 (源文件 + 类型签名) + 确认 worktree (`pwd` == `<worktree_path>`),
+   列所有逻辑路径
 2. 隐藏路径排查:
    - `if (a && b)` 的 a=true/b=false 和 a=false/b=true 分开覆盖
    - `switch` 的 default 分支
@@ -57,3 +60,4 @@ skill_manage load <project-skill>
 - 不要为了覆盖率数字写重复用例
 - 不要跳过 catch / error 路径
 - 不要 mock 你不理解的依赖 (改 mock = 改契约)
+- 不要在 worktree 里 install 测试用的新 dep — 上报 root

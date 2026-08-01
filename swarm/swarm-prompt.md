@@ -148,9 +148,15 @@ Each spawned worker owns a **tight, named scope**:
   artifact's `open_questions[]` rather than editing it.
 - Conflicts with another in-flight worker → do not stomp. Report the conflict
   with file paths and let the root session arbitrate.
+- **Workspace isolation**: each worker operates in its own git worktree at
+  `$TMPDIR/swarm-$USER/<repo>-<short-sha>/wt-<label>/`. The root session
+  **never** enters a worker worktree. Cross-worker reading happens via
+  `git show <branch>:<file>` or `git diff main..<branch>`. Spawn prompts MUST
+  include the worktree path, base commit SHA, and worker branch.
 
 Multiple workers editing the same file is allowed **only** if their changes are
-on non-overlapping lines. When in doubt, serialize.
+on non-overlapping lines **and** they operate in separate worktrees. When in
+doubt, serialize.
 
 ---
 
@@ -228,3 +234,67 @@ Facts that do **not** belong in memory:
 - Implementation details of a single task (use the artifact instead).
 - Anything derivable from the codebase in < 30 seconds.
 - Anything secret / credential-shaped.
+
+---
+
+## 11. Workspace isolation via git worktree
+
+Swarms above ~2 concurrent workers collide on shared working trees (silent
+`git add` loss, `git status` cross-contamination, half-baked mixed reads).
+The fix: each worker gets a dedicated git worktree. Root session integrates.
+
+### Topology
+
+```
+main worktree (root session, integration only)
+$TMPDIR/swarm-$USER/<repo>-<short-sha>/
+    ├── wt-<label-1>/  ← worker 1
+    └── wt-<label-2>/  ← worker 2
+```
+
+### Allocation
+
+- **1 worker : 1 worktree**, no sharing, no nesting
+- Path: `$TMPDIR/swarm-$USER/<repo>-<short-sha>/wt-<label>/`
+  - `$TMPDIR` falls back to `/tmp` on Linux; per-user on macOS; `%TEMP%` on Windows
+  - `<short-sha>` = base commit 7-char SHA (fork origin)
+- Branch: `feat/<name>_<short-sha>` / `fix/<name>_<short-sha>` /
+  `chore|docs|refactor|test/<name>_<short-sha>`. Same `<short-sha>` across
+  same-origin workers.
+- **Root session never enters a worker worktree.**
+
+### Lifecycle
+
+- Spawn: root builds worktree + branch + dep symlinks **before** handing off prompt
+- `ready`: worktree + branch persist
+- `blocked`: worktree persists for inspection
+- Root merge success: `git worktree remove` + `git branch -D`
+- Worker timeout / abort: worktree persists for **8 hours**, cleaned by root
+  before next spawn (`.jcode/worktree-manifest.json` is the source of truth)
+
+### Dependency link (manual, not install)
+
+Workers **never run package managers** (pnpm / yarn / cocoapods may be
+missing). Symlink heavy in-repo deps from main worktree; rely on user-level
+caches for the rest.
+
+- `node_modules`, `ios/Pods`, similar heavy in-repo dirs: symlink from main
+- `~/.gradle`, npm cache, `~/.cargo`: already shared, no action
+- New dep needed: worker reports via `open_questions[]`, root installs in
+  main, worker re-links. **Never** install inside worker worktree.
+
+### Cross-worker visibility
+
+Default: invisible. Workers see only base commit state.
+
+When worker A needs worker B's output: A reports `open_questions[]`, root
+decides to merge B → base → rebase A, or serialize.
+
+Workers **never merge each other directly** — that pollutes history with
+noise commits.
+
+### Fallback
+
+Spawn context without `.git/`: skip worktree allocation, worker uses root
+cwd. swarm-prompt must flag this fallback explicitly, never pretend a
+worktree exists.

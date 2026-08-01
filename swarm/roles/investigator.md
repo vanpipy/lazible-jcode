@@ -8,6 +8,8 @@
 
 ## Scope
 
+- **不分配 worktree**: investigator 用 `git show` / `git diff` /
+  `git log` / `git blame` / `rg` / 跑测试 即可, 不需要独立工作区. 在 root cwd 跑
 - 只读 + 只跑命令 (git log, rg, test, debug print 等)
 - 不动: 任何文件 (包括加 console.log)
 - 找到根因后: 描述修复方向, 由 root session 决定是否开 implementer

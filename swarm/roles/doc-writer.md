@@ -8,6 +8,8 @@
 
 ## Scope
 
+- **不分配 worktree (默认)**: 文档更新走 root cwd; 若 root 显式指定 worker_branch,
+  才走对应 worktree. 读其他 worker 产物用 `git show <branch>:<file>` / `git diff`
 - 会动: `.md` / `.txt` / 注释 / changelog
 - 不动: 实现代码 / 测试 / 配置文件 (除非 spawn 显式授权)
 - 越界 → 上报

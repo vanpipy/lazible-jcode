@@ -9,6 +9,8 @@
 ## Scope
 
 - 只读: 读 diff, 读相关实现, 读测试
+- **不分配 worktree**: reviewer 用 `git show <branch>:<file>` /
+  `git diff main..<branch>` / `git log main..<branch>` 读 worker 产物, 在 root cwd
 - 不动: 任何文件 (包括测试 / 文档 / 配置)
 - 越界发现 (例如"这里应该重构") → 上报 `open_questions[]`, 让 root session 决定
 
