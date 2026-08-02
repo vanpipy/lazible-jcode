@@ -174,6 +174,36 @@ If questions 1 and 2 both say "spawn", spawn. Always pass `label`,
 `model`, `effort`, worktree path, base SHA, and worker branch on the
 spawn call (see §4 below).
 
+### Worker timeout policy
+
+Workers stall in three ways: (a) genuinely thinking, (b) waiting on a
+long-running test, (c) stuck in a tool-call loop. Root's default is to
+**wait passively up to a threshold, then escalate**.
+
+| Time since last signal                  | Action                                   |
+| --------------------------------------- | ---------------------------------------- |
+| < 5 min, file mtimes moving             | Wait. Do not dm.                         |
+| 5–15 min, slow but moving               | Wait. Optional dm: "still progressing?"  |
+| 15–30 min, no file mtime movement       | **dm** with "commit or report failure". If no response in 60 s, stop and respawn. |
+| > 30 min                                | **stop**, mark failed in manifest, respawn with same `task_id`. If the same task fails twice, split it. |
+
+Signals to watch:
+
+- `git -C <worktree_path> log -1 --format=%ct` (latest commit timestamp)
+- `find <worktree_path> -type f -newer <baseline> -not -path '*/__pycache__/*'` (file mtime since last commit)
+- `swarm status <worker_session>` (worker liveness)
+- The worker's typed artifact, if any (use as the truth signal)
+
+Anti-patterns:
+
+- Don't poll `swarm status` more than once per minute — the runtime
+  doesn't update faster than that.
+- Don't keep waiting past 30 min — long thinking is real, but
+  silent thinking past the threshold is more often a stuck loop.
+- Don't respawn without first reading the worker's last `validation`
+  output — it may already have everything you need.
+- Don't `dm` more than once per stuck episode; multiple dms are noise.
+
 **Code implementation routing rule (hard)** — for any code-implementation
 work, the main agent **must not** edit code in the main session. Spawn an
 `implementer` worker and prepend the entire body of
