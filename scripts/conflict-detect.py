@@ -70,6 +70,30 @@ DEFAULT_LOCKFILE_PATTERNS: list[str] = [
 #: `.jcode/conflict-config.yaml` -> `heartbeat_ttl_seconds:`.
 DEFAULT_HEARTBEAT_TTL_SECONDS: int = 8 * 60 * 60  # 8 hours
 
+#: Default severity escalation thresholds for `suggest_serialization`. When a
+#: non-lockfile file is shared by `N` tasks, the emitted conflict's severity
+#: escalates:
+#:     N <  major          -> minor (parallel ok with rebase)
+#:     major <= N < blocker -> major
+#:     N >= blocker        -> blocker
+#: Override via `.jcode/conflict-config.yaml` -> `severity_threshold_n:`.
+DEFAULT_SEVERITY_THRESHOLD_N: dict[str, int] = {"major": 4, "blocker": 6}
+
+#: Default cleanup patterns for `cleanup_worktree_artifacts`. A worktree's
+#: uncommitted changes whose path matches one of these globs are deleted
+#: rather than staged; everything else is staged with `git add`.
+#: Override via `.jcode/conflict-config.yaml` -> `cleanup_patterns:`.
+DEFAULT_CLEANUP_PATTERNS: list[str] = [
+    "__pycache__/",
+    "*.bak.*",
+    "*.pyc",
+    "*.tmp",
+]
+
+#: Closed set of `prefer_side` values accepted by `resolve_conflict_hunks`.
+#: `intersection` = `git merge --union` style; keep both sides' hunks.
+VALID_PREFER_SIDES: tuple[str, ...] = ("worker", "main", "newer", "intersection")
+
 #: Manifest schema — every entry must have these keys.
 _MANIFEST_REQUIRED_KEYS: tuple[str, ...] = (
     "wt_path", "branch", "pid", "started_at", "last_heartbeat",
@@ -137,8 +161,10 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
     """Parse a tiny YAML subset sufficient for `.jcode/conflict-config.yaml`.
 
     Supports: `key: scalar`, `key:` followed by indented `- item` list,
-    `#` comments, quoted strings, ints, bools, null. Anything fancier
-    (anchors, multi-line strings, flow style) is unsupported.
+    `key:` followed by indented nested mapping (`key: value` lines at deeper
+    indent), `#` comments, quoted strings, ints, bools, null. Also accepts
+    flow-style `{k: v, k: v}` for scalar-value dicts. Anything fancier
+    (anchors, multi-line strings, mixed flow + block) is unsupported.
     """
     # Pass 1: collect (indent, text) for non-blank, non-comment lines.
     raw_lines: list[tuple[int, str]] = []
@@ -165,6 +191,68 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
             pos[0] += 1
         return items
 
+    def parse_mapping(indent: int) -> dict[str, Any]:
+        """Parse a block-style mapping at `indent` depth.
+
+        Each key at the same indent may be:
+          - `key: scalar`
+          - `key:` followed by an indented list (`- item`)
+          - `key:` followed by an indented nested mapping (`k: v` lines)
+        The recursive call resumes from the deeper indent and consumes
+        only that subtree.
+        """
+        out: dict[str, Any] = {}
+        while pos[0] < len(raw_lines):
+            cur_indent, cur_text = raw_lines[pos[0]]
+            if cur_indent < indent:
+                break
+            if cur_indent > indent:
+                # Should not happen at top-of-loop; defensive break.
+                break
+            if ":" not in cur_text:
+                pos[0] += 1
+                continue
+            key, _, value = cur_text.partition(":")
+            key = key.strip()
+            value = value.strip()
+            pos[0] += 1
+            if value:
+                out[key] = _coerce(value)
+                continue
+            # Value spans multiple lines: look ahead to decide list vs mapping.
+            if pos[0] < len(raw_lines):
+                next_indent, next_text = raw_lines[pos[0]]
+                if next_indent > indent:
+                    if next_text.startswith("- "):
+                        out[key] = parse_list(next_indent)
+                    else:
+                        out[key] = parse_mapping(next_indent)
+                else:
+                    out[key] = None
+            else:
+                out[key] = None
+        return out
+
+    def parse_flow_dict(s: str) -> dict[str, Any]:
+        """Parse a single-line `{k: v, k: v}` flow-style mapping.
+
+        Supports only scalar values (int / bool / string). Used so that
+        `severity_threshold_n: {major: 4, blocker: 6}` from the spec works.
+        """
+        s = s.strip()
+        if s.startswith("{") and s.endswith("}"):
+            s = s[1:-1]
+        out: dict[str, Any] = {}
+        for part in s.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if ":" not in part:
+                continue
+            k, _, v = part.partition(":")
+            out[k.strip()] = _coerce(v.strip())
+        return out
+
     result: dict[str, Any] = {}
     while pos[0] < len(raw_lines):
         indent, text = raw_lines[pos[0]]
@@ -178,13 +266,19 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
         value = value.strip()
         pos[0] += 1
         if value:
-            result[key] = _coerce(value)
+            # Flow-style nested dict? e.g. `severity_threshold_n: {major: 4}`.
+            if value.startswith("{"):
+                result[key] = parse_flow_dict(value)
+            else:
+                result[key] = _coerce(value)
         else:
             # Look ahead: if next line starts with `- ` at deeper indent, list.
             if pos[0] < len(raw_lines):
                 next_indent, next_text = raw_lines[pos[0]]
                 if next_indent > indent and next_text.startswith("- "):
                     result[key] = parse_list(next_indent)
+                elif next_indent > indent:
+                    result[key] = parse_mapping(next_indent)
                 else:
                     result[key] = None
             else:

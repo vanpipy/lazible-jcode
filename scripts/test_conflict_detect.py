@@ -671,5 +671,150 @@ class TestExecutionOrder(unittest.TestCase):
         self.assertEqual(out["conflicts"][0]["severity"], "blocker")
 
 
+# ---------------------------------------------------------------------------
+# R19 gap 8: per-repo config schema (.jcode/conflict-config.yaml)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigSchema(unittest.TestCase):
+    """R19 gap 8: parse the four new config fields from .jcode/conflict-config.yaml.
+
+    Fields:
+        guardian_files        — list[str]. Files any worker touching should
+                                trigger scope-drift = blocker.
+        severity_threshold_n  — dict[str, int]. Map {major: N, blocker: N}
+                                where N is the worker-count threshold at which
+                                `suggest_serialization` escalates severity.
+        prefer_side           — str. Default side for `resolve_conflict_hunks`.
+                                One of: worker / main / newer / intersection.
+        cleanup_patterns      — list[str]. Glob patterns for
+                                `cleanup_worktree_artifacts` (delete vs add).
+    """
+
+    def _write_cfg(self, text):
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", delete=False
+        ) as f:
+            f.write(text)
+            return f.name
+
+    def test_config_loaded_with_default_thresholds(self):
+        # Empty config => defaults are applied by the consumer (severity_threshold_n,
+        # cleanup_patterns). This test only asserts the loader does not crash.
+        path = self._write_cfg("# empty config\n")
+        try:
+            cfg = cd.load_config(path)
+        finally:
+            os.unlink(path)
+        self.assertIsInstance(cfg, dict)
+
+    def test_config_guardian_files_parsed(self):
+        cfg_text = (
+            "guardian_files:\n"
+            "  - AGENTS.md\n"
+            "  - README.md\n"
+            "  - .jcode/prompt-overlay.md\n"
+        )
+        path = self._write_cfg(cfg_text)
+        try:
+            cfg = cd.load_config(path)
+        finally:
+            os.unlink(path)
+        self.assertIn("guardian_files", cfg)
+        self.assertEqual(
+            sorted(cfg["guardian_files"]),
+            [".jcode/prompt-overlay.md", "AGENTS.md", "README.md"],
+        )
+
+    def test_config_severity_threshold_n_parsed(self):
+        cfg_text = (
+            "severity_threshold_n:\n"
+            "  major: 4\n"
+            "  blocker: 6\n"
+        )
+        path = self._write_cfg(cfg_text)
+        try:
+            cfg = cd.load_config(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(
+            cfg["severity_threshold_n"], {"major": 4, "blocker": 6}
+        )
+
+    def test_config_prefer_side_parsed(self):
+        cfg_text = "prefer_side: newer\n"
+        path = self._write_cfg(cfg_text)
+        try:
+            cfg = cd.load_config(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(cfg["prefer_side"], "newer")
+
+    def test_config_cleanup_patterns_parsed(self):
+        cfg_text = (
+            "cleanup_patterns:\n"
+            "  - __pycache__/\n"
+            "  - '*.bak.*'\n"
+            "  - '*.pyc'\n"
+            "  - '*.tmp'\n"
+        )
+        path = self._write_cfg(cfg_text)
+        try:
+            cfg = cd.load_config(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(
+            cfg["cleanup_patterns"],
+            ["__pycache__/", "*.bak.*", "*.pyc", "*.tmp"],
+        )
+
+    def test_default_severity_thresholds_constant(self):
+        # The framework must publish a module-level default for severity
+        # escalation thresholds. R19 spec: {major: 4, blocker: 6}.
+        self.assertTrue(hasattr(cd, "DEFAULT_SEVERITY_THRESHOLD_N"))
+        self.assertEqual(
+            cd.DEFAULT_SEVERITY_THRESHOLD_N, {"major": 4, "blocker": 6}
+        )
+
+    def test_default_cleanup_patterns_constant(self):
+        # Cleanup patterns must have a sane default. R19 spec lists these 4.
+        self.assertTrue(hasattr(cd, "DEFAULT_CLEANUP_PATTERNS"))
+        self.assertIn("__pycache__/", cd.DEFAULT_CLEANUP_PATTERNS)
+        self.assertIn("*.bak.*", cd.DEFAULT_CLEANUP_PATTERNS)
+        self.assertIn("*.pyc", cd.DEFAULT_CLEANUP_PATTERNS)
+        self.assertIn("*.tmp", cd.DEFAULT_CLEANUP_PATTERNS)
+
+    def test_valid_prefer_sides_constant(self):
+        # resolve_conflict_hunks accepts 4 sides; the framework must publish
+        # the closed set so callers can validate before invoking.
+        self.assertTrue(hasattr(cd, "VALID_PREFER_SIDES"))
+        self.assertEqual(
+            sorted(cd.VALID_PREFER_SIDES),
+            ["intersection", "main", "newer", "worker"],
+        )
+
+    def test_example_config_file_parses(self):
+        # The shipped `.jcode/conflict-config.yaml.example` must be a valid
+        # input to `load_config` — any drift between example and parser is
+        # a documentation bug that should fail CI.
+        example_path = (
+            Path(__file__).resolve().parent.parent
+            / ".jcode"
+            / "conflict-config.yaml.example"
+        )
+        self.assertTrue(example_path.is_file(), f"missing {example_path}")
+        cfg = cd.load_config(example_path)
+        # The four R19 fields must be present in the example.
+        self.assertIn("guardian_files", cfg)
+        self.assertIn("severity_threshold_n", cfg)
+        self.assertIn("prefer_side", cfg)
+        self.assertIn("cleanup_patterns", cfg)
+        # Spot-check a few values to make sure the example demonstrates them.
+        self.assertIn("AGENTS.md", cfg["guardian_files"])
+        self.assertEqual(cfg["severity_threshold_n"], {"major": 4, "blocker": 6})
+        self.assertEqual(cfg["prefer_side"], "newer")
+        self.assertIn("__pycache__/", cfg["cleanup_patterns"])
+
+
 if __name__ == "__main__":
     unittest.main()
