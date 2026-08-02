@@ -103,9 +103,29 @@ JCODE_HOME="${JCODE_HOME:-$HOME/.jcode}"
 INSTALL_DIR="${JCODE_INSTALL_DIR:-$HOME/.local/bin}"
 TIMESTAMP="$(date +%s)"
 
+# IDEMPOTENT opt-in env var. When set to a non-zero, non-empty value, the
+# symlink steps (2/3/4) skip already-correct links instead of backing them up
+# and overwriting. Default 0 preserves the original "overwrite unconditionally"
+# behavior. The jcode binary install (step 1) is not affected: that step still
+# always runs and is handled by the upstream installer / canary builder, which
+# already has its own mtime + version-pin logic.
+IDEMPOTENT="${IDEMPOTENT:-0}"
+
 info()  { printf '\033[1;34m%s\033[0m\n' "$*"; }
 warn()  { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
 err()   { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Returns 0 (true) if $dst is a symlink that already resolves to the same
+# canonical target as $src (compared via `readlink -f`). Returns 1 otherwise.
+# Only consulted when IDEMPOTENT=1; the unconditional path ignores this.
+is_same_link() {
+  local src="$1" dst="$2"
+  [[ -L "$dst" ]] || return 1
+  local src_real dst_real
+  src_real="$(readlink -f "$src" 2>/dev/null)" || return 1
+  dst_real="$(readlink -f "$dst" 2>/dev/null)" || return 1
+  [[ "$src_real" == "$dst_real" ]]
+}
 
 # Overwrite a file or symlink unconditionally. If dst exists (regular file,
 # symlink, or directory), back it up to <dst>.bak.<ts> first. If dst does not
