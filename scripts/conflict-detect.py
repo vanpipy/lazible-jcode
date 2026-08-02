@@ -997,15 +997,21 @@ def suggest_serialization(
         3. If history is empty: minor remediation ("parallel OK; root
            should rebase after merge") — disjoint line overlap is
            safe to parallelise as long as the operator rebases.
+        4. R19 gap 3: severity escalates by worker count using
+           `severity_threshold_n` (default {major: 4, blocker: 6}):
+               N < major    -> minor
+               N >= major   -> major
+               N >= blocker -> blocker
 
     Args:
         conflicting_tasks — Tasks whose scope_files overlap.
         repo_path         — Filesystem path to the repo root for git log.
-        config            — Optional config dict (lockfile_files, ignored_paths).
+        config            — Optional config dict (lockfile_files,
+                            ignored_paths, severity_threshold_n).
 
     Returns:
         list[Conflict]; one entry per shared file. Blockers for lockfiles,
-        minors otherwise.
+        minors otherwise (escalated per threshold config).
     """
     cfg = config or {}
     patterns = list(DEFAULT_LOCKFILE_PATTERNS)
@@ -1015,6 +1021,16 @@ def suggest_serialization(
     ignored = cfg.get("ignored_paths") or []
     if not isinstance(ignored, list):
         ignored = []
+    thresholds = dict(DEFAULT_SEVERITY_THRESHOLD_N)
+    cfg_thresh = cfg.get("severity_threshold_n")
+    if isinstance(cfg_thresh, dict):
+        for k, v in cfg_thresh.items():
+            try:
+                thresholds[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+    major_n = int(thresholds.get("major", 4))
+    blocker_n = int(thresholds.get("blocker", 6))
 
     file_to_tasks: dict[str, list[str]] = {}
     for t in conflicting_tasks:
@@ -1028,7 +1044,8 @@ def suggest_serialization(
     conflicts: list[Conflict] = []
     for path, owners in file_to_tasks.items():
         unique_owners = sorted(set(owners))
-        if len(unique_owners) < 2:
+        n_owners = len(unique_owners)
+        if n_owners < 2:
             continue
         evidence = [f"{o}: {path}" for o in unique_owners]
         if _matches_lockfile(path, patterns):
@@ -1038,7 +1055,7 @@ def suggest_serialization(
                     category="serialization_lockfile",
                     summary=(
                         f"lockfile contention: '{path}' touched by "
-                        f"{len(unique_owners)} tasks ({', '.join(unique_owners)})"
+                        f"{n_owners} tasks ({', '.join(unique_owners)})"
                     ),
                     evidence=evidence,
                     remediation=(
@@ -1049,7 +1066,14 @@ def suggest_serialization(
             )
             continue
 
-        # Non-lockfile: check git history for recent activity.
+        # Non-lockfile: pick severity by worker count, then check git history.
+        if n_owners >= blocker_n:
+            severity = "blocker"
+        elif n_owners >= major_n:
+            severity = "major"
+        else:
+            severity = "minor"
+        evidence.append(f"N={n_owners}")
         log_out = _run_git(
             repo_path, "log", "--oneline", "-20", "--", path
         )
@@ -1057,10 +1081,10 @@ def suggest_serialization(
         if not recent_commits:
             conflicts.append(
                 Conflict(
-                    severity="minor",
+                    severity=severity,
                     category="serialization_overlap",
                     summary=(
-                        f"shared file '{path}' across {len(unique_owners)} "
+                        f"shared file '{path}' across {n_owners} "
                         f"tasks with no recent commit history"
                     ),
                     evidence=evidence,
@@ -1074,11 +1098,11 @@ def suggest_serialization(
             evidence.append(f"recent_commits={len(recent_commits)}")
             conflicts.append(
                 Conflict(
-                    severity="minor",
+                    severity=severity,
                     category="serialization_overlap",
                     summary=(
-                        f"shared file '{path}' across {len(unique_owners)} "
-                        f"tasks; order by git history recency"
+                        f"shared file '{path}' across {n_owners} tasks; "
+                        f"order by git history recency"
                     ),
                     evidence=evidence,
                     remediation=(
