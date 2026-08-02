@@ -1208,5 +1208,159 @@ class TestMergeStrategyDataclass(unittest.TestCase):
         self.assertEqual(m.commands, ["git merge --ff-only feat/x"])
 
 
+# ---------------------------------------------------------------------------
+# R19 gap 2: detect_branch_ancestry — classify branches by ancestry
+# ---------------------------------------------------------------------------
+
+
+class TestDetectBranchAncestry(unittest.TestCase):
+    """R19 gap 2: classify a set of branches by their git ancestry.
+
+    Output (BranchAncestry dataclass):
+        parents         — dict[branch -> parent_branch or None].
+        chains          — list of linear chains in topological order.
+                          `chains[i][-1]` is the leaf of each chain.
+        already_merged  — list of branches whose tip is reachable from base.
+        parallel_groups — list of branch sets that share a merge-base but
+                          have no ancestor relation to each other.
+    """
+
+    def _stub_ancestry(self, ancestry_pairs):
+        """Stub `git merge-base --is-ancestor a b` for a list of (a, b) pairs."""
+        ancestors = set(tuple(p) for p in ancestry_pairs)
+        def fake_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            # cmd layout: ["git", "-C", repo, "merge-base", "--is-ancestor", a, b]
+            if "merge-base" in cmd and "--is-ancestor" in cmd:
+                ai = cmd.index("--is-ancestor")
+                a, b = cmd[ai + 1], cmd[ai + 2]
+                ok = (a, b) in ancestors
+                return mock.Mock(returncode=0 if ok else 1, stdout="", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return fake_run
+
+    def test_empty_branches_returns_empty(self):
+        result = cd.detect_branch_ancestry(branches=[], base="main", repo_root="/tmp/repo")
+        self.assertEqual(result.chains, [])
+        self.assertEqual(result.already_merged, [])
+        self.assertEqual(result.parents, {})
+
+    def test_single_branch_one_chain(self):
+        # No ancestry info -> single branch forms its own chain of length 1.
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", side_effect=self._stub_ancestry([])
+        ):
+            result = cd.detect_branch_ancestry(
+                branches=["feat/A"], base="main", repo_root="/tmp/repo"
+            )
+        self.assertEqual(len(result.chains), 1)
+        self.assertEqual(result.chains[0], ["feat/A"])
+        self.assertEqual(result.parents["feat/A"], None)
+
+    def test_chain_a_ancestor_of_b(self):
+        # A is ancestor of B => one chain [A, B].
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_ancestry([("feat/A", "feat/B")]),
+        ):
+            result = cd.detect_branch_ancestry(
+                branches=["feat/A", "feat/B"], base="main", repo_root="/tmp/repo"
+            )
+        # Both end up in one chain.
+        all_branches = [b for chain in result.chains for b in chain]
+        self.assertEqual(sorted(all_branches), ["feat/A", "feat/B"])
+        # Parent map: A has no parent (None), B's parent is A.
+        self.assertIsNone(result.parents["feat/A"])
+        self.assertEqual(result.parents["feat/B"], "feat/A")
+
+    def test_three_branch_chain(self):
+        # A -> B -> C (A ancestor of B, B ancestor of C).
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_ancestry([
+                ("feat/A", "feat/B"),
+                ("feat/A", "feat/C"),
+                ("feat/B", "feat/C"),
+            ]),
+        ):
+            result = cd.detect_branch_ancestry(
+                branches=["feat/A", "feat/B", "feat/C"],
+                base="main", repo_root="/tmp/repo",
+            )
+        all_branches = [b for chain in result.chains for b in chain]
+        self.assertEqual(sorted(all_branches), ["feat/A", "feat/B", "feat/C"])
+        # All three should be in the same chain.
+        self.assertEqual(len(result.chains), 1)
+        # Order: A, B, C
+        self.assertEqual(result.chains[0], ["feat/A", "feat/B", "feat/C"])
+
+    def test_parallel_branches_separate_chains(self):
+        # A and B parallel (no ancestor relation) -> two chains.
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_ancestry([]),
+        ):
+            result = cd.detect_branch_ancestry(
+                branches=["feat/A", "feat/B"], base="main", repo_root="/tmp/repo"
+            )
+        self.assertEqual(len(result.chains), 2)
+        all_branches = sorted(b for chain in result.chains for b in chain)
+        self.assertEqual(all_branches, ["feat/A", "feat/B"])
+
+    def test_already_merged_branch_dropped(self):
+        # feat/A is already an ancestor of main -> already_merged.
+        # Use base="main" and test "feat/A" ancestor of "main".
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_ancestry([("feat/A", "main")]),
+        ):
+            result = cd.detect_branch_ancestry(
+                branches=["feat/A", "feat/B"], base="main", repo_root="/tmp/repo"
+            )
+        self.assertIn("feat/A", result.already_merged)
+        # feat/B still in chains.
+        all_branches = [b for chain in result.chains for b in chain]
+        self.assertIn("feat/B", all_branches)
+        self.assertNotIn("feat/A", all_branches)
+
+    def test_no_git_binary_returns_drop(self):
+        with mock.patch.object(cd.shutil, "which", return_value=None):
+            result = cd.detect_branch_ancestry(
+                branches=["feat/A"], base="main", repo_root="/tmp/repo"
+            )
+        # Without git, treat all branches as a single parallel group:
+        # one chain, no already_merged, no parents.
+        self.assertEqual(len(result.chains), 1)
+        self.assertEqual(result.chains[0], ["feat/A"])
+
+
+# ---------------------------------------------------------------------------
+# R19 gap 2 supporting type: BranchAncestry dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestBranchAncestryDataclass(unittest.TestCase):
+    def test_branch_ancestry_fields(self):
+        self.assertTrue(hasattr(cd, "BranchAncestry"))
+        b = cd.BranchAncestry(
+            parents={"feat/A": None, "feat/B": "feat/A"},
+            chains=[["feat/A", "feat/B"]],
+            already_merged=[],
+            parallel_groups=[],
+        )
+        self.assertEqual(b.parents["feat/B"], "feat/A")
+        self.assertEqual(b.chains, [["feat/A", "feat/B"]])
+
+
 if __name__ == "__main__":
     unittest.main()
