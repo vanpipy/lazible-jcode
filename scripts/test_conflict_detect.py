@@ -1063,5 +1063,150 @@ class TestCleanupWorktreeArtifacts(unittest.TestCase):
         self.assertEqual(actions[0].action, "noop")
 
 
+# ---------------------------------------------------------------------------
+# R19 gap 6: pick_merge_strategy — choose FF vs --no-ff vs rebase
+# ---------------------------------------------------------------------------
+
+
+class TestPickMergeStrategy(unittest.TestCase):
+    """R19 gap 6: pick the cheapest safe merge strategy for a set of branches.
+
+    Strategy decision tree:
+      - single branch, base is ancestor of branch     -> fast-forward
+      - single branch, base NOT ancestor (diverged)   -> merge --no-ff
+      - multiple branches, B is descendant of A       -> fast-forward (chain)
+      - multiple branches, neither is ancestor        -> rebase-then-merge
+      - git missing / unknown                        -> manual
+
+    The function returns MergeStrategy objects carrying the strategy
+    name, the reason, and the exact git commands the operator should run.
+    """
+
+    def test_single_branch_fast_forward(self):
+        # Stub: `git merge-base --is-ancestor main feat/x` -> exit 0
+        # (true). With one branch and base as ancestor, FF is viable.
+        proc_ok = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=proc_ok
+        ):
+            result = cd.pick_merge_strategy(
+                branches=["feat/x"], base="main", repo_root="/tmp/repo"
+            )
+        self.assertEqual(result.strategy, "fast-forward")
+        self.assertIn("main", result.reason.lower() + " " + " ".join(result.commands))
+        self.assertTrue(any("feat/x" in c for c in result.commands))
+
+    def test_single_branch_diverged(self):
+        # `git merge-base --is-ancestor main feat/x` -> exit 1 (false).
+        # Branch diverged from base; FF not possible.
+        proc_fail = mock.Mock(returncode=1, stdout="", stderr="")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=proc_fail
+        ):
+            result = cd.pick_merge_strategy(
+                branches=["feat/x"], base="main", repo_root="/tmp/repo"
+            )
+        self.assertEqual(result.strategy, "merge --no-ff")
+
+    def test_chain_fast_forward(self):
+        # A and B share base; B is descendant of A. The chain is FF-able.
+        # Stub responses: `merge-base --is-ancestor main A` -> true,
+        # `merge-base --is-ancestor main B` -> true,
+        # `merge-base --is-ancestor A B` -> true.
+        responses = iter([
+            mock.Mock(returncode=0, stdout="", stderr=""),  # main is ancestor of A
+            mock.Mock(returncode=0, stdout="", stderr=""),  # main is ancestor of B
+            mock.Mock(returncode=0, stdout="", stderr=""),  # A is ancestor of B
+        ])
+        def fake_run(*args, **kwargs):
+            return next(responses)
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", side_effect=fake_run
+        ):
+            result = cd.pick_merge_strategy(
+                branches=["feat/A", "feat/B"], base="main", repo_root="/tmp/repo"
+            )
+        self.assertEqual(result.strategy, "fast-forward")
+
+    def test_parallel_branches_rebase(self):
+        # A and B both diverge from base but neither contains the other.
+        # All merge-base --is-ancestor checks fail.
+        responses = iter([
+            mock.Mock(returncode=1, stdout="", stderr=""),  # main is NOT ancestor of A
+            mock.Mock(returncode=1, stdout="", stderr=""),  # main is NOT ancestor of B
+            mock.Mock(returncode=1, stdout="", stderr=""),  # A is NOT ancestor of B
+            mock.Mock(returncode=1, stdout="", stderr=""),  # B is NOT ancestor of A
+        ])
+        def fake_run(*args, **kwargs):
+            return next(responses)
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", side_effect=fake_run
+        ):
+            result = cd.pick_merge_strategy(
+                branches=["feat/A", "feat/B"], base="main", repo_root="/tmp/repo"
+            )
+        self.assertEqual(result.strategy, "rebase-then-merge")
+        # Commands should mention rebase and merge.
+        joined = " ".join(result.commands)
+        self.assertIn("rebase", joined)
+
+    def test_no_branches_returns_drop(self):
+        result = cd.pick_merge_strategy(
+            branches=[], base="main", repo_root="/tmp/repo"
+        )
+        self.assertEqual(result.strategy, "drop")
+        self.assertEqual(result.commands, [])
+
+    def test_no_git_binary_returns_manual(self):
+        with mock.patch.object(cd.shutil, "which", return_value=None):
+            result = cd.pick_merge_strategy(
+                branches=["feat/x"], base="main", repo_root="/tmp/repo"
+            )
+        self.assertEqual(result.strategy, "manual")
+        self.assertEqual(result.commands, [])
+
+    def test_strategy_reason_is_human_readable(self):
+        proc_ok = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=proc_ok
+        ):
+            result = cd.pick_merge_strategy(
+                branches=["feat/x"], base="main", repo_root="/tmp/repo"
+            )
+        # reason explains WHY this strategy was picked
+        self.assertTrue(result.reason)
+        self.assertGreater(len(result.reason), 10)
+
+
+# ---------------------------------------------------------------------------
+# R19 gap 6 supporting type: MergeStrategy dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestMergeStrategyDataclass(unittest.TestCase):
+    """The MergeStrategy dataclass must expose the spec'd fields."""
+
+    def test_merge_strategy_fields(self):
+        self.assertTrue(hasattr(cd, "MergeStrategy"))
+        m = cd.MergeStrategy(
+            strategy="fast-forward",
+            reason="base is ancestor of branch",
+            commands=["git merge --ff-only feat/x"],
+        )
+        self.assertEqual(m.strategy, "fast-forward")
+        self.assertEqual(m.reason, "base is ancestor of branch")
+        self.assertEqual(m.commands, ["git merge --ff-only feat/x"])
+
+
 if __name__ == "__main__":
     unittest.main()

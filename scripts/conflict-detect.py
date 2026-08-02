@@ -138,6 +138,26 @@ class CleanupAction:
     reason: str = ""
 
 
+@dataclass
+class MergeStrategy:
+    """Output of `pick_merge_strategy`.
+
+    Fields:
+        strategy — one of:
+            "fast-forward"     (base is ancestor of branch; FF is safe)
+            "merge --no-ff"    (single branch diverged from base)
+            "rebase-then-merge" (multiple parallel branches)
+            "drop"             (empty input)
+            "manual"           (git missing / cannot determine)
+        reason   — human-readable explanation of why this strategy fits.
+        commands — list of git commands the operator should run, in order.
+    """
+
+    strategy: str
+    reason: str
+    commands: list[str] = field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -720,6 +740,136 @@ def cleanup_worktree_artifacts(
             )
         )
     return actions
+
+
+# ---------------------------------------------------------------------------
+# R19 gap 6: pick_merge_strategy — choose FF / --no-ff / rebase-then-merge
+# ---------------------------------------------------------------------------
+
+
+def _is_ancestor(repo_root: str, ancestor: str, descendant: str) -> bool:
+    """True iff `ancestor` is a git ancestor of `descendant`.
+
+    Uses `git merge-base --is-ancestor`. Returns False when git is missing
+    or the call fails (which is the safe default: an unverifiable claim of
+    ancestry must not produce a fast-forward recommendation).
+    """
+    if shutil.which("git") is None:
+        return False
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            repo_root,
+            "merge-base",
+            "--is-ancestor",
+            ancestor,
+            descendant,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def pick_merge_strategy(
+    branches: list[str],
+    base: str,
+    repo_root: str,
+) -> MergeStrategy:
+    """Pick the cheapest safe merge strategy for `branches` against `base`.
+
+    Decision tree:
+      - no branches                        -> drop
+      - git missing                        -> manual
+      - single branch:
+          - base is ancestor of branch     -> fast-forward
+          - else                           -> merge --no-ff
+      - multiple branches:
+          - all form a chain (each pair
+            ancestor-descendant OR same)   -> fast-forward (chain order)
+          - any two branches are parallel  -> rebase-then-merge
+            (rebase each onto base first;
+            merge with --no-ff)
+
+    Args:
+        branches  — list of branch names to bring into `base`.
+        base      — the target branch (usually "main").
+        repo_root — filesystem path for git commands.
+
+    Returns:
+        MergeStrategy with the chosen strategy name, reason, and the
+        exact git commands the operator should run.
+    """
+    if not branches:
+        return MergeStrategy(
+            strategy="drop",
+            reason="no branches to merge",
+            commands=[],
+        )
+
+    if shutil.which("git") is None:
+        return MergeStrategy(
+            strategy="manual",
+            reason="git binary not available on PATH",
+            commands=[],
+        )
+
+    # Single-branch path is straightforward.
+    if len(branches) == 1:
+        branch = branches[0]
+        if _is_ancestor(repo_root, base, branch):
+            return MergeStrategy(
+                strategy="fast-forward",
+                reason=(
+                    f"{base!r} is an ancestor of {branch!r}; "
+                    f"fast-forward is safe"
+                ),
+                commands=[f"git merge --ff-only {branch}"],
+            )
+        return MergeStrategy(
+            strategy="merge --no-ff",
+            reason=(
+                f"{branch!r} diverged from {base!r}; "
+                f"fast-forward is not possible, use --no-ff"
+            ),
+            commands=[f"git merge --no-ff {branch}"],
+        )
+
+    # Multi-branch path: check pairwise ancestry.
+    all_ff = all(_is_ancestor(repo_root, base, b) for b in branches)
+    chain_ok = True
+    # Sort by lex to get a deterministic chain order; verify each is
+    # ancestor of the next.
+    chain = sorted(branches)
+    for i in range(len(chain) - 1):
+        if not _is_ancestor(repo_root, chain[i], chain[i + 1]):
+            chain_ok = False
+            break
+    if all_ff and chain_ok:
+        return MergeStrategy(
+            strategy="fast-forward",
+            reason=(
+                f"branches form a chain above {base!r}: "
+                f"{' -> '.join([base, *chain])}; fast-forward is safe"
+            ),
+            commands=[f"git merge --ff-only {chain[-1]}"],
+        )
+
+    # Parallel branches: rebase each onto base, then merge with --no-ff.
+    cmds: list[str] = []
+    for b in chain:
+        cmds.append(f"git rebase {base} {b}")
+    cmds.append(f"git merge --no-ff {' '.join(chain)}")
+    return MergeStrategy(
+        strategy="rebase-then-merge",
+        reason=(
+            f"branches {branches} are parallel above {base!r}; "
+            f"rebase each onto {base!r} before merging"
+        ),
+        commands=cmds,
+    )
 
 
 # ---------------------------------------------------------------------------
