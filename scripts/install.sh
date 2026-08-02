@@ -15,11 +15,16 @@
 # point. Existing files at the destination are always backed up to <dst>.bak.<ts>
 # before being replaced, so rerunning this script is safe.
 #
+# Opt-in: set IDEMPOTENT=1 to skip the symlink steps (2/3/4) when their target
+# is already a symlink pointing at the right source. Step 1 (the jcode binary)
+# always runs. See --help for details.
+#
 # Usage:
 #   ./scripts/install.sh                          # run all 4 steps with defaults
 #   ./scripts/install.sh --canary-version v0.65.0 # pin jcode tag for the canary build
 #   ./scripts/install.sh --clean                  # wipe source-dir before canary build
 #   ./scripts/install.sh --help                   # show usage
+#   IDEMPOTENT=1 ./scripts/install.sh             # skip already-correct symlinks
 #
 # Flags:
 #   --canary-version <v>   Pin the jcode tag the canary is built from. Default: latest.
@@ -33,7 +38,9 @@
 #
 # Every run does all 4 steps and overwrites every destination (backed up as
 # <dst>.bak.<ts> first). The flags above are *values* (which tag, whether to
-# clean the canary source), not step toggles.
+# clean the canary source), not step toggles. IDEMPOTENT is an env var, not a
+# flag, on purpose: the CLI shape stays "linear and unconditional", and the
+# safety guarantee is opt-in via environment.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -60,6 +67,16 @@ overwrites the destination unconditionally:
 Existing files at any destination are backed up to <dst>.bak.<timestamp> before
 being replaced, so rerunning is safe.
 
+Environment variables:
+  IDEMPOTENT=1           Opt into skip-if-unchanged mode for the symlink steps
+                         (2/3/4). When set, already-correct symlinks are left
+                         in place and 'skipping: <reason>' is printed instead
+                         of backing them up + re-linking. Step 1 (the jcode
+                         binary install) still runs every time — its own
+                         mtime/version-pin logic lives in the upstream
+                         installer / canary builder. Default: unset (always
+                         overwrite, original behavior).
+
 Options:
   --canary-version <v>   Pin the jcode tag the canary is built from. Default: latest.
                          Only used when jcode-patches/*.patch exists.
@@ -79,6 +96,9 @@ Examples:
 
   # Wipe the canary source-dir first (when a previous build polluted it).
   $0 --clean
+
+  # Re-run safely: skip symlinks that already point at the right target.
+  IDEMPOTENT=1 $0
 EOF
 }
 
@@ -210,8 +230,12 @@ maybe_overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
 
 # ── summary ────────────────────────────────────────────────────────────────────
 info "✅ lazible-jcode install complete."
+info "   mode:           $([[ "$IDEMPOTENT" == "1" ]] && echo "idempotent (IDEMPOTENT=1)" || echo "overwrite (IDEMPOTENT unset)")"
 info "   jcode binary:   $INSTALL_DIR/jcode"
 info "   jcode home:     $JCODE_HOME"
 info "   overlay:        $JCODE_HOME/prompt-overlay.md → $repo_root/swarm/prompt-overlay.md"
 info "   architecture:   $JCODE_HOME/ARCHITECTURE.md → $repo_root/swarm/ARCHITECTURE.md"
 info "   AGENTS.md:      $JCODE_HOME/AGENTS.md → $repo_root/AGENTS.md"
+info ""
+info "Tip: re-running with IDEMPOTENT=1 skips symlinks that already point at"
+info "     the right target — no backups, no rewrites. See --help for details."
