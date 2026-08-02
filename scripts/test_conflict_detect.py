@@ -1574,5 +1574,256 @@ class TestPlanOrderCLIWithBranches(unittest.TestCase):
         self.assertEqual(len(out["phases"]), 1)
 
 
+# ---------------------------------------------------------------------------
+# R19 gap 4: resolve_conflict_hunks — per-hunk side picker
+# ---------------------------------------------------------------------------
+
+
+class TestResolveConflictHunks(unittest.TestCase):
+    """R19 gap 4: pick the right side per conflict hunk.
+
+    `prefer_side` is one of:
+        "worker"       — branch_a's version wins for every hunk.
+        "main"         — branch_b's version wins for every hunk.
+        "newer"        — side with newer commit timestamp wins.
+        "intersection" — keep both sides' hunks (git merge --union style).
+    """
+
+    def _stub_git(self, file_map, times=None):
+        """Stub `git show ref:file` and `git log -1 --format=%ct ref`.
+
+        `file_map` is {(ref, file_path): "<content>"}.
+        `times`    is {ref: int_unix_timestamp}. Defaults to lex ordering
+                    so A is older than B.
+        """
+        times = times or {}
+
+        def fake_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            # git log -1 --format=%ct <ref>
+            if "log" in cmd and "--format=%ct" in cmd:
+                ref = cmd[-1]
+                ts = times.get(ref, 1000)
+                return mock.Mock(
+                    returncode=0, stdout=str(ts), stderr=""
+                )
+            # git show <ref>:<file>  (cmd shape: git -C root show ref:file)
+            if "show" in cmd:
+                # Find the element containing ':' (skipping 'git' and '-C').
+                ref_and_path = next(
+                    (c for c in cmd if ":" in c and not c.startswith("-C:")),
+                    None,
+                )
+                if ref_and_path:
+                    ref, path = ref_and_path.split(":", 1)
+                    content = file_map.get((ref, path), "")
+                    return mock.Mock(
+                        returncode=0, stdout=content, stderr=""
+                    )
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return fake_run
+
+    def test_function_exists_and_returns_list(self):
+        self.assertTrue(hasattr(cd, "resolve_conflict_hunks"))
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ):
+            res = cd.resolve_conflict_hunks(
+                branch_a="feat/A",
+                branch_b="main",
+                file="src/x.py",
+                prefer_side="worker",
+                repo_root="/tmp/repo",
+            )
+        self.assertIsInstance(res, list)
+
+    def test_worker_side_picks_branch_a(self):
+        # Both sides changed the same line; worker wins.
+        file_map = {
+            ("feat/A", "src/x.py"): "alpha\nbeta\ngamma\n",
+            ("main", "src/x.py"): "alpha\nBETA\ngamma\n",
+        }
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git(file_map),
+        ):
+            res = cd.resolve_conflict_hunks(
+                branch_a="feat/A",
+                branch_b="main",
+                file="src/x.py",
+                prefer_side="worker",
+                repo_root="/tmp/repo",
+            )
+        self.assertGreater(len(res), 0)
+        for hunk in res:
+            self.assertEqual(hunk.resolution, "worker")
+            self.assertEqual(
+                hunk.resolved_lines,
+                ["alpha", "beta", "gamma"],
+            )
+
+    def test_main_side_picks_branch_b(self):
+        file_map = {
+            ("feat/A", "src/x.py"): "alpha\nbeta\ngamma\n",
+            ("main", "src/x.py"): "alpha\nBETA\ngamma\n",
+        }
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git(file_map),
+        ):
+            res = cd.resolve_conflict_hunks(
+                branch_a="feat/A",
+                branch_b="main",
+                file="src/x.py",
+                prefer_side="main",
+                repo_root="/tmp/repo",
+            )
+        for hunk in res:
+            self.assertEqual(hunk.resolution, "main")
+            self.assertEqual(
+                hunk.resolved_lines,
+                ["alpha", "BETA", "gamma"],
+            )
+
+    def test_newer_side_picks_by_timestamp(self):
+        # branch_a is OLDER (ts=1000), branch_b is NEWER (ts=2000).
+        # With prefer_side=newer, branch_b wins.
+        file_map = {
+            ("feat/A", "src/x.py"): "alpha\nbeta\ngamma\n",
+            ("feat/B", "src/x.py"): "alpha\nBETA\ngamma\n",
+        }
+        times = {"feat/A": 1000, "feat/B": 2000}
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git(file_map, times),
+        ):
+            res = cd.resolve_conflict_hunks(
+                branch_a="feat/A",
+                branch_b="feat/B",
+                file="src/x.py",
+                prefer_side="newer",
+                repo_root="/tmp/repo",
+            )
+        for hunk in res:
+            self.assertEqual(hunk.resolution, "main")  # newer = branch_b
+            self.assertEqual(
+                hunk.resolved_lines,
+                ["alpha", "BETA", "gamma"],
+            )
+
+    def test_newer_when_a_is_newer_picks_a(self):
+        file_map = {
+            ("feat/A", "src/x.py"): "alpha\nBETA\ngamma\n",
+            ("feat/B", "src/x.py"): "alpha\nbeta\ngamma\n",
+        }
+        times = {"feat/A": 2000, "feat/B": 1000}
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git(file_map, times),
+        ):
+            res = cd.resolve_conflict_hunks(
+                branch_a="feat/A",
+                branch_b="feat/B",
+                file="src/x.py",
+                prefer_side="newer",
+                repo_root="/tmp/repo",
+            )
+        for hunk in res:
+            self.assertEqual(hunk.resolution, "worker")
+            self.assertEqual(
+                hunk.resolved_lines,
+                ["alpha", "BETA", "gamma"],
+            )
+
+    def test_intersection_keeps_both_sides(self):
+        file_map = {
+            ("feat/A", "src/x.py"): "alpha\nbeta\ngamma\n",
+            ("main", "src/x.py"): "alpha\nBETA\ngamma\n",
+        }
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git(file_map),
+        ):
+            res = cd.resolve_conflict_hunks(
+                branch_a="feat/A",
+                branch_b="main",
+                file="src/x.py",
+                prefer_side="intersection",
+                repo_root="/tmp/repo",
+            )
+        self.assertGreater(len(res), 0)
+        for hunk in res:
+            self.assertEqual(hunk.resolution, "intersection")
+            # Both sides' lines appear.
+            joined = "\n".join(hunk.resolved_lines)
+            self.assertIn("beta", joined)
+            self.assertIn("BETA", joined)
+
+    def test_invalid_prefer_side_raises(self):
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ):
+            with self.assertRaises(ValueError):
+                cd.resolve_conflict_hunks(
+                    branch_a="feat/A",
+                    branch_b="main",
+                    file="src/x.py",
+                    prefer_side="bogus",
+                    repo_root="/tmp/repo",
+                )
+
+    def test_disjoint_files_produce_no_hunks(self):
+        # Both sides change different files in disjoint regions -> no conflict
+        file_map = {
+            ("feat/A", "src/x.py"): "alpha\nbeta\ngamma\n",
+            ("main", "src/x.py"): "alpha\nbeta\ngamma\n",
+        }
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git(file_map),
+        ):
+            res = cd.resolve_conflict_hunks(
+                branch_a="feat/A",
+                branch_b="main",
+                file="src/x.py",
+                prefer_side="worker",
+                repo_root="/tmp/repo",
+            )
+        # Identical content -> no conflict hunks.
+        self.assertEqual(res, [])
+
+
+# ---------------------------------------------------------------------------
+# R19 gap 4 supporting type: HunkResolution dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestHunkResolutionDataclass(unittest.TestCase):
+    def test_hunk_resolution_fields(self):
+        self.assertTrue(hasattr(cd, "HunkResolution"))
+        h = cd.HunkResolution(
+            hunk_id=0,
+            side_a_lines=["beta"],
+            side_b_lines=["BETA"],
+            resolution="worker",
+            resolved_lines=["beta"],
+        )
+        self.assertEqual(h.hunk_id, 0)
+        self.assertEqual(h.resolution, "worker")
+        self.assertEqual(h.resolved_lines, ["beta"])
+
+
 if __name__ == "__main__":
     unittest.main()
