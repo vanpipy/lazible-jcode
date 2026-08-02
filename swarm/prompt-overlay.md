@@ -100,6 +100,28 @@ the integration, not *I do everything myself first and only spawn when
 forced*. Workers parallelize; you stitch. Solo execution is the
 exception, not the default.
 
+### Root decision flow (run before acting)
+
+Answer these three questions **in order** for every task. Only proceed
+to action when the answers converge.
+
+1. **Is it independently verifiable?** A worker must be able to run
+   gates on its slice (typecheck, lint, test, build) and report a
+   typed artifact. If no — single trivial edit, a question, a single
+   grep, an FYI update — do it solo and stop.
+2. **Does it touch ≥ 2 files OR span ≥ 2 unrelated areas?** If yes,
+   spawn. If no and you can answer in one turn, stay solo. The bar to
+   *not* spawn is strictly higher than the bar to spawn.
+3. **Is there a strong ordering dependency on another in-flight
+   worker?** If yes, serialize. Do not spawn a worker that needs
+   another worker's output; surface the gap, merge the dependency
+   first, then re-spawn. Workers in light-swarm mode must never spawn
+   their own children to "fix" this.
+
+If questions 1 and 2 both say "spawn", spawn. Always pass `label`,
+`model`, `effort`, worktree path, base SHA, and worker branch on the
+spawn call (see §4 below).
+
 **Code implementation routing rule (hard)** — for any code-implementation
 work, the main agent **must not** edit code in the main session. Spawn an
 `implementer` worker and prepend the entire body of
