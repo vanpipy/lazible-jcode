@@ -119,6 +119,25 @@ class Conflict:
     remediation: str = ""
 
 
+@dataclass
+class CleanupAction:
+    """One row of `cleanup_worktree_artifacts` output.
+
+    Fields:
+        path    — the repo-relative file or directory path.
+        action  — "rm" (delete), "git_add" (stage), or "noop" (no
+                  automated action; operator must inspect).
+        command — runnable shell command, or "" when action == "noop".
+        reason  — short string explaining why this action was chosen
+                  (matched pattern name, "untracked", etc.).
+    """
+
+    path: str
+    action: str
+    command: str
+    reason: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -537,6 +556,170 @@ def detect_dirty_state(worktree_path: str) -> list[Conflict]:
             ),
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# R19 gap 7: cleanup_worktree_artifacts — promote dirty_state to actions.
+# Takes the porcelain rows from `git status --porcelain` and maps each one
+# to a runnable command. Used by the swarm operator to fix dirty worktrees
+# before a worker resumes.
+# ---------------------------------------------------------------------------
+
+
+def _parse_porcelain_row(row: str) -> tuple[str, str] | None:
+    """Extract (status_code, path) from one porcelain row.
+
+    `git status --porcelain` emits rows like:
+        " M file.py"
+        "?? new.py"
+        "R  old.py -> new.py"
+        "A  staged.py"
+
+    Returns None when the row doesn't have at least a 2-char status code
+    plus a space plus a path (or the row is blank).
+    """
+    if not row or len(row) < 4:
+        return None
+    code = row[:2]
+    rest = row[3:].strip()
+    if not rest:
+        return None
+    # Renames are reported as `old -> new`; we only need the new path.
+    if " -> " in rest:
+        rest = rest.split(" -> ", 1)[1].strip()
+    return (code, rest)
+
+
+def _classify_porcelain_code(code: str) -> str:
+    """Map a porcelain status code to a coarse action category.
+
+    Returns one of: "already_staged", "deleted", "conflict",
+    "untracked", "ignored", "modified".
+    """
+    x = code[0]  # staged status
+    y = code[1]  # unstaged status
+    if code == "??":
+        return "untracked"
+    if code == "!!":
+        return "ignored"
+    if y == "D" or x == "D":
+        return "deleted"
+    if y == "U" or x == "U" or (x == "A" and y == "A") or (x == "D" and y == "D"):
+        return "conflict"
+    if x != " " and x != "?":
+        # Staged change (M, A, R, C, T). The path is already in the
+        # index; commit is the operator's job, not cleanup's.
+        return "already_staged"
+    return "modified"
+
+
+def cleanup_worktree_artifacts(
+    dirty_paths: list[str],
+    patterns: list[str] | None = None,
+) -> list[CleanupAction]:
+    """Map porcelain rows to runnable cleanup commands.
+
+    For each row:
+      - Match path against `patterns` (defaults to `DEFAULT_CLEANUP_PATTERNS`).
+        Matched paths emit `rm -f <path>` (file) or `rm -rf <path>` (pattern
+        ends with `/`).
+      - Otherwise classify the porcelain status code:
+          untracked  -> "git add <path>" (operator can then commit or revert)
+          modified   -> "git add <path>"
+          deleted    -> "git add <path>" (stages the deletion)
+          conflict   -> noop (operator must resolve)
+          ignored    -> dropped (returns empty for that row)
+          already_staged -> noop (operator already ran `git add`)
+
+    Args:
+        dirty_paths — raw porcelain rows from `git status --porcelain`.
+        patterns    — glob patterns to delete. Defaults to
+                      `DEFAULT_CLEANUP_PATTERNS`.
+
+    Returns:
+        list[CleanupAction] in input order. Rows that fail to parse or are
+        marked `!!` (ignored) are not returned.
+    """
+    pats = list(DEFAULT_CLEANUP_PATTERNS if patterns is None else patterns)
+
+    actions: list[CleanupAction] = []
+    for row in dirty_paths:
+        parsed = _parse_porcelain_row(row)
+        if not parsed:
+            actions.append(
+                CleanupAction(
+                    path="",
+                    action="noop",
+                    command="",
+                    reason=f"unparseable porcelain row: {row!r}",
+                )
+            )
+            continue
+        code, path = parsed
+
+        # Ignored files: drop them entirely.
+        if code == "!!":
+            continue
+
+        # Pattern match: delete regardless of porcelain code.
+        matched_pattern: str | None = None
+        for pat in pats:
+            # Patterns ending with `/` are directory prefixes. Match by
+            # prefix so `build/` cleans anything under `build/`.
+            if pat.endswith("/"):
+                if path.startswith(pat) or path.rstrip("/") == pat.rstrip("/"):
+                    matched_pattern = pat
+                    break
+                continue
+            normalised = pat.replace("**", "*")
+            if fnmatch.fnmatch(path, normalised):
+                matched_pattern = pat
+                break
+        if matched_pattern is not None:
+            is_dir = matched_pattern.endswith("/") or path.endswith("/")
+            cmd = (
+                f"rm -rf {path}"
+                if is_dir
+                else f"rm -f {path}"
+            )
+            actions.append(
+                CleanupAction(
+                    path=path,
+                    action="rm",
+                    command=cmd,
+                    reason=f"matches cleanup_pattern: {matched_pattern}",
+                )
+            )
+            continue
+
+        category = _classify_porcelain_code(code)
+        if category == "ignored":
+            continue  # defensive; should not happen after the !! guard above
+        if category in ("already_staged", "conflict"):
+            actions.append(
+                CleanupAction(
+                    path=path,
+                    action="noop",
+                    command="",
+                    reason=(
+                        "already staged; commit instead"
+                        if category == "already_staged"
+                        else "merge conflict; resolve manually"
+                    ),
+                )
+            )
+            continue
+
+        # Everything else (modified / untracked / deleted): git add the path.
+        actions.append(
+            CleanupAction(
+                path=path,
+                action="git_add",
+                command=f"git add {path}",
+                reason=f"{category}: stage before commit",
+            )
+        )
+    return actions
 
 
 # ---------------------------------------------------------------------------

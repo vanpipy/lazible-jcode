@@ -941,5 +941,127 @@ class TestSerializationThresholds(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# R19 gap 7: cleanup_worktree_artifacts — promote dirty_state to actions
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupWorktreeArtifacts(unittest.TestCase):
+    """R19 gap 7: turn `git status --porcelain` rows into runnable commands.
+
+    Default patterns (from .jcode/conflict-config.yaml or module defaults):
+        __pycache__/  -> rm -rf <path>     (directory)
+        *.bak.*       -> rm -f <path>      (file)
+        *.pyc         -> rm -f <path>
+        *.tmp         -> rm -f <path>
+    Anything else -> git add <path>.
+
+    The function takes raw porcelain strings (e.g. " M file.py", "?? x.py")
+    and returns CleanupAction objects with action in {"rm", "git_add"} and
+    a runnable command string.
+    """
+
+    def test_function_returns_cleanup_actions(self):
+        self.assertTrue(hasattr(cd, "cleanup_worktree_artifacts"))
+        actions = cd.cleanup_worktree_artifacts([" M scripts/install.sh"])
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].path, "scripts/install.sh")
+        self.assertEqual(actions[0].action, "git_add")
+        self.assertEqual(actions[0].command, "git add scripts/install.sh")
+
+    def test_pycache_dir_removed(self):
+        actions = cd.cleanup_worktree_artifacts(
+            ["?? tests/__pycache__/test_x.cpython-313.pyc"]
+        )
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action, "rm")
+        # Either the file itself (rm -f) or its directory (rm -rf) depending
+        # on whether the path is a directory or a file. Default behavior
+        # treats the path as a file and uses rm -f.
+        self.assertIn("rm", actions[0].command)
+        self.assertTrue(
+            actions[0].command.startswith("rm ")
+            or actions[0].command.startswith("rm -")
+        )
+
+    def test_bak_file_removed(self):
+        actions = cd.cleanup_worktree_artifacts(
+            ["?? scripts/install.sh.bak.1234567890"]
+        )
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action, "rm")
+        self.assertIn("rm ", actions[0].command)
+        self.assertIn("scripts/install.sh.bak.1234567890", actions[0].command)
+
+    def test_pyc_file_removed(self):
+        actions = cd.cleanup_worktree_artifacts(["?? module.pyc"])
+        self.assertEqual(actions[0].action, "rm")
+        self.assertIn("module.pyc", actions[0].command)
+
+    def test_tmp_file_removed(self):
+        actions = cd.cleanup_worktree_artifacts(["?? scratch.tmp"])
+        self.assertEqual(actions[0].action, "rm")
+        self.assertIn("scratch.tmp", actions[0].command)
+
+    def test_untracked_non_pattern_staged(self):
+        actions = cd.cleanup_worktree_artifacts(["?? docs/new.md"])
+        self.assertEqual(actions[0].action, "git_add")
+        self.assertEqual(actions[0].command, "git add docs/new.md")
+
+    def test_modified_file_staged(self):
+        actions = cd.cleanup_worktree_artifacts([" M scripts/install.sh"])
+        self.assertEqual(actions[0].action, "git_add")
+        self.assertEqual(actions[0].command, "git add scripts/install.sh")
+
+    def test_added_file_no_op(self):
+        # "A " porcelain prefix = already staged. Treat as no-op (commit
+        # is the operator's job, not cleanup's).
+        actions = cd.cleanup_worktree_artifacts(["A  scripts/install.sh"])
+        self.assertEqual(actions[0].action, "noop")
+        # No command emitted; the operator already ran `git add`.
+        self.assertEqual(actions[0].command, "")
+
+    def test_custom_patterns_override_default(self):
+        actions = cd.cleanup_worktree_artifacts(
+            ["?? x.log", "?? y.pyc"],
+            patterns=["*.log"],
+        )
+        # *.log matches custom pattern -> rm
+        self.assertEqual(actions[0].action, "rm")
+        self.assertIn("x.log", actions[0].command)
+        # *.pyc is no longer in the pattern set -> git_add
+        self.assertEqual(actions[1].action, "git_add")
+        self.assertEqual(actions[1].command, "git add y.pyc")
+
+    def test_directory_pattern_uses_rm_rf(self):
+        # A pattern ending with `/` is a directory; the emitted command
+        # must use `rm -rf`, not `rm -f`.
+        actions = cd.cleanup_worktree_artifacts(
+            ["?? build/cache/"], patterns=["build/"]
+        )
+        self.assertEqual(actions[0].action, "rm")
+        self.assertIn("rm -rf", actions[0].command)
+
+    def test_action_reason_is_surfaced(self):
+        # CleanupAction.remediation/reason explains why the action was picked.
+        actions = cd.cleanup_worktree_artifacts(["?? x.pyc"])
+        # `reason` must mention either the matched pattern or a fallback.
+        self.assertTrue(
+            actions[0].reason,
+            msg="CleanupAction.reason must not be empty",
+        )
+
+    def test_empty_dirty_list_returns_empty(self):
+        actions = cd.cleanup_worktree_artifacts([])
+        self.assertEqual(actions, [])
+
+    def test_unparseable_porcelain_row_kept_neutral(self):
+        # A row that doesn't look like a porcelain entry must not crash;
+        # surface as a no-op so the operator can inspect manually.
+        actions = cd.cleanup_worktree_artifacts(["???"])
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action, "noop")
+
+
 if __name__ == "__main__":
     unittest.main()
