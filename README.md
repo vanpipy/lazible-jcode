@@ -92,11 +92,12 @@ the binary unconditionally.
 
 ### Install options
 
-`scripts/install.sh` is intentionally minimal — only one flag:
+`scripts/install.sh` is intentionally minimal — only two flags:
 
 | Flag | Effect |
 |---|---|
 | `--canary-version <v>` | Pin the jcode tag used for the canary build (only matters when `jcode-patches/*.patch` exists). Default: latest |
+| `--clean` | Pass through to the canary builder: wipe the source-dir (`~/Project/jcode`) before re-cloning. Use when a previous build polluted the working tree. Slower on rerun |
 | `-h`, `--help` | Show usage |
 
 The script **always** runs all 4 steps, **always** overwrites the destination,
@@ -108,6 +109,12 @@ To pin the canary build:
 
 ```bash
 ./scripts/install.sh --canary-version v0.65.0
+```
+
+To force a clean re-clone (when a previous build polluted the source-dir):
+
+```bash
+./scripts/install.sh --clean
 ```
 
 Run `./scripts/install.sh --help` for the full usage block.

@@ -63,11 +63,12 @@ Requires `git` and `cargo` for the canary path.
 
 ## Flags
 
-`scripts/install.sh` is intentionally minimal — only one flag:
+`scripts/install.sh` is intentionally minimal — only two flags:
 
 | Flag | Effect |
 |---|---|
 | `--canary-version <v>` | Pin the jcode tag the canary build runs against. Only used when `jcode-patches/*.patch` exists. Default: latest |
+| `--clean` | Pass through to `scripts/build-jcode-canary.sh`: wipe the source-dir (`~/Project/jcode`) before re-cloning. Use when a previous build polluted the working tree and the patch fails to apply. Slower on rerun |
 | `-h`, `--help` | Show usage |
 
 There is **no** `--skip-binary`, `--refresh`, `--install-skills`, `--dry-run`,

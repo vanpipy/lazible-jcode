@@ -46,7 +46,13 @@ code lives here.
 - Installer lives at `scripts/install.sh` (repo-level wrapper) and
   `skills/install-jcode/jcode-install.sh` (standalone upstream binary installer).
   The wrapper is **linear and unconditional**: it runs 4 steps every time and
-  overwrites the destination without prompting. Only flag is `--canary-version <v>`.
+  overwrites the destination without prompting. Flags (all are *values*, not
+  step toggles):
+  - `--canary-version <v>` — pin the jcode tag the canary is built against.
+  - `--clean` — pass through to `scripts/build-jcode-canary.sh --clean`: wipe
+    the canary source-dir (`~/Project/jcode`) before cloning + applying patches.
+    Use when a previous build left a polluted working tree and the patch fails
+    to apply.
   Steps:
   1. Install jcode binary. If `jcode-patches/*.patch` exists, build a canary
      from those patches (via `scripts/build-jcode-canary.sh --replace-main`);

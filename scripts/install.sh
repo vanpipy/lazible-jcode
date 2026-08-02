@@ -16,12 +16,24 @@
 # before being replaced, so rerunning this script is safe.
 #
 # Usage:
-#   ./scripts/install.sh                   # run all 4 steps with defaults
-#   ./scripts/install.sh --canary-version v0.65.0   # pin jcode tag for the canary build
-#   ./scripts/install.sh --help            # show usage
+#   ./scripts/install.sh                          # run all 4 steps with defaults
+#   ./scripts/install.sh --canary-version v0.65.0 # pin jcode tag for the canary build
+#   ./scripts/install.sh --clean                  # wipe source-dir before canary build
+#   ./scripts/install.sh --help                   # show usage
 #
-# The only configuration flag is --canary-version, because it is a value
-# (which upstream tag to build against), not a step toggle.
+# Flags:
+#   --canary-version <v>   Pin the jcode tag the canary is built from. Default: latest.
+#                          Only used when jcode-patches/*.patch exists.
+#   --clean                Pass through to build-jcode-canary.sh: wipe the source-dir
+#                          (~/Project/jcode by default) before cloning + applying
+#                          patches. Use this when a previous build left a polluted
+#                          working tree and the patch fails to apply. Slower on
+#                          rerun (~30s extra clone) — only use when needed.
+#   -h, --help             Show this help.
+#
+# Every run does all 4 steps and overwrites every destination (backed up as
+# <dst>.bak.<ts> first). The flags above are *values* (which tag, whether to
+# clean the canary source), not step toggles.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -29,6 +41,7 @@ installer="$repo_root/skills/install-jcode/jcode-install.sh"
 build_canary="$repo_root/scripts/build-jcode-canary.sh"
 
 CANARY_VERSION=""
+CANARY_CLEAN=0
 
 print_help() {
   cat <<EOF
@@ -49,6 +62,10 @@ being replaced, so rerunning is safe.
 Options:
   --canary-version <v>   Pin the jcode tag the canary is built from. Default: latest.
                          Only used when jcode-patches/*.patch exists.
+  --clean                Pass through to the canary builder: wipe the source-dir
+                         (~/Project/jcode) before re-cloning. Use when a previous
+                         build left a polluted working tree and the patch fails
+                         to apply. Slower on rerun; only use when needed.
   -h, --help             Show this help.
 
 Examples:
@@ -58,12 +75,16 @@ Examples:
 
   # Pin a specific jcode tag for the canary build.
   $0 --canary-version v0.65.0
+
+  # Wipe the canary source-dir first (when a previous build polluted it).
+  $0 --clean
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --canary-version) CANARY_VERSION="${2:-}"; shift 2 ;;
+    --clean)          CANARY_CLEAN=1; shift ;;
     -h|--help)        print_help; exit 0 ;;
     *) echo "error: unknown flag: $1" >&2; print_help >&2; exit 1 ;;
   esac
@@ -117,6 +138,7 @@ if [[ ${#patches[@]} -gt 0 ]]; then
   info "found ${#patches[@]} patch(es) in jcode-patches/ — building canary"
   canary_args=(--replace-main)
   [[ -n "$CANARY_VERSION" ]] && canary_args+=(--jcode-version "$CANARY_VERSION")
+  [[ $CANARY_CLEAN -eq 1 ]] && canary_args+=(--clean)
   "$build_canary" "${canary_args[@]}"
   info "canary installed to $INSTALL_DIR/jcode (original backed up as .bak.$TIMESTAMP)"
 else
