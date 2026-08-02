@@ -303,3 +303,9 @@ noise commits.
 Spawn context without `.git/`: skip worktree allocation, worker uses root
 cwd. swarm-prompt must flag this fallback explicitly, never pretend a
 worktree exists.
+
+### Safety target (per session)
+
+Loss rate = `(dispatched - landed) / dispatched`, where `dispatched` is spawn calls and `landed` is branches root merged with green gates. Target 0%, hard ceiling 3%. Above ceiling, pause and run `scripts/conflict-detect.py all`. TDD covers single-slice correctness; the framework covers multi-slice safety. Both are required.
+
+Per-repo config at `.jcode/conflict-config.yaml` (lockfile list, heartbeat TTL, ignored paths).

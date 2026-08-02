@@ -128,6 +128,30 @@ the integration, not *I do everything myself first and only spawn when
 forced*. Workers parallelize; you stitch. Solo execution is the
 exception, not the default.
 
+### Safety target
+
+The swarm's measurable goal: **task completion loss rate < 3%** (target = 0%, hard ceiling = 3%, "loss" = task dispatched to swarm and not landed in a green main, whether due to merge conflict, scope drift, dirty worktree, manifest corruption, or heartbeat staleness).
+
+Track loss per session:
+- `dispatched` = number of `spawn` calls
+- `landed` = number of branches root successfully merged with all gates green
+- `lost` = `dispatched - landed`
+- `rate` = `lost / dispatched`
+
+If `rate > 3%`, root must pause and run `scripts/conflict-detect.py all` before the next spawn to identify the failure mode. The framework ships the detectors; per-repo configurations wire them to specific conflict surfaces.
+
+### TDD is perception, not enforcement
+
+TDD gives root a **closed feedback loop** for one worker's slice: red → green → refactor proves the slice behaves correctly. TDD does **not** prevent:
+
+- concurrent edits to the same file by parallel workers (filesystem race)
+- scope drift where a worker edits files outside its spawn prompt
+- merge conflicts when root integrates branches with overlapping line ranges
+- manifest corruption from concurrent writes to `.jcode/worktree-manifest.json`
+- dirty worktree state when a worker errors mid-commit
+
+These are **automated safety concerns**, not testable properties of a single worker's code. The detection framework (`scripts/conflict-detect.py`) is the enforcement layer; TDD is the perception layer. Both must run.
+
 ### Root decision flow (run before acting)
 
 Answer these three questions **in order** for every task. Only proceed
@@ -149,6 +173,36 @@ to action when the answers converge.
 If questions 1 and 2 both say "spawn", spawn. Always pass `label`,
 `model`, `effort`, worktree path, base SHA, and worker branch on the
 spawn call (see §4 below).
+
+### Worker timeout policy
+
+Workers stall in three ways: (a) genuinely thinking, (b) waiting on a
+long-running test, (c) stuck in a tool-call loop. Root's default is to
+**wait passively up to a threshold, then escalate**.
+
+| Time since last signal                  | Action                                   |
+| --------------------------------------- | ---------------------------------------- |
+| < 5 min, file mtimes moving             | Wait. Do not dm.                         |
+| 5–15 min, slow but moving               | Wait. Optional dm: "still progressing?"  |
+| 15–30 min, no file mtime movement       | **dm** with "commit or report failure". If no response in 60 s, stop and respawn. |
+| > 30 min                                | **stop**, mark failed in manifest, respawn with same `task_id`. If the same task fails twice, split it. |
+
+Signals to watch:
+
+- `git -C <worktree_path> log -1 --format=%ct` (latest commit timestamp)
+- `find <worktree_path> -type f -newer <baseline> -not -path '*/__pycache__/*'` (file mtime since last commit)
+- `swarm status <worker_session>` (worker liveness)
+- The worker's typed artifact, if any (use as the truth signal)
+
+Anti-patterns:
+
+- Don't poll `swarm status` more than once per minute — the runtime
+  doesn't update faster than that.
+- Don't keep waiting past 30 min — long thinking is real, but
+  silent thinking past the threshold is more often a stuck loop.
+- Don't respawn without first reading the worker's last `validation`
+  output — it may already have everything you need.
+- Don't `dm` more than once per stuck episode; multiple dms are noise.
 
 **Code implementation routing rule (hard)** — for any code-implementation
 work, the main agent **must not** edit code in the main session. Spawn an
@@ -358,6 +412,7 @@ This overlay is the **main-agent-side summary**. The full set lives in:
 - `~/.jcode/roles/migrator.md` — large-scale migration persona.
 - `~/.jcode/roles/test-writer.md` — test scaffold / coverage persona.
 - `~/.jcode/roles/doc-writer.md` — documentation persona.
+- `scripts/conflict-detect.py` — repo-agnostic framework with 6 detectors (scope overlap, lockfile contention, in-flight overlap, dirty state, manifest corruption, heartbeat stale). Per-repo config at `.jcode/conflict-config.yaml`. Ships with the lazible-jcode install; downstream repos copy it into their own `scripts/`.
 
 When a worker's report conflicts with this overlay, trust the worker role
 template for worker-side concerns (output schema, worktree etiquette,
