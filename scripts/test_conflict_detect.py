@@ -1362,5 +1362,217 @@ class TestBranchAncestryDataclass(unittest.TestCase):
         self.assertEqual(b.chains, [["feat/A", "feat/B"]])
 
 
+# ---------------------------------------------------------------------------
+# R19 gap 1: auto_extract_scope + plan-order --branches
+# ---------------------------------------------------------------------------
+
+
+class TestAutoExtractScope(unittest.TestCase):
+    """R19 gap 1: derive {branch: [files]} from `git diff base..branch`."""
+
+    def _stub_diff(self, diff_map):
+        """Stub `git -C <root> diff base..branch --name-only`.
+
+        `diff_map` is {branch: "<newline-separated files>"}.
+        """
+        def fake_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            # cmd: ["git", "-C", root, "diff", "base..branch", "--name-only"]
+            if "diff" in cmd and "--name-only" in cmd:
+                # find ".."
+                for piece in cmd:
+                    if ".." in piece:
+                        branch = piece.split("..", 1)[1]
+                        files = diff_map.get(branch, "")
+                        return mock.Mock(
+                            returncode=0, stdout=files, stderr=""
+                        )
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return fake_run
+
+    def test_auto_extract_returns_branch_to_files(self):
+        diff_map = {
+            "feat/A": "src/a.py\nsrc/shared.py\n",
+            "feat/B": "src/b.py\n",
+        }
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", side_effect=self._stub_diff(diff_map)
+        ):
+            scope = cd.auto_extract_scope(
+                ["feat/A", "feat/B"], repo_root="/tmp/repo"
+            )
+        self.assertEqual(set(scope.keys()), {"feat/A", "feat/B"})
+        self.assertIn("src/a.py", scope["feat/A"])
+        self.assertIn("src/shared.py", scope["feat/A"])
+        self.assertEqual(scope["feat/B"], ["src/b.py"])
+
+    def test_auto_extract_handles_empty_diff(self):
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_diff({"feat/A": ""}),
+        ):
+            scope = cd.auto_extract_scope(["feat/A"], repo_root="/tmp/repo")
+        self.assertEqual(scope["feat/A"], [])
+
+    def test_auto_extract_empty_branches_returns_empty_dict(self):
+        scope = cd.auto_extract_scope([], repo_root="/tmp/repo")
+        self.assertEqual(scope, {})
+
+    def test_auto_extract_no_git_binary(self):
+        with mock.patch.object(cd.shutil, "which", return_value=None):
+            scope = cd.auto_extract_scope(
+                ["feat/A", "feat/B"], repo_root="/tmp/repo"
+            )
+        # Each branch gets an empty scope; the operator must populate manually.
+        self.assertEqual(scope, {"feat/A": [], "feat/B": []})
+
+
+class TestPlanOrderFromBranches(unittest.TestCase):
+    """R19 gap 1: `plan-order --branches` derives scope + ancestry from git."""
+
+    def _stub_full(self, diff_map, ancestry_pairs):
+        """Stub both diff and merge-base --is-ancestor."""
+        def fake_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if "merge-base" in cmd and "--is-ancestor" in cmd:
+                ai = cmd.index("--is-ancestor")
+                a, b = cmd[ai + 1], cmd[ai + 2]
+                ok = (a, b) in ancestry_pairs
+                return mock.Mock(returncode=0 if ok else 1, stdout="", stderr="")
+            if "diff" in cmd and "--name-only" in cmd:
+                for piece in cmd:
+                    if ".." in piece:
+                        branch = piece.split("..", 1)[1]
+                        files = diff_map.get(branch, "")
+                        return mock.Mock(
+                            returncode=0, stdout=files, stderr=""
+                        )
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return fake_run
+
+    def test_plan_order_branches_chain_same_phase_when_disjoint(self):
+        # Chain A -> B but their files are disjoint: should appear in the
+        # same phase (chain relationship is metadata; file overlap drives
+        # actual phase assignment).
+        diff_map = {
+            "feat/A": "src/a.py\n",
+            "feat/B": "src/b.py\n",
+        }
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_full(diff_map, [("feat/A", "feat/B")]),
+        ):
+            plan = cd.plan_execution_order_from_branches(
+                branches=["feat/A", "feat/B"],
+                base="main",
+                repo_root="/tmp/repo",
+            )
+        # Both should be in the same phase because files don't conflict.
+        all_in_one_phase = any(
+            len(phase) >= 2 and sorted(phase) == ["feat/A", "feat/B"]
+            for phase in plan.phases
+        )
+        self.assertTrue(
+            all_in_one_phase,
+            msg=f"expected A,B in one phase, got phases={plan.phases}",
+        )
+
+    def test_plan_order_branches_chain_different_phases_when_shared_file(self):
+        # Chain A -> B with overlapping file -> must be in different phases.
+        diff_map = {
+            "feat/A": "src/shared.py\n",
+            "feat/B": "src/shared.py\n",
+        }
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_full(diff_map, [("feat/A", "feat/B")]),
+        ):
+            plan = cd.plan_execution_order_from_branches(
+                branches=["feat/A", "feat/B"],
+                base="main",
+                repo_root="/tmp/repo",
+            )
+        # A and B cannot be in the same phase.
+        same_phase = any(
+            "feat/A" in phase and "feat/B" in phase for phase in plan.phases
+        )
+        self.assertFalse(same_phase, msg=f"phases={plan.phases}")
+        # A must come before B.
+        a_phase = next(i for i, p in enumerate(plan.phases) if "feat/A" in p)
+        b_phase = next(i for i, p in enumerate(plan.phases) if "feat/B" in p)
+        self.assertLess(a_phase, b_phase)
+
+    def test_plan_order_branches_parallel_in_same_phase(self):
+        # Parallel branches with disjoint files -> same phase.
+        diff_map = {
+            "feat/A": "src/a.py\n",
+            "feat/B": "src/b.py\n",
+        }
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_full(diff_map, []),  # no ancestry
+        ):
+            plan = cd.plan_execution_order_from_branches(
+                branches=["feat/A", "feat/B"],
+                base="main",
+                repo_root="/tmp/repo",
+            )
+        all_in_one_phase = any(
+            len(phase) >= 2 and sorted(phase) == ["feat/A", "feat/B"]
+            for phase in plan.phases
+        )
+        self.assertTrue(all_in_one_phase)
+
+    def test_plan_order_branches_empty_returns_empty(self):
+        plan = cd.plan_execution_order_from_branches(
+            branches=[], base="main", repo_root="/tmp/repo"
+        )
+        self.assertEqual(plan.phases, [])
+
+
+class TestPlanOrderCLIWithBranches(unittest.TestCase):
+    """The `plan-order` subcommand must accept `--branches` instead of `--tasks`."""
+
+    def test_cli_plan_order_branches_runs(self):
+        # Patch only `cd.shutil.which` (cheap); leave real subprocess.run
+        # to be called. /tmp is not a git repo so git returns errors and
+        # `_run_git` falls back to empty stdout — exactly the case we want.
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ):
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve().parent / "conflict-detect.py"),
+                    "plan-order",
+                    "--branches", "feat/nonexistent",
+                    "--base", "main",
+                    "--repo", "/tmp",
+                    "--format", "json",
+                ],
+                capture_output=True, text=True,
+            )
+        # Should exit 0 with a valid JSON plan (branches phase).
+        self.assertEqual(
+            result.returncode, 0,
+            msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
+        )
+        out = json.loads(result.stdout)
+        self.assertIn("phases", out)
+        self.assertIn("critical_path", out)
+        # Single branch forms its own chain of 1.
+        self.assertEqual(len(out["phases"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
