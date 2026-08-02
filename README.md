@@ -13,6 +13,10 @@ It carries:
   document every supported option
 - An **enhanced default main-agent prompt overlay** (`swarm/prompt-overlay.md`)
   that turns the default main agent into a swarm-coordinator-first agent
+- **Custom jcode patches** (`jcode-patches/`) that rewrite the **base** system
+  prompt itself (not just an overlay), so the swarm-coordinator-first
+  behavior is baked into the jcode binary at build time. Maintained via a
+  reusable patch + build script + sync flow. See `docs/SELFDEV.md`.
 - A standalone installer (`scripts/install.sh`) and uninstaller
   (`scripts/uninstall.sh`) modeled after the upstream `jcode.sh/install`
   script, but driven entirely from this repo so it works offline and without
@@ -161,6 +165,29 @@ Sync all three via `scripts/install.sh` (default). `skills/copy-from-jcode/copy-
 also still works for `swarm-prompt.md` + `roles/`, but does not manage the
 overlay — use `install.sh` for that.
 
+## Self-development (custom jcode build)
+
+The overlay (above) is **additive** — it sits after jcode's base system prompt
+in the prompt concatenation order. To make the swarm-coordinator-first
+behavior truly baked-in, lazible-jcode ships a patch against jcode's source:
+
+```bash
+# Build a canary binary side-by-side with the regular jcode (~5-10 min)
+./scripts/build-jcode-canary.sh --jcode-version v0.65.0
+
+# Or, do everything in one shot during install
+./scripts/install.sh --enable-selfdev --canary-version v0.65.0
+
+# Promote the canary to the main jcode binary
+./scripts/build-jcode-canary.sh --jcode-version v0.65.0 --replace-main
+```
+
+The patch replaces the upstream identity line "maximally proactive coding
+agent" with "swarm-coordinator-first coding agent" inside
+`crates/jcode-base/src/prompt/system_prompt.md` (which is compiled into the
+binary via `include_str!`). See `docs/SELFDEV.md` for the full flow including
+re-syncing against upstream jcode releases.
+
 ## What is and isn't committed
 
 | File / dir | Committed? | Why |
@@ -175,3 +202,8 @@ overlay — use `install.sh` for that.
 ## License
 
 MIT, same as upstream jcode. See upstream for full license text.
+
+The `jcode-patches/` directory contains patches against the upstream jcode
+source. The patches themselves are MIT-licensed (matching upstream); the
+resulting built binary is governed by the upstream jcode license — see
+upstream for full text.

@@ -45,13 +45,25 @@ code lives here.
   the only safe place to reference its shape.
 - Installer lives at `scripts/install.sh` (repo-level wrapper) and
   `skills/install-jcode/jcode-install.sh` (standalone binary installer).
-  The wrapper does two things in order:
+  The wrapper does three things in order:
   1. Calls the standalone installer to install the jcode binary + PATH.
   2. Symlinks the overlay + swarm config into `~/.jcode/`. Flags:
      `--no-overlay` (skip step 2), `--overlay <path>` (custom overlay file),
      `--refresh` (force overwrite mismatched symlinks, backup non-symlinks),
      `--install-skills` (also symlink `skills/<name>`),
      `--skip-binary` (only run step 2), `--dry-run` (plan only).
+  3. (opt-in) `scripts/build-jcode-canary.sh` clones jcode source, applies
+     `jcode-patches/swarm-coordinator-first.patch` to the BASE system prompt,
+     cargo-builds a canary binary. Enable with `--enable-selfdev`.
+     Pin the version with `--canary-version <v>`. Replace the main binary
+     with `--replace-main-binary` (backed up first as `jcode.bak.<ts>`).
+- `jcode-patches/swarm-coordinator-first.system_prompt.md` is the source of
+  truth for the rewritten base identity. The matching `.patch` file is
+  generated from it against the upstream jcode HEAD at time of commit; see
+  `docs/SELFDEV.md` §4 for the re-sync recipe when upstream drifts.
+- `scripts/sync-jcode-source.sh` pulls the latest upstream jcode tag and
+  re-applies every patch in `jcode-patches/`. Exits non-zero with a recovery
+  recipe when a patch fails to apply.
 
 ## Commit conventions
 
@@ -99,11 +111,17 @@ Before pushing any commit, run:
 ```bash
 bash -n scripts/install.sh
 bash -n scripts/uninstall.sh
+bash -n scripts/build-jcode-canary.sh
+bash -n scripts/sync-jcode-source.sh
 bash -n skills/install-jcode/jcode-install.sh
 bash -n skills/copy-from-jcode/copy-from-jcode.sh
+# Verify the patch still applies to upstream jcode
+git clone --depth 1 https://github.com/1jehuang/jcode.git /tmp/jcode-verify
+(cd /tmp/jcode-verify && git apply --check jcode-patches/swarm-coordinator-first.patch)
+rm -rf /tmp/jcode-verify
 # Optional but recommended: a dry-run
 bash scripts/install.sh --dry-run
 ```
 
-All four must pass with no syntax errors. The `--dry-run` must print a plan
-without writing to disk.
+All shell scripts must pass `bash -n`. The patch must apply cleanly. The
+`--dry-run` must print a plan without writing to disk.

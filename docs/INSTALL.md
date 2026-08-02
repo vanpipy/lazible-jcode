@@ -125,6 +125,24 @@ It does **not** touch (without `--purge`):
 It never touches shell rc files. If you want to remove the PATH line the
 installer added, edit the rc file by hand.
 
+## Self-development (advanced)
+
+If the overlay isn't strong enough for your taste (because the upstream
+`system_prompt.md` still anchors "maximally proactive"), enable selfdev to
+build a custom jcode binary with the swarm-coordinator-first base prompt
+baked in. See `docs/SELFDEV.md` for the full flow.
+
+```bash
+# Build a canary side-by-side (5-10 min first run)
+./scripts/install.sh --skip-binary --enable-selfdev --canary-version v0.65.0
+
+# Then promote
+./scripts/build-jcode-canary.sh --from-source --replace-main
+```
+
+After `--replace-main`, your regular `jcode` invocation runs the swarm-tuned
+build. The original is at `~/.local/bin/jcode.bak.<timestamp>` for rollback.
+
 ## Re-install / overwrite
 
 The wrapper is **idempotent**: running `./scripts/install.sh` on a machine
