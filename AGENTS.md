@@ -34,6 +34,10 @@ code lives here.
   Install all three via `scripts/install.sh` (default behavior). Old
   `skills/copy-from-jcode/copy-from-jcode.sh --install` path still works but
   is no longer the recommended way.
+- `swarm/ARCHITECTURE.md` — human-readable overview of the three goals
+  (main = organizer, worker = executor, star topology), topology, contracts
+  (invariants + output contract + cross-worker handoff), and the path map
+  after install. Read this first if you are new to the swarm layout.
 - Config templates under `config/*.example` are **reference only**. Live config
   lives in `~/.jcode/`. Use `skills/copy-from-jcode/copy-from-jcode.sh` to pull
   a machine's `~/.jcode/` into this repo.

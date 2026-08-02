@@ -52,7 +52,8 @@ overwrites the destination unconditionally:
 
   1. Install jcode binary to ~/.local/bin/jcode
        (or build a canary from jcode-patches/*.patch if any exist)
-  2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md, swarm/roles/
+  2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md,
+     swarm/ARCHITECTURE.md, swarm/roles/ into ~/.jcode/
   3. Symlink each skills/<name> into ~/.jcode/skills/<name>
   4. Symlink AGENTS.md to ~/.jcode/AGENTS.md
 
@@ -154,6 +155,7 @@ info "── step 2/4: overlay + swarm config ──"
 mkdir -p "$JCODE_HOME" "$JCODE_HOME/roles"
 overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md" "prompt-overlay.md"
 overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"   "swarm-prompt.md"
+overwrite_link "$repo_root/swarm/ARCHITECTURE.md"   "$JCODE_HOME/ARCHITECTURE.md"   "ARCHITECTURE.md"
 overwrite_link "$repo_root/swarm/roles"             "$JCODE_HOME/roles"             "roles/"
 
 # ── step 3: skills ────────────────────────────────────────────────────────────
@@ -178,4 +180,5 @@ info "✅ lazible-jcode install complete."
 info "   jcode binary:   $INSTALL_DIR/jcode"
 info "   jcode home:     $JCODE_HOME"
 info "   overlay:        $JCODE_HOME/prompt-overlay.md → $repo_root/swarm/prompt-overlay.md"
+info "   architecture:   $JCODE_HOME/ARCHITECTURE.md → $repo_root/swarm/ARCHITECTURE.md"
 info "   AGENTS.md:      $JCODE_HOME/AGENTS.md → $repo_root/AGENTS.md"
