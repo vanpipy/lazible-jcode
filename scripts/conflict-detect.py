@@ -1028,6 +1028,86 @@ def detect_branch_ancestry(
 
 
 # ---------------------------------------------------------------------------
+# R19 gap 1: auto_extract_scope + plan_execution_order_from_branches
+# ---------------------------------------------------------------------------
+
+
+def auto_extract_scope(
+    branches: list[str],
+    repo_root: str,
+    base: str = "main",
+) -> dict[str, list[str]]:
+    """Derive `{branch: [files...]}` from `git diff <base>..<branch>`.
+
+    Used by `plan_execution_order_from_branches` to feed scope-file
+    overlap into the existing planning algorithm without requiring the
+    operator to hand-write a `tasks.json` file.
+
+    Args:
+        branches  — list of branch names to introspect.
+        repo_root — filesystem path for git commands.
+        base      — the comparison base (default: "main").
+
+    Returns:
+        dict mapping each branch to its sorted list of changed files.
+        Returns `{b: []}` for each branch when git is missing or no diff
+        exists, so downstream callers still see the branch.
+    """
+    if not branches:
+        return {}
+    if shutil.which("git") is None:
+        return {b: [] for b in branches}
+
+    scope: dict[str, list[str]] = {}
+    for branch in branches:
+        diff_out = _run_git(
+            repo_root, "diff", f"{base}..{branch}", "--name-only"
+        )
+        files = [line.strip() for line in diff_out.splitlines() if line.strip()]
+        scope[branch] = sorted(files)
+    return scope
+
+
+def plan_execution_order_from_branches(
+    branches: list[str],
+    base: str,
+    repo_root: str,
+) -> ExecutionPlan:
+    """Build an ExecutionPlan directly from git branches.
+
+    Combines `detect_branch_ancestry` (Gap 2) with `auto_extract_scope`
+    (Gap 1) to feed scope-file overlap into the existing planner.
+
+    Already-merged branches are dropped. The remaining branches form
+    chains; within each chain, scope overlap drives phase assignment.
+
+    Args:
+        branches  — list of branch names.
+        base      — target branch (default "main" upstream).
+        repo_root — filesystem path for git commands.
+
+    Returns:
+        ExecutionPlan. Empty branches -> empty plan.
+    """
+    if not branches:
+        return ExecutionPlan(phases=[], critical_path=[], parallel_batches=[])
+
+    ancestry = detect_branch_ancestry(branches, base, repo_root)
+    live_branches: list[str] = []
+    for chain in ancestry.chains:
+        live_branches.extend(chain)
+    if not live_branches:
+        return ExecutionPlan(phases=[], critical_path=[], parallel_batches=[])
+
+    scope = auto_extract_scope(live_branches, repo_root, base=base)
+    tasks = [
+        Task(task_id=branch, scope_files=scope.get(branch, []))
+        for branch in live_branches
+    ]
+    return plan_execution_order(tasks)
+
+
+# ---------------------------------------------------------------------------
 # Detector 5: manifest corruption / schema
 # ---------------------------------------------------------------------------
 
@@ -1767,8 +1847,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sp7 = sub.add_parser("plan-order", parents=[fmt_parent],
                           help="plan task execution order based on file overlap")
-    sp7.add_argument("--tasks", required=True,
+    # R19 gap 1: accept either --tasks (legacy) or --branches (auto-extract).
+    # Both are optional; the caller must pass at least one.
+    sp7.add_argument("--tasks", required=False, default=None,
                      help="JSON file of [{task_id, scope_files}]")
+    sp7.add_argument("--branches", nargs="+", default=None,
+                     help="branch names to auto-extract scope from "
+                          "(mutually exclusive with --tasks)")
+    sp7.add_argument("--base", default="main",
+                     help="base ref for --branches mode (default: main)")
+    sp7.add_argument("--repo", default=".",
+                     help="repo root for --branches mode (default: cwd)")
 
     sp8 = sub.add_parser("dep-chain", parents=[fmt_parent],
                           help="detect if a planned task depends on in-flight workers' branches")
@@ -1839,8 +1928,25 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     elif args.command == "plan-order":
-        tasks = _read_tasks_file(args.tasks)
-        plan = plan_execution_order(tasks)
+        # R19 gap 1: --branches auto-extracts scope + ancestry from git.
+        # --tasks keeps the legacy JSON-file path.
+        if args.branches:
+            if args.tasks:
+                raise SystemExit(
+                    "plan-order: --tasks and --branches are mutually exclusive"
+                )
+            plan = plan_execution_order_from_branches(
+                branches=list(args.branches),
+                base=args.base,
+                repo_root=args.repo,
+            )
+        elif args.tasks:
+            tasks = _read_tasks_file(args.tasks)
+            plan = plan_execution_order(tasks)
+        else:
+            raise SystemExit(
+                "plan-order: must pass either --tasks <file> or --branches <name>..."
+            )
         return _emit_plan(plan, fmt)
 
     elif args.command == "dep-chain":
