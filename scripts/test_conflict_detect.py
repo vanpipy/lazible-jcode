@@ -365,5 +365,311 @@ class TestCLIExitCodes(unittest.TestCase):
         self.assertEqual(out["conflicts"][0]["severity"], "blocker")
 
 
+# ---------------------------------------------------------------------------
+# Detectors 7, 8, 9: execution-order planning
+# ---------------------------------------------------------------------------
+
+
+class TestExecutionOrder(unittest.TestCase):
+    """plan_execution_order + detect_dependency_chain + suggest_serialization.
+
+    TDD red phase: these tests are appended BEFORE the production
+    functions are implemented. They reference cd.Task, cd.ExecutionPlan,
+    cd.plan_execution_order, cd.detect_dependency_chain, and
+    cd.suggest_serialization.
+    """
+
+    # ---- plan_execution_order ------------------------------------------
+
+    def test_plan_order_disjoint(self):
+        # 3 tasks with disjoint files => 1 phase, 3 tasks in parallel.
+        tasks = [
+            cd.Task(task_id="t1", scope_files=["a.py"]),
+            cd.Task(task_id="t2", scope_files=["b.py"]),
+            cd.Task(task_id="t3", scope_files=["c.py"]),
+        ]
+        plan = cd.plan_execution_order(tasks)
+        self.assertEqual(len(plan.phases), 1)
+        self.assertEqual(sorted(plan.phases[0]), ["t1", "t2", "t3"])
+        # Critical path = longest DAG chain. With disjoint tasks there is
+        # no dependency edge, so the longest chain is a single task.
+        self.assertEqual(len(plan.critical_path), 1)
+        # Parallel batches == phases whose length > 1. The single phase
+        # with 3 tasks counts.
+        self.assertEqual(len(plan.parallel_batches), 1)
+        self.assertEqual(sorted(plan.parallel_batches[0]), ["t1", "t2", "t3"])
+
+    def test_plan_order_chain(self):
+        # t1 and t2 share a file; t2 and t3 share a file => 3 phases.
+        tasks = [
+            cd.Task(task_id="t1", scope_files=["shared.py"]),
+            cd.Task(task_id="t2", scope_files=["shared.py", "b.py"]),
+            cd.Task(task_id="t3", scope_files=["b.py"]),
+        ]
+        plan = cd.plan_execution_order(tasks)
+        # Each pair overlaps, so strictly serial: 3 phases of 1 each.
+        self.assertEqual(len(plan.phases), 3)
+        self.assertEqual(plan.phases[0], ["t1"])
+        self.assertEqual(plan.phases[1], ["t2"])
+        self.assertEqual(plan.phases[2], ["t3"])
+        self.assertEqual(plan.critical_path, ["t1", "t2", "t3"])
+        # No parallel batches when phases are length-1.
+        self.assertTrue(all(len(b) <= 1 for b in plan.parallel_batches))
+
+    def test_plan_order_diamond(self):
+        # Diamond shape in the file-overlap graph: t1 touches root.py;
+        # t2,t3 both touch root.py + a branch file; t4 touches the two
+        # branch files. Because t2 and t3 BOTH modify "root.py", the
+        # implementation must serialize them. The result is a strictly
+        # serial 4-phase plan (no parallel batches), and the critical
+        # path traverses all four tasks in lex order.
+        tasks = [
+            cd.Task(task_id="t1", scope_files=["root.py"]),
+            cd.Task(task_id="t2", scope_files=["root.py", "left.py"]),
+            cd.Task(task_id="t3", scope_files=["root.py", "right.py"]),
+            cd.Task(task_id="t4", scope_files=["left.py", "right.py"]),
+        ]
+        plan = cd.plan_execution_order(tasks)
+        self.assertEqual(len(plan.phases), 4)
+        self.assertEqual(plan.phases[0], ["t1"])
+        self.assertEqual(plan.phases[1], ["t2"])
+        self.assertEqual(plan.phases[2], ["t3"])
+        self.assertEqual(plan.phases[3], ["t4"])
+        # Critical path = longest chain through phases = all four.
+        self.assertEqual(plan.critical_path, ["t1", "t2", "t3", "t4"])
+        # Strictly serial => no parallel batches.
+        self.assertEqual(plan.parallel_batches, [])
+
+    def test_plan_order_parallel_batches(self):
+        # True parallel batching: t2 and t3 do NOT share a file with
+        # each other, only with t1 and t4 respectively.
+        # Edges: t1->t2 (root.py), t1->t3 (other.py),
+        #        t2->t4 (left.py), t3->t4 (right.py).
+        # Phase 0: [t1], Phase 1: [t2, t3] (parallel!), Phase 2: [t4].
+        tasks = [
+            cd.Task(task_id="t1", scope_files=["root.py", "other.py"]),
+            cd.Task(task_id="t2", scope_files=["root.py", "left.py"]),
+            cd.Task(task_id="t3", scope_files=["other.py", "right.py"]),
+            cd.Task(task_id="t4", scope_files=["left.py", "right.py"]),
+        ]
+        plan = cd.plan_execution_order(tasks)
+        self.assertEqual(len(plan.phases), 3)
+        self.assertEqual(plan.phases[0], ["t1"])
+        self.assertEqual(sorted(plan.phases[1]), ["t2", "t3"])
+        self.assertEqual(plan.phases[2], ["t4"])
+        # Critical path: t1 -> t2 -> t4 (lex tie-break).
+        self.assertEqual(plan.critical_path, ["t1", "t2", "t4"])
+        # The middle phase IS a parallel batch.
+        self.assertEqual(len(plan.parallel_batches), 1)
+        self.assertEqual(sorted(plan.parallel_batches[0]), ["t2", "t3"])
+
+    def test_plan_order_cycle_detected(self):
+        # Two tasks sharing BOTH files is the pathological "cycle-shaped"
+        # input. With lex-based orientation (t1 < t2 => t1 -> t2) the
+        # graph is acyclic, but the implementation must handle this case
+        # without raising. Verify graceful serial phasing.
+        tasks = [
+            cd.Task(task_id="t1", scope_files=["a.py", "b.py"]),
+            cd.Task(task_id="t2", scope_files=["a.py", "b.py"]),
+        ]
+        # The function must not raise. It should produce a 2-phase serial
+        # plan (lex orientation yields t1 -> t2). The cycle-defensive
+        # branch is unreachable for shared-file-only inputs but is
+        # covered by the implementation's Kahn-based cycle check.
+        plan = cd.plan_execution_order(tasks)
+        self.assertEqual(len(plan.phases), 2)
+        self.assertEqual(plan.phases[0], ["t1"])
+        self.assertEqual(plan.phases[1], ["t2"])
+        # Critical path traverses both phases.
+        self.assertEqual(plan.critical_path, ["t1", "t2"])
+
+    # ---- detect_dependency_chain ---------------------------------------
+
+    def test_dep_chain_no_overlap(self):
+        # New task does not intersect with branch diffs => empty list.
+        new_task = cd.Task(task_id="new", scope_files=["scripts/brand_new.py"])
+        # Stub the diff to return only files unrelated to new_task.
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess,
+            "run",
+            return_value=mock.Mock(
+                stdout="swarm/prompt-overlay.md\n", returncode=0
+            ),
+        ):
+            conflicts = cd.detect_dependency_chain(
+                new_task,
+                existing_tasks=[],
+                existing_branches=["feat/other"],
+                repo_path="/tmp/repo",
+            )
+        self.assertEqual(conflicts, [])
+
+    def test_dep_chain_with_overlap(self):
+        # New task shares a file with branch diff => 1 blocker.
+        new_task = cd.Task(task_id="new", scope_files=["src/common.py"])
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess,
+            "run",
+            return_value=mock.Mock(
+                stdout="src/common.py\nsrc/a.py\n", returncode=0
+            ),
+        ):
+            conflicts = cd.detect_dependency_chain(
+                new_task,
+                existing_tasks=[],
+                existing_branches=["feat/worker_a"],
+                repo_path="/tmp/repo",
+            )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].severity, "blocker")
+        joined = " ".join(conflicts[0].evidence)
+        self.assertIn("src/common.py", joined)
+        self.assertIn("feat/worker_a", joined)
+
+    # ---- suggest_serialization -----------------------------------------
+
+    def test_serialize_lockfile(self):
+        # Two tasks touch package.json => config marks it lockfile => blocker.
+        tasks = [
+            cd.Task(task_id="t1", scope_files=["package.json", "src/a.ts"]),
+            cd.Task(task_id="t2", scope_files=["package.json", "src/b.ts"]),
+        ]
+        config = {"lockfile_files": ["package.json"]}
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ):
+            conflicts = cd.suggest_serialization(tasks, repo_path="/tmp/repo", config=config)
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].severity, "blocker")
+        joined = " ".join(conflicts[0].evidence)
+        self.assertIn("package.json", joined)
+        self.assertIn("serialize", conflicts[0].remediation.lower())
+
+    def test_serialize_disjoint(self):
+        # Shared non-lockfile file => minor (parallel ok with rebase).
+        tasks = [
+            cd.Task(task_id="t1", scope_files=["docs/x.md"]),
+            cd.Task(task_id="t2", scope_files=["docs/x.md"]),
+        ]
+        # Empty config => no lockfiles => falls to git-history heuristic.
+        # Stub `git log --oneline -20 -- <file>` to return empty (no history).
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess,
+            "run",
+            return_value=mock.Mock(stdout="", returncode=0),
+        ):
+            conflicts = cd.suggest_serialization(
+                tasks, repo_path="/tmp/repo", config={}
+            )
+        # No history => heuristic falls back to minor remediation.
+        self.assertGreaterEqual(len(conflicts), 1)
+        # All emitted conflicts for non-lockfile disjoint line overlap must be minor.
+        for c in conflicts:
+            self.assertEqual(c.severity, "minor")
+            self.assertIn("parallel", c.remediation.lower())
+
+    # ---- CLI subcommands -----------------------------------------------
+
+    def test_cli_plan_order(self):
+        payload = json.dumps([
+            {"task_id": "r1", "scope_files": ["scripts/check-swarm-consistency.py"]},
+            {"task_id": "r7", "scope_files": ["swarm/role-templates/"]},
+        ])
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(payload)
+            path = f.name
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve().parent / "conflict-detect.py"),
+                    "plan-order", "--tasks", path, "--format", "json",
+                ],
+                capture_output=True, text=True,
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        out = json.loads(result.stdout)
+        self.assertIn("phases", out)
+        self.assertIn("critical_path", out)
+        self.assertIn("parallel_batches", out)
+        # r1 and r7 share no files => single phase of 2.
+        self.assertEqual(len(out["phases"]), 1)
+        self.assertEqual(sorted(out["phases"][0]), ["r1", "r7"])
+
+    def test_cli_dep_chain(self):
+        scope_payload = json.dumps([
+            {"task_id": "new", "scope_files": ["src/common.py"]},
+        ])
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(scope_payload)
+            scope_path = f.name
+        try:
+            # Stub subprocess.run inside the subprocess by patching git's
+            # output via env: simplest is to invoke against a real git repo
+            # with no matching branch.
+            with mock.patch.object(
+                cd.shutil, "which", return_value="/usr/bin/git"
+            ):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).resolve().parent / "conflict-detect.py"),
+                        "dep-chain",
+                        "--scope", scope_path,
+                        "--branches", "feat/nonexistent",
+                        "--repo", "/tmp",
+                        "--format", "json",
+                    ],
+                    capture_output=True, text=True,
+                )
+        finally:
+            os.unlink(scope_path)
+        # No matching branch in /tmp (git will fail) => no conflicts.
+        self.assertIn(result.returncode, (0, 1))
+
+    def test_cli_serialize(self):
+        payload = json.dumps([
+            {"task_id": "t1", "scope_files": ["package.json"]},
+            {"task_id": "t2", "scope_files": ["package.json"]},
+        ])
+        cfg_payload = "lockfile_files:\n  - package.json\n"
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(payload)
+            tasks_path = f.name
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(cfg_payload)
+            cfg_path = f.name
+        try:
+            with mock.patch.object(cd.shutil, "which", return_value="/usr/bin/git"):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).resolve().parent / "conflict-detect.py"),
+                        "serialize",
+                        "--tasks", tasks_path,
+                        "--config", cfg_path,
+                        "--repo", "/tmp",
+                        "--format", "json",
+                    ],
+                    capture_output=True, text=True,
+                )
+        finally:
+            os.unlink(tasks_path)
+            os.unlink(cfg_path)
+        # Lockfile contention => blocker => exit 2.
+        self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+        out = json.loads(result.stdout)
+        self.assertGreaterEqual(len(out["conflicts"]), 1)
+        self.assertEqual(out["conflicts"][0]["severity"], "blocker")
+
+
 if __name__ == "__main__":
     unittest.main()
