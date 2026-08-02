@@ -147,8 +147,16 @@ fi
 # --- step 2: apply patch ---
 log_step "step 2/4: apply lazible-jcode patch"
 
-# Verify the patch is applicable. If not, the upstream prompt file drifted.
+# Reset the target file to upstream clean state before applying. Without this,
+# reusing a source-dir from a previous build (where the patch was already
+# applied) makes `git apply --check` fail: the patch expects the original
+# upstream content, not the patched content. `git checkout HEAD -- <file>`
+# restores the file to whatever the current branch's HEAD has, which for
+# default-branch clones is upstream master.
 if [[ "$DRY_RUN" -eq 0 ]]; then
+    (cd "$SOURCE_DIR" && git checkout HEAD -- "$TARGET_FILE" 2>/dev/null) || true
+
+    # Verify the patch is applicable. If not, the upstream prompt file drifted.
     if ! (cd "$SOURCE_DIR" && git apply --check "$PATCH_FILE" 2>&1); then
         log_err "patch no longer applies cleanly to upstream jcode."
         log_err "the upstream system_prompt.md has drifted."
@@ -158,6 +166,7 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     (cd "$SOURCE_DIR" && git apply "$PATCH_FILE")
     log_step "patch applied (1 file changed, identity + autonomy + spawn hygiene + verification)"
 else
+    log_dry "git checkout HEAD -- $TARGET_FILE"
     log_dry "git apply --check $PATCH_FILE"
     log_dry "git apply $PATCH_FILE"
 fi
