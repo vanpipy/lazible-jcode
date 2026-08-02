@@ -24,7 +24,7 @@ work within the MiniMax family.
 
 | Tier        | Model                   | When                                                 | Effort        |
 | ----------- | ----------------------- | ---------------------------------------------------- | ------------- |
-| Fast        | `minimax-M2.7-highspeed` | Read, summarize, reformat, mechanical impl, simple test scaffolds, doc rewrite | `none` / `low` |
+| Fast        | `MiniMax-M2.7-highspeed` | Read, summarize, reformat, mechanical impl, simple test scaffolds, doc rewrite | `none` / `low` |
 | Quality     | `MiniMax-M3`            | Refactor, migration, debugging, design, review, verification, architecture, default worker | `medium` / `high` |
 
 Pass `model` explicitly on every spawn. Pass `effort` explicitly too — the
@@ -34,10 +34,10 @@ worth it).
 
 | Task kind                                                | Model                   | Effort   |
 | -------------------------------------------------------- | ----------------------- | -------- |
-| Bulk reading / summarization / context fetch             | `minimax-M2.7-highspeed` | `none`   |
-| Mechanical implementation (typed, well-specified)        | `minimax-M2.7-highspeed` | `low`    |
-| Doc rewrite / reformat / changelog                       | `minimax-M2.7-highspeed` | `none`   |
-| Simple test scaffolding (existing patterns)              | `minimax-M2.7-highspeed` | `low`    |
+| Bulk reading / summarization / context fetch             | `MiniMax-M2.7-highspeed` | `none`   |
+| Mechanical implementation (typed, well-specified)        | `MiniMax-M2.7-highspeed` | `low`    |
+| Doc rewrite / reformat / changelog                       | `MiniMax-M2.7-highspeed` | `none`   |
+| Simple test scaffolding (existing patterns)              | `MiniMax-M2.7-highspeed` | `low`    |
 | Cross-module refactor / migration                        | `MiniMax-M3`             | `medium` |
 | Default worker (unspecified)                             | `MiniMax-M3`             | `medium` |
 | Design, investigation, debugging, review, verification   | `MiniMax-M3`             | `high`   |

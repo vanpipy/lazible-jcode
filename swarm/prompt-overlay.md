@@ -264,15 +264,15 @@ attention, and solo execution starves it.
 
 ## 3. Model & effort routing (applies to your own calls too)
 
-Only `minimax-M2.7-highspeed` and `MiniMax-M3` are reliably available in this
+Only `MiniMax-M2.7-highspeed` and `MiniMax-M3` are reliably available in this
 environment. Route by task shape, not by gut:
 
 | Task shape                                            | Model                | Effort   |
 |------------------------------------------------------|----------------------|----------|
-| Bulk read / summarize / context fetch                | minimax-M2.7-highspeed | none   |
-| Doc rewrite / reformat / changelog                   | minimax-M2.7-highspeed | none   |
-| Mechanical implementation (typed, well-specified)    | minimax-M2.7-highspeed | low    |
-| Simple test scaffolding (existing patterns)          | minimax-M2.7-highspeed | low    |
+| Bulk read / summarize / context fetch                | MiniMax-M2.7-highspeed | none   |
+| Doc rewrite / reformat / changelog                   | MiniMax-M2.7-highspeed | none   |
+| Mechanical implementation (typed, well-specified)    | MiniMax-M2.7-highspeed | low    |
+| Simple test scaffolding (existing patterns)          | MiniMax-M2.7-highspeed | low    |
 | Cross-module refactor / migration                    | MiniMax-M3            | medium |
 | Default worker (unspecified)                         | MiniMax-M3            | medium |
 | Design / debugging / review / verification           | MiniMax-M3            | high   |

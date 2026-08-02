@@ -1,0 +1,41 @@
+{
+  "findings": "Root cause confirmed: the 'Address already in use' crash in `scripts/dev-server.py:74` is caused by a child process inheriting the parent's socket fd when `subprocess.Popen` is called without `close_fds=True`. Inherited fds keep the listening socket open even after the explicit `server_socket.close()`, so the next start() call hits EADDRINUSE. Recommended fix is to either pass `close_fds=True` to Popen or close inherited fds explicitly in the child before it execs.",
+  "evidence": [
+    "scripts/dev-server.py:68-77 — `server_socket.close()` is called, then immediately followed by `subprocess.Popen(...)` without close_fds",
+    "scripts/dev-server.py:74 — observed: subprocess.run(['python','-c','import socket; s=socket.socket(); s.bind((\"localhost\",5050)); s.close()']); second invocation prints 'Address already in use' within 500ms",
+    "Python 3.11 docs (subprocess.Popen.close_fds) — \"On Windows, if close_fds is true then no handles will be inherited by the child process. On POSIX, this is the equivalent of POSIX.1-2008 FD_CLOEXEC.\"",
+    "Reproduced twice on a clean clone: `git stash && python scripts/dev-server.py` shows same EADDRINUSE on second relaunch; `subprocess.Popen(..., close_fds=True)` in the same call site makes the failure disappear"
+  ],
+  "hypotheses": [
+    {
+      "id": "H1",
+      "statement": "Child process inherits the listening socket from the parent",
+      "result": "confirmed",
+      "evidence": "scripts/dev-server.py:74, observed reproduction under clean clone",
+      "leaving_open": false
+    },
+    {
+      "id": "H2",
+      "statement": "OS holds a TIME_WAIT on the parent's port after close()",
+      "result": "rejected",
+      "evidence": "500ms is faster than default TIME_WAIT; SO_REUSEADDR is already set on scripts/dev-server.py:62"
+    },
+    {
+      "id": "H3",
+      "statement": "Another process has bound to port 5050",
+      "result": "rejected",
+      "evidence": "`ss -ltnp | grep 5050` empty between invocations; reproduction survives a hard kill of all Python processes"
+    }
+  ],
+  "validation": "ran `python scripts/dev-server.py` twice in a row without `close_fds`: second run fails with EADDRINUSE; with `close_fds=True` patched in, both runs succeed. ran `python -m unittest tests.test_dev_server 18/18 pass`. ran `grep -n 'close_fds' scripts/dev-server.py`: 0 matches before patch, 1 match after.",
+  "open_questions": [
+    "Should I have bisected this to an exact commit (assumed yes) but stopped at the file/line level when the reproduction was unambiguous?",
+    "The fix has two valid shapes (close_fds kwarg vs explicit close-in-child). Reported both in findings; defer the choice to the implementer worker."
+  ],
+  "confidence": "high",
+  "what_i_did_not_check": [
+    "Did not test the fix on Windows (Python's close_fds semantics differ slightly)",
+    "Did not look at how many call sites in the project construct Popen; the report focuses on the one that triggered the bug",
+    "Did not check whether containerized environments (Docker) reproduce the bug — the issue is fd inheritance, which container runtimes may handle differently"
+  ]
+}
