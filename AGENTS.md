@@ -15,13 +15,25 @@ code lives here.
   real `~/.jcode/skills/` install. Treat them as upstream artifacts: do not
   rewrite their semantics; if a local divergence is needed, add a `local-*`
   skill beside them instead.
-- The `swarm/` directory carries the root session's swarm coordination config
-  (`swarm-prompt.md`) and worker role templates (`roles/<name>.md`). It is
-  **not** a skill (no `SKILL.md` frontmatter, not auto-loaded by trigger). It
-  is the literal prompt content the root session reads when constructing
-  spawn calls. Install it via `skills/copy-from-jcode/copy-from-jcode.sh
-  --install` which symlinks `swarm/swarm-prompt.md` → `~/.jcode/swarm-prompt.md`
-  and `swarm/roles/` → `~/.jcode/roles/`.
+- The `swarm/` directory carries three distinct artifacts that are **not**
+  skills (no `SKILL.md` frontmatter, not auto-loaded by trigger):
+  - `swarm/swarm-prompt.md` — root-session + worker coordination rules (model
+    routing, spawn hygiene, verification, decomposition, anti-patterns,
+    workspace isolation). Loaded when you construct spawn calls.
+  - `swarm/roles/<name>.md` — six worker persona templates (`reviewer`,
+    `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer`).
+  - `swarm/prompt-overlay.md` — the **enhanced default main-agent prompt**.
+    Symlinked to `~/.jcode/prompt-overlay.md` by `scripts/install.sh`. jcode
+    reads it at session start and concatenates it onto the base system prompt
+    (see `crates/jcode-base/src/prompt.rs::load_prompt_overlay_files_from_dir`).
+    Purpose: turn the default main agent into a swarm-coordinator-first agent
+    by adding model routing, spawn-when rules, hygiene, decomposition order,
+    and verification anti-patterns to the *main* prompt. Worker-only concerns
+    (worktree paths, output schema, per-role workflow) belong in the worker
+    prompt, not here.
+  Install all three via `scripts/install.sh` (default behavior). Old
+  `skills/copy-from-jcode/copy-from-jcode.sh --install` path still works but
+  is no longer the recommended way.
 - Config templates under `config/*.example` are **reference only**. Live config
   lives in `~/.jcode/`. Use `skills/copy-from-jcode/copy-from-jcode.sh` to pull
   a machine's `~/.jcode/` into this repo.
@@ -31,9 +43,15 @@ code lives here.
 - `config/mcp.json` is **deliberately not committed**. The live
   `~/.jcode/mcp.json` carries MCP server tokens; `config/mcp.json.example` is
   the only safe place to reference its shape.
-- Installer lives at `scripts/install.sh` (repo-level) and
-  `skills/install-jcode/jcode-install.sh` (standalone, self-contained for the
-  skill's own use).
+- Installer lives at `scripts/install.sh` (repo-level wrapper) and
+  `skills/install-jcode/jcode-install.sh` (standalone binary installer).
+  The wrapper does two things in order:
+  1. Calls the standalone installer to install the jcode binary + PATH.
+  2. Symlinks the overlay + swarm config into `~/.jcode/`. Flags:
+     `--no-overlay` (skip step 2), `--overlay <path>` (custom overlay file),
+     `--refresh` (force overwrite mismatched symlinks, backup non-symlinks),
+     `--install-skills` (also symlink `skills/<name>`),
+     `--skip-binary` (only run step 2), `--dry-run` (plan only).
 
 ## Commit conventions
 
@@ -45,9 +63,12 @@ code lives here.
 - When porting a skill from upstream jcode, use `chore(skills): import <name>
   from ~/.jcode/skills` and add a one-line note about why (version bump,
   local divergence, etc.).
-- Swarm config (`swarm-prompt.md`, `roles/*.md`) uses `feat(swarm): ...` or
-  `chore(swarm): ...` scope; bundle them with their corresponding script
+- Swarm config (`swarm/swarm-prompt.md`, `roles/*.md`) uses `feat(swarm): ...`
+  or `chore(swarm): ...` scope; bundle them with their corresponding script
   changes when the script depends on the new shape.
+- The main-agent overlay (`swarm/prompt-overlay.md`) uses `feat(overlay): ...`
+  scope. Bundling it with installer changes is preferred so the install
+  flow stays consistent.
 
 ## Things an agent must not do
 

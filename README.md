@@ -11,9 +11,12 @@ It carries:
   are **actual copies** of skills from a live `~/.jcode/skills/` install
 - A reference `config.toml` (live snapshot) plus `.example` templates that
   document every supported option
-- A standalone installer (`scripts/install.sh`) and uninstaller (`scripts/uninstall.sh`)
-  modeled after the upstream `jcode.sh/install` script, but driven entirely from
-  this repo so it works offline and without `curl | bash`
+- An **enhanced default main-agent prompt overlay** (`swarm/prompt-overlay.md`)
+  that turns the default main agent into a swarm-coordinator-first agent
+- A standalone installer (`scripts/install.sh`) and uninstaller
+  (`scripts/uninstall.sh`) modeled after the upstream `jcode.sh/install`
+  script, but driven entirely from this repo so it works offline and without
+  `curl | bash`
 - A `copy-from-jcode.sh` helper that snapshots a live `~/.jcode/` into this repo
 
 ## Layout
@@ -44,6 +47,7 @@ lazible-jcode/
 │       └── SKILL.md                   # Copied from a live ~/.jcode/skills
 ├── swarm/                              # Generic swarm coordination + worker role templates
 │   ├── swarm-prompt.md                 # Bundled root-session prompt (becomes ~/.jcode/swarm-prompt.md)
+│   ├── prompt-overlay.md               # Enhanced default main-agent prompt (→ ~/.jcode/prompt-overlay.md)
 │   └── roles/                          # Worker persona templates (reviewer, implementer, ...)
 │       ├── reviewer.md
 │       ├── implementer.md
@@ -52,8 +56,8 @@ lazible-jcode/
 │       ├── test-writer.md
 │       └── doc-writer.md
 ├── scripts/
-│   ├── install.sh                     # Repo-level installer (mirrors jcode.sh/install)
-│   ├── uninstall.sh
+│   ├── install.sh                     # Repo-level installer: jcode binary + overlay + swarm symlinks
+│   ├── uninstall.sh                   # Removes binary + lazible-jcode-owned symlinks
 │   └── lib/
 │       └── configure_path.sh
 ├── docs/
@@ -68,12 +72,43 @@ lazible-jcode/
 git clone https://github.com/vanpipy/lazible-jcode.git
 cd lazible-jcode
 
-# 2. Install jcode using this repo's installer (no curl | bash required)
+# 2. Install jcode using this repo's installer (no curl | bash required).
+#    This installs the jcode binary AND symlinks the overlay + swarm config.
 ./scripts/install.sh
 
 # 3. (Optional) Pull the current machine's jcode config into this repo
 ./skills/copy-from-jcode/copy-from-jcode.sh
 ```
+
+### Install options
+
+`scripts/install.sh` accepts overlay-specific flags (forwarded separately from
+the binary-installer flags):
+
+| Flag | Effect |
+|---|---|
+| (default) | Install jcode binary **and** symlink overlay + swarm config |
+| `--no-overlay` | Skip the overlay/swarm symlinks; binary only |
+| `--overlay <path>` | Use `<path>` as the overlay source instead of `swarm/prompt-overlay.md` |
+| `--refresh` | Force overwrite mismatched symlinks; back up non-symlinks to `<dst>.bak` |
+| `--install-skills` | Also symlink each `skills/<name>` into `~/.jcode/skills/` |
+| `--skip-binary` | Skip the jcode binary installer (overlay-only refresh) |
+| `--dry-run` | Print the plan; write nothing |
+
+Examples:
+
+```bash
+# Refresh overlay symlinks only (jcode binary already installed):
+./scripts/install.sh --skip-binary --refresh
+
+# Use a personal overlay file:
+./scripts/install.sh --overlay ~/my-overrides/prompt-overlay.md
+
+# Full reset: re-link all overlay + swarm + skills symlinks (binary stays):
+./scripts/install.sh --skip-binary --refresh --install-skills
+```
+
+Run `./scripts/install.sh --help` for the full usage block.
 
 ## Skills
 
@@ -102,10 +137,11 @@ skill-role: guidance
 
 ## Swarm config
 
-The `swarm/` directory carries the root session's swarm coordination rules and
-six worker role templates. Unlike `skills/`, this is **not** workflow guidance
-the model triggers on; it is the literal prompt + persona content the root
-session reads when constructing spawn calls.
+The `swarm/` directory carries the root session's swarm coordination rules,
+six worker role templates, and an enhanced main-agent prompt overlay. Unlike
+`skills/`, this is **not** workflow guidance the model triggers on; it is the
+literal prompt + persona content the root session reads when constructing
+spawn calls.
 
 - `swarm/swarm-prompt.md` — project-agnostic guidance for the root session and
   every spawned worker (model routing, when to spawn, communication discipline,
@@ -113,10 +149,17 @@ session reads when constructing spawn calls.
 - `swarm/roles/*.md` — six persona templates (`reviewer`, `implementer`,
   `investigator`, `migrator`, `test-writer`, `doc-writer`). Installed as
   `~/.jcode/roles/*.md`.
+- `swarm/prompt-overlay.md` — **enhanced default main-agent prompt**. Concise
+  subset of the swarm rules that belongs on the *main* prompt: model routing,
+  spawn-when rules, hygiene, decomposition order, verification anti-patterns.
+  jcode appends this to the base system prompt at session start. Installed as
+  `~/.jcode/prompt-overlay.md` by `scripts/install.sh`. Worker-only concerns
+  (worktree paths, output schema, per-role workflow) belong in
+  `swarm-prompt.md`, not here.
 
-Sync both directions with `skills/copy-from-jcode/copy-from-jcode.sh` (default
-behavior). The `--exclude-swarm` flag skips swarm handling if a project wants
-only skills.
+Sync all three via `scripts/install.sh` (default). `skills/copy-from-jcode/copy-from-jcode.sh`
+also still works for `swarm-prompt.md` + `roles/`, but does not manage the
+overlay — use `install.sh` for that.
 
 ## What is and isn't committed
 
