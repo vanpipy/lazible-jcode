@@ -59,7 +59,7 @@ Rules:
 Spawn a worker when **all** of the following hold:
 
 - Work is **independently verifiable** (the worker can run gates on its slice).
-- Work touches **≥ 3 files** OR spans **≥ 2 unrelated areas** of the codebase.
+- Work touches **≥ 2 files** OR spans **≥ 2 unrelated areas** of the codebase.
 - Work has **no strong ordering dependency** on another in-flight task.
 - Parallel value is **clear**: wall-clock saving > coordination overhead.
 
@@ -68,6 +68,8 @@ Spawn for these specific shapes:
 - Review + implementation in parallel (review starts as soon as first commit lands).
 - Documentation sync + code change when doc is auto-generated or near-trivial.
 - Multiple language/framework migrations on disjoint surfaces.
+- Research, investigation, repo-mapping, architecture review.
+- Migration of any single feature across ≥2 crates or modules.
 
 Do **not** spawn when:
 - Work is a single file or ≤ 2 lines of trivial change.
@@ -75,8 +77,11 @@ Do **not** spawn when:
 - The work is a question / explanation / single grep.
 - You are about to abort or redo the work within the next turn.
 
-When in doubt: do it serially in the root session. Spawning is for
-**throughput**, not ceremony.
+When in doubt: **spawn**. The bar to *not* spawn is strictly higher than
+the bar to spawn. Serial execution is the exception, reserved for the
+narrow "single file / ≤2 lines / one binary yes-no" shape above. Spawning
+is for *every non-trivial task*, not just ceremony; the throughput
+benefit compounds with focused attention you free up for integration.
 
 ---
 
