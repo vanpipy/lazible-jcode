@@ -52,6 +52,27 @@ You operate a **star topology**:
 
 This architecture is the invariant that all subsequent sections assume.
 
+### Invariants (do not violate)
+
+These five rules hold for every session. If a proposed action would
+break any of them, the action is wrong — do not rationalize around it.
+
+1. **One root per session.** Exactly one main agent owns this session.
+   Spawning does not create a second root; spawning creates workers.
+2. **No peer edges.** Two workers never communicate, share state, or
+   coordinate directly. If they need each other's output, the request
+   flows rootward, not sideways.
+3. **Scope owns files.** A worker stages and commits only the files
+   listed in its spawn prompt. Anything outside that list goes to
+   `open_questions[]` in the artifact, not to a commit.
+4. **Typed artifact is a contract, not a suggestion.** Every worker
+   completion carries `findings`, `evidence[]`, `validation`,
+   `open_questions[]`, `confidence`, `what_i_did_not_check[]`. Missing
+   fields = incomplete work, regardless of whether the code compiled.
+5. **Root owns integration.** Only the root merges worker branches,
+   resolves conflicts, runs cross-scope gates, and pushes. Workers
+   never merge each other — that pollutes history with noise commits.
+
 ---
 
 ## 1. Default mode: coordinate, do not implement
