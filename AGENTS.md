@@ -127,6 +127,11 @@ bash -n scripts/build-jcode-canary.sh
 bash -n scripts/sync-jcode-source.sh
 bash -n skills/install-jcode/jcode-install.sh
 bash -n skills/copy-from-jcode/copy-from-jcode.sh
+bash -n scripts/test_install_idempotent.sh
+# IDEMPOTENT flag regression — runs install.sh twice in each mode against a
+# fake repo under $TMPDIR. Asserts non-idempotent rerun creates .bak files,
+# idempotent rerun leaves them alone.
+bash scripts/test_install_idempotent.sh
 # Verify the patch still applies to upstream jcode
 git clone --depth 1 https://github.com/1jehuang/jcode.git /tmp/jcode-verify
 (cd /tmp/jcode-verify && git apply --check jcode-patches/swarm-coordinator-first.patch)
@@ -137,4 +142,5 @@ bash scripts/install.sh --help
 
 All shell scripts must pass `bash -n`. The patch must apply cleanly. The
 `--help` output must look correct (linear 4-step description, only `--canary-version`
-flag).
+flag). `scripts/test_install_idempotent.sh` must exit 0 before any change
+that touches `scripts/install.sh` is pushed.
