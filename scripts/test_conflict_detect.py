@@ -816,5 +816,130 @@ class TestConfigSchema(unittest.TestCase):
         self.assertIn("__pycache__/", cfg["cleanup_patterns"])
 
 
+# ---------------------------------------------------------------------------
+# R19 gap 3: severity_threshold_n escalation in suggest_serialization
+# ---------------------------------------------------------------------------
+
+
+class TestSerializationThresholds(unittest.TestCase):
+    """R19 gap 3: non-lockfile overlap escalates by worker count.
+
+    N = number of unique workers sharing the file.
+        N <  major_threshold   -> minor  (parallel ok with rebase)
+        major_threshold <= N   -> major  (serialize recommended)
+        N >= blocker_threshold -> blocker (force serialize, refuse merge)
+    """
+
+    def _make_tasks(self, n_tasks: int, path: str):
+        return [
+            cd.Task(task_id=f"t{i}", scope_files=[path, f"src/unique_{i}.py"])
+            for i in range(n_tasks)
+        ]
+
+    def test_two_workers_below_major_threshold(self):
+        # 2 workers sharing a doc -> minor (default major threshold is 4).
+        tasks = self._make_tasks(2, "docs/x.md")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=mock.Mock(stdout="", returncode=0)
+        ):
+            conflicts = cd.suggest_serialization(
+                tasks, repo_path="/tmp/repo", config={}
+            )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].severity, "minor")
+
+    def test_four_workers_hit_major_threshold(self):
+        # 4 workers sharing a doc -> major (default major threshold is 4).
+        tasks = self._make_tasks(4, "AGENTS.md")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=mock.Mock(stdout="", returncode=0)
+        ):
+            conflicts = cd.suggest_serialization(
+                tasks, repo_path="/tmp/repo", config={}
+            )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].severity, "major")
+        self.assertEqual(conflicts[0].category, "serialization_overlap")
+
+    def test_six_workers_hit_blocker_threshold(self):
+        # 6 workers sharing a doc -> blocker (default blocker threshold is 6).
+        tasks = self._make_tasks(6, "AGENTS.md")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=mock.Mock(stdout="", returncode=0)
+        ):
+            conflicts = cd.suggest_serialization(
+                tasks, repo_path="/tmp/repo", config={}
+            )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].severity, "blocker")
+        self.assertEqual(conflicts[0].category, "serialization_overlap")
+
+    def test_custom_thresholds_override_default(self):
+        # Custom {major: 3, blocker: 5}: 3 workers -> major, 5 -> blocker.
+        custom = {"severity_threshold_n": {"major": 3, "blocker": 5}}
+        # 3 workers, expect major.
+        tasks = self._make_tasks(3, "AGENTS.md")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=mock.Mock(stdout="", returncode=0)
+        ):
+            conflicts = cd.suggest_serialization(
+                tasks, repo_path="/tmp/repo", config=custom
+            )
+        self.assertEqual(conflicts[0].severity, "major")
+        # 5 workers, expect blocker.
+        tasks5 = self._make_tasks(5, "AGENTS.md")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=mock.Mock(stdout="", returncode=0)
+        ):
+            conflicts5 = cd.suggest_serialization(
+                tasks5, repo_path="/tmp/repo", config=custom
+            )
+        self.assertEqual(conflicts5[0].severity, "blocker")
+
+    def test_lockfile_path_always_blocker(self):
+        # A lockfile always escalates to blocker regardless of N. Here 2
+        # workers share package.json; below default threshold but lockfile
+        # rule still wins.
+        custom = {"lockfile_files": ["package.json"]}
+        tasks = self._make_tasks(2, "package.json")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ):
+            conflicts = cd.suggest_serialization(
+                tasks, repo_path="/tmp/repo", config=custom
+            )
+        self.assertEqual(conflicts[0].severity, "blocker")
+        self.assertEqual(conflicts[0].category, "serialization_lockfile")
+
+    def test_evidence_carries_owner_count(self):
+        # The escalation decision depends on N. The emitted conflict must
+        # surface N in evidence so operators can debug threshold choices.
+        tasks = self._make_tasks(4, "AGENTS.md")
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run", return_value=mock.Mock(stdout="", returncode=0)
+        ):
+            conflicts = cd.suggest_serialization(
+                tasks, repo_path="/tmp/repo", config={}
+            )
+        joined = " ".join(conflicts[0].evidence)
+        # Some evidence mentions N>=4 or "N=4".
+        self.assertTrue(
+            any(token in joined for token in ("N=4", "n=4", "workers=4")),
+            msg=f"owner count not in evidence: {conflicts[0].evidence}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
