@@ -118,6 +118,9 @@ stream_idle_timeout_secs = 180
 
 [providers]
 
+[providers.minimax.models.MiniMax-M3]
+context_window = 1000000
+
 [agents]
 swarm_spawn_mode = "inline"
 swarm_strip_layout = "vertical"
