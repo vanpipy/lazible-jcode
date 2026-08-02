@@ -1109,6 +1109,84 @@ def plan_execution_order_from_branches(
 
 
 # ---------------------------------------------------------------------------
+# R19 gap 5: scope-drift detector (committed files vs declared scope)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScopeDrift:
+    """Worker branch's committed files vs its declared scope.
+
+    `severity` is one of:
+        "clean"  — actual ⊆ expected (or perfect match).
+        "minor"  — small out-of-scope ratio.
+        "major"  — substantial out-of-scope ratio.
+        "severe" — most or all of the worker's commits are out of scope.
+    """
+    expected_files: list[str]
+    actual_files: list[str]
+    in_scope: list[str]
+    out_of_scope: list[str]
+    missing: list[str]
+    drift_ratio: float
+    severity: str
+
+
+def detect_scope_drift(
+    worker_branch: str,
+    expected_files: list[str],
+    repo_root: str,
+    base: str = "main",
+) -> ScopeDrift:
+    """Compare a worker's actual commits against its declared scope.
+
+    Args:
+        worker_branch:  the worker's branch ref.
+        expected_files: files the worker was supposed to touch.
+        repo_root:      absolute path to the git repo.
+        base:           ref to diff against (default "main").
+
+    Returns:
+        A `ScopeDrift` describing the overlap, missing files, and a
+        drift severity classification.
+    """
+    diff_out = _run_git(
+        repo_root, "diff", f"{base}..{worker_branch}", "--name-only"
+    )
+    actual = [f for f in diff_out.splitlines() if f] if diff_out else []
+
+    expected_set = set(expected_files)
+    actual_set = set(actual)
+    in_scope = sorted(actual_set & expected_set)
+    out_of_scope = sorted(actual_set - expected_set)
+    missing = sorted(expected_set - actual_set)
+
+    drift_ratio = (
+        len(out_of_scope) / len(actual) if actual else (1.0 if expected_files else 0.0)
+    )
+
+    # Severity ladder.
+    if not out_of_scope and not missing:
+        severity = "clean"
+    elif drift_ratio >= 0.75 or len(out_of_scope) >= 4:
+        severity = "severe"
+    elif drift_ratio >= 0.5 or len(out_of_scope) >= 2:
+        severity = "major"
+    else:
+        severity = "minor"
+
+    return ScopeDrift(
+        expected_files=list(expected_files),
+        actual_files=actual,
+        in_scope=in_scope,
+        out_of_scope=out_of_scope,
+        missing=missing,
+        drift_ratio=drift_ratio,
+        severity=severity,
+    )
+
+
+# ---------------------------------------------------------------------------
 # R19 gap 4: per-hunk conflict side picker
 # ---------------------------------------------------------------------------
 

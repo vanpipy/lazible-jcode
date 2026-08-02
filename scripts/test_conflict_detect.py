@@ -1825,5 +1825,149 @@ class TestHunkResolutionDataclass(unittest.TestCase):
         self.assertEqual(h.resolved_lines, ["beta"])
 
 
+# ---------------------------------------------------------------------------
+# R19 gap 5: detect_scope_drift — committed-vs-declared scope
+# ---------------------------------------------------------------------------
+
+
+class TestDetectScopeDrift(unittest.TestCase):
+    """R19 gap 5: a worker's committed files vs its declared scope."""
+
+    def _stub_git_diff(self, actual_files):
+        """Stub `git diff <base>..<branch> --name-only` to return `actual_files`."""
+        def fake_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if "diff" in cmd and "--name-only" in cmd:
+                return mock.Mock(
+                    returncode=0,
+                    stdout="\n".join(actual_files),
+                    stderr="",
+                )
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return fake_run
+
+    def test_function_exists(self):
+        self.assertTrue(hasattr(cd, "detect_scope_drift"))
+
+    def test_clean_when_files_match(self):
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git_diff(["a.py", "b.py"]),
+        ):
+            res = cd.detect_scope_drift(
+                worker_branch="feat/x",
+                expected_files=["a.py", "b.py"],
+                repo_root="/tmp/repo",
+            )
+        self.assertEqual(res.in_scope, ["a.py", "b.py"])
+        self.assertEqual(res.out_of_scope, [])
+        self.assertEqual(res.missing, [])
+        self.assertEqual(res.severity, "clean")
+
+    def test_minor_when_one_extra_file(self):
+        # 1 extra file among 4 total -> ~25% drift -> minor.
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git_diff(["a.py", "b.py", "rogue.py"]),
+        ):
+            res = cd.detect_scope_drift(
+                worker_branch="feat/x",
+                expected_files=["a.py", "b.py"],
+                repo_root="/tmp/repo",
+            )
+        self.assertEqual(res.out_of_scope, ["rogue.py"])
+        self.assertIn(res.severity, ("minor", "major"))
+
+    def test_severe_when_mostly_out_of_scope(self):
+        # 4 of 4 files out of scope -> severe.
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git_diff(["x1.py", "x2.py", "x3.py", "x4.py"]),
+        ):
+            res = cd.detect_scope_drift(
+                worker_branch="feat/x",
+                expected_files=["a.py"],
+                repo_root="/tmp/repo",
+            )
+        self.assertEqual(len(res.out_of_scope), 4)
+        self.assertEqual(res.severity, "severe")
+
+    def test_missing_expected_detected(self):
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git_diff(["a.py"]),
+        ):
+            res = cd.detect_scope_drift(
+                worker_branch="feat/x",
+                expected_files=["a.py", "b.py"],
+                repo_root="/tmp/repo",
+            )
+        self.assertEqual(res.in_scope, ["a.py"])
+        self.assertEqual(res.missing, ["b.py"])
+
+    def test_empty_actual_is_severe(self):
+        # Worker committed nothing — everything expected is missing.
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git_diff([]),
+        ):
+            res = cd.detect_scope_drift(
+                worker_branch="feat/x",
+                expected_files=["a.py", "b.py"],
+                repo_root="/tmp/repo",
+            )
+        self.assertEqual(res.actual_files, [])
+        self.assertEqual(res.missing, ["a.py", "b.py"])
+        self.assertEqual(res.severity, "severe")
+
+    def test_drift_ratio_is_float(self):
+        with mock.patch.object(
+            cd.shutil, "which", return_value="/usr/bin/git"
+        ), mock.patch.object(
+            cd.subprocess, "run",
+            side_effect=self._stub_git_diff(["a.py", "rogue.py"]),
+        ):
+            res = cd.detect_scope_drift(
+                worker_branch="feat/x",
+                expected_files=["a.py"],
+                repo_root="/tmp/repo",
+            )
+        self.assertIsInstance(res.drift_ratio, float)
+        # 1 of 2 actual -> 0.5
+        self.assertAlmostEqual(res.drift_ratio, 0.5, places=2)
+
+
+# ---------------------------------------------------------------------------
+# R19 gap 5 supporting type: ScopeDrift dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestScopeDriftDataclass(unittest.TestCase):
+    def test_scope_drift_fields(self):
+        self.assertTrue(hasattr(cd, "ScopeDrift"))
+        sd = cd.ScopeDrift(
+            expected_files=["a.py"],
+            actual_files=["a.py", "rogue.py"],
+            in_scope=["a.py"],
+            out_of_scope=["rogue.py"],
+            missing=[],
+            drift_ratio=0.5,
+            severity="major",
+        )
+        self.assertEqual(sd.expected_files, ["a.py"])
+        self.assertEqual(sd.severity, "major")
+        self.assertEqual(sd.drift_ratio, 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()
