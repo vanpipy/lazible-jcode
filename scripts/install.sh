@@ -199,7 +199,7 @@ for skill_dir in "$repo_root/skills"/*; do
   [[ -d "$skill_dir" ]] || continue
   [[ -f "$skill_dir/SKILL.md" ]] || continue
   name="$(basename "$skill_dir")"
-  overwrite_link "$skill_dir" "$JCODE_HOME/skills/$name" "skill:$name"
+  maybe_overwrite_link "$skill_dir" "$JCODE_HOME/skills/$name" "skill:$name"
   skill_count=$((skill_count + 1))
 done
 info "linked $skill_count skill(s)"
