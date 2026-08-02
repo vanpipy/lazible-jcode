@@ -158,6 +158,29 @@ class MergeStrategy:
     commands: list[str] = field(default_factory=list)
 
 
+@dataclass
+class BranchAncestry:
+    """Output of `detect_branch_ancestry`.
+
+    Fields:
+        parents         — dict[branch -> parent_branch or None].
+                          `parents[B] = A` means A is the immediate
+                          ancestor of B in this branch set (when known).
+        chains          — list of linear chains in topological order.
+                          `chains[i]` is `[b0, b1, ...]` where
+                          `b_i` is ancestor of `b_{i+1}`.
+        already_merged  — list of branches whose tip is reachable from
+                          `base` (no merge work needed).
+        parallel_groups — list of branch sets sharing a merge-base but
+                          with no ancestor relation to each other.
+    """
+
+    parents: dict[str, str | None]
+    chains: list[list[str]]
+    already_merged: list[str] = field(default_factory=list)
+    parallel_groups: list[list[str]] = field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -869,6 +892,138 @@ def pick_merge_strategy(
             f"rebase each onto {base!r} before merging"
         ),
         commands=cmds,
+    )
+
+
+# ---------------------------------------------------------------------------
+# R19 gap 2: detect_branch_ancestry — classify branches by ancestry graph
+# ---------------------------------------------------------------------------
+
+
+def detect_branch_ancestry(
+    branches: list[str],
+    base: str,
+    repo_root: str,
+) -> BranchAncestry:
+    """Classify `branches` by their git ancestry relations.
+
+    Builds a partial-order graph using `git merge-base --is-ancestor`:
+        - If branch A is an ancestor of branch B (and B is in the set),
+          `parents[B] = A`. The chain ends at the leaf.
+        - If multiple branches share `base` as a common ancestor but no
+          pair has an ancestor relation, they form a parallel group.
+        - Branches whose tip is reachable from `base` go into
+          `already_merged`.
+
+    Falls back gracefully when git is missing or returns errors: every
+    branch becomes its own chain.
+
+    Args:
+        branches  — list of branch names to classify.
+        base      — the target branch (e.g. "main").
+        repo_root — filesystem path for git commands.
+
+    Returns:
+        BranchAncestry with parents map, chains, already_merged, and
+        parallel_groups.
+    """
+    if not branches:
+        return BranchAncestry(parents={}, chains=[], already_merged=[], parallel_groups=[])
+
+    if shutil.which("git") is None:
+        return BranchAncestry(
+            parents={b: None for b in branches},
+            chains=[[b] for b in sorted(branches)],
+            already_merged=[],
+            parallel_groups=[],
+        )
+
+    # Step 1: compute already_merged (branch is ancestor of base).
+    already_merged: list[str] = []
+    live: list[str] = []
+    for b in branches:
+        if _is_ancestor(repo_root, b, base):
+            already_merged.append(b)
+        else:
+            live.append(b)
+
+    # Step 2: build ancestry edges among live branches.
+    # `direct_ancestor[B]` = the live branch A such that A is ancestor of B
+    # and no other live branch sits between them (the most-specific / leafward
+    # ancestor). This yields linear chains: B -> A -> A's parent.
+    direct_ancestor: dict[str, str | None] = {b: None for b in live}
+    for b in live:
+        candidates: list[str] = []
+        for a in live:
+            if a == b:
+                continue
+            if _is_ancestor(repo_root, a, b):
+                candidates.append(a)
+        if candidates:
+            # Most-specific = no other candidate is a descendant of it.
+            def is_leafward(c: str) -> bool:
+                return all(
+                    c == other or not _is_ancestor(repo_root, c, other)
+                    for other in candidates
+                )
+            leafward = [c for c in candidates if is_leafward(c)]
+            direct_ancestor[b] = sorted(leafward)[0]
+
+    # Step 3: build chains by walking parent links.
+    chains: list[list[str]] = []
+    visited: set[str] = set()
+    roots = [b for b in live if direct_ancestor[b] is None]
+    roots.sort()
+    for root in roots:
+        chain = [root]
+        visited.add(root)
+        cur: str | None = direct_ancestor.get(root)
+        # Walk UPSTREAM rather than downstream — direct_ancestor points
+        # from descendant to its immediate ancestor, so we need to invert
+        # the walk.
+        # Build the inverse map first.
+        # children[parent] = list of children
+        children: dict[str, list[str]] = {b: [] for b in live}
+        for child, parent in direct_ancestor.items():
+            if parent is not None and parent in children:
+                children[parent].append(child)
+        # Walk down from root.
+        cur = root
+        while True:
+            kids = sorted(children.get(cur, []))
+            unvisited = [k for k in kids if k not in visited]
+            if not unvisited:
+                break
+            nxt = unvisited[0]
+            chain.append(nxt)
+            visited.add(nxt)
+            cur = nxt
+        chains.append(chain)
+
+    # Any live branch not visited yet (cycle or disconnected) -> its own chain.
+    for b in live:
+        if b not in visited:
+            chains.append([b])
+            visited.add(b)
+
+    # Step 4: build parents map and parallel_groups.
+    parents: dict[str, str | None] = {}
+    parallel_groups: list[list[str]] = []
+    children_map: dict[str | None, list[str]] = {}
+    for b, p in direct_ancestor.items():
+        parents[b] = p
+        children_map.setdefault(p, []).append(b)
+    for parent, kids in children_map.items():
+        if parent is None and len(kids) >= 2:
+            # Multiple live branches with no shared ancestor among the set —
+            # they're parallel siblings.
+            parallel_groups.append(sorted(kids))
+
+    return BranchAncestry(
+        parents=parents,
+        chains=chains,
+        already_merged=sorted(already_merged),
+        parallel_groups=parallel_groups,
     )
 
 
