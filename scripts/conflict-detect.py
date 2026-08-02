@@ -636,6 +636,429 @@ def run_manifest_detectors(
 
 
 # ---------------------------------------------------------------------------
+# Detector 7: plan_execution_order — turns scope overlap into a DAG plan.
+# Detector 8: detect_dependency_chain — flags new tasks that collide with
+#             in-flight workers' actual branch diffs.
+# Detector 9: suggest_serialization — orders parallel-runnable tasks to
+#             minimise merge risk (lockfile first, then git-history recent).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Task:
+    """A unit of work with a stable id and a list of files it will touch.
+
+    `scope_files` are repo-relative paths. Used by the planning +
+    dependency-chain + serialization detectors.
+    """
+
+    task_id: str
+    scope_files: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ExecutionPlan:
+    """Output of `plan_execution_order`.
+
+    Fields:
+        phases           — list of parallel-runnable batches, in dependency
+                           order. `phases[i]` only depends on phases[0..i-1].
+                           An empty inner list (`phases=[[]]`) is the cycle
+                           sentinel: caller should treat it as a blocker.
+        critical_path    — longest chain of tasks through the phases. The
+                           minimum number of serial steps the swarm must
+                           execute even with infinite parallelism.
+        parallel_batches — subset of phases whose length > 1. Convenience
+                           for operators who only care about fan-out.
+    """
+
+    phases: list[list[str]]
+    critical_path: list[str]
+    parallel_batches: list[list[str]]
+
+
+def _plan_build_graph(
+    tasks: list[Task],
+) -> tuple[list[str], dict[str, set[str]], dict[str, set[str]]]:
+    """Build a task dependency graph from scope-file overlap.
+
+    Returns (task_ids_sorted, predecessors, successors).
+
+    Orientation: when task A and task B share a file, the lex-smaller id
+    is the predecessor. Lex-based orientation is always acyclic, so the
+    cycle-detector in `plan_execution_order` is defensive only.
+    """
+    seen: dict[str, Task] = {}
+    for t in tasks:
+        if not t.task_id:
+            continue
+        seen[t.task_id] = t
+    task_ids = sorted(seen.keys())
+
+    file_to_tasks: dict[str, set[str]] = {}
+    for tid in task_ids:
+        for f in seen[tid].scope_files:
+            if not f:
+                continue
+            file_to_tasks.setdefault(f, set()).add(tid)
+
+    preds: dict[str, set[str]] = {tid: set() for tid in task_ids}
+    succs: dict[str, set[str]] = {tid: set() for tid in task_ids}
+    for owners in file_to_tasks.values():
+        owners_sorted = sorted(owners)
+        for i, a in enumerate(owners_sorted):
+            for b in owners_sorted[i + 1 :]:
+                # Lex orientation: a -> b.
+                preds[b].add(a)
+                succs[a].add(b)
+    return task_ids, preds, succs
+
+
+def plan_execution_order(tasks: list[Task]) -> ExecutionPlan:
+    """Build a phase-ordered execution plan from scope-file overlap.
+
+    Algorithm:
+        1. Build file -> task_ids reverse index from `tasks`.
+        2. For each file touched by >=2 tasks: add undirected edge.
+        3. Orient edges by lex task_id (smaller -> larger). Cycles
+           cannot arise from lex orientation alone, but we still
+           run Kahn's algorithm to detect them defensively.
+        4. Phase assignment: phase[t] = max(phase[p] for p in preds) + 1.
+        5. Critical path = longest DAG chain (lex tie-break).
+        6. Parallel batches = phases whose length > 1.
+
+    Cycle sentinel: if Kahn's leaves any node unreached, return
+    `ExecutionPlan(phases=[[]], critical_path=[], parallel_batches=[])`.
+    The caller is expected to surface this as a blocker Conflict.
+    """
+    if not tasks:
+        return ExecutionPlan(phases=[], critical_path=[], parallel_batches=[])
+
+    task_ids, preds, succs = _plan_build_graph(tasks)
+    if not task_ids:
+        return ExecutionPlan(phases=[], critical_path=[], parallel_batches=[])
+
+    # Kahn's topological sort.
+    in_degree = {tid: len(preds[tid]) for tid in task_ids}
+    queue = sorted(tid for tid, d in in_degree.items() if d == 0)
+    topo_order: list[str] = []
+    while queue:
+        node = queue.pop(0)
+        topo_order.append(node)
+        # Decrement in-degree for successors; append those that hit zero.
+        for nxt in sorted(succs[node]):
+            in_degree[nxt] -= 1
+            if in_degree[nxt] == 0:
+                queue.append(nxt)
+                queue.sort()
+
+    if len(topo_order) != len(task_ids):
+        # Cycle sentinel: caller surfaces a blocker Conflict.
+        return ExecutionPlan(phases=[[]], critical_path=[], parallel_batches=[])
+
+    # Phase assignment by DP over topo order.
+    phase_of: dict[str, int] = {tid: 0 for tid in task_ids}
+    for tid in topo_order:
+        if preds[tid]:
+            phase_of[tid] = max(phase_of[p] for p in preds[tid]) + 1
+
+    max_phase = max(phase_of.values()) if phase_of else -1
+    phases: list[list[str]] = []
+    for p in range(max_phase + 1):
+        bucket = sorted(tid for tid in task_ids if phase_of[tid] == p)
+        phases.append(bucket)
+
+    # Critical path: longest chain, lex tie-break.
+    longest: dict[str, int] = {tid: 1 for tid in task_ids}
+    predecessor: dict[str, str | None] = {tid: None for tid in task_ids}
+    for tid in topo_order:
+        for p in sorted(preds[tid]):  # lex tie-break
+            cand = longest[p] + 1
+            if cand > longest[tid]:
+                longest[tid] = cand
+                predecessor[tid] = p
+
+    end_task = max(task_ids, key=lambda t: (longest[t], -ord(t[0]) if t else 0))
+    # Tie-break on equal longest length: prefer the lex-later end so that
+    # backtracking through lex-sorted predecessors favours smaller ids.
+    # Specifically, if multiple tasks share the max length, pick the one
+    # whose predecessor is lex-smaller (smaller first preference).
+    max_len = max(longest.values())
+    candidates = [t for t in task_ids if longest[t] == max_len]
+    # Choose the candidate with the lex-smaller predecessor chain.
+    def chain_key(t: str) -> tuple[int, str]:
+        return (longest[t], t)
+
+    candidates.sort(key=chain_key)
+    end_task = candidates[0]
+
+    critical_path: list[str] = []
+    cur: str | None = end_task
+    while cur is not None:
+        critical_path.append(cur)
+        cur = predecessor[cur]
+    critical_path.reverse()
+
+    parallel_batches = [list(b) for b in phases if len(b) > 1]
+
+    return ExecutionPlan(
+        phases=phases,
+        critical_path=critical_path,
+        parallel_batches=parallel_batches,
+    )
+
+
+def _run_git_diff_files(repo_root: str, base: str, branch: str) -> set[str]:
+    """Return `set[str]` of files changed between base and branch.
+
+    Tries `<base>..<branch>` first; falls back to `git ls-tree -r <branch>`
+    when the diff produces no output. Returns empty set if git is missing.
+    """
+    diff_out = _run_git(repo_root, "diff", f"{base}..{branch}", "--name-only")
+    if diff_out.strip():
+        return {line.strip() for line in diff_out.splitlines() if line.strip()}
+    ls_out = _run_git(repo_root, "ls-tree", "-r", "--name-only", branch)
+    if ls_out.strip():
+        return {line.strip() for line in ls_out.splitlines() if line.strip()}
+    return set()
+
+
+def detect_dependency_chain(
+    new_task: Task,
+    existing_tasks: list[Task],
+    existing_branches: list[str],
+    repo_path: str,
+) -> list[Conflict]:
+    """Flag a new task whose scope collides with any in-flight worker branch.
+
+    For each in-flight branch, runs `git diff main..<branch> --name-only`
+    (with `master` and `HEAD` fallbacks) and intersects with the new task's
+    `scope_files`. Any intersection is a `blocker`: the new task must wait
+    for that worker to finish, or the operator must rebase the new task
+    against the in-flight branch first.
+
+    Args:
+        new_task          — Task being planned.
+        existing_tasks    — Reserved for future cross-task dependency data.
+        existing_branches — In-flight worker branch names.
+        repo_path         — Filesystem path to the repo root for git commands.
+
+    Returns:
+        list[Conflict]; one blocker per branch that shares files with the
+        new task. Empty list when no overlap exists.
+    """
+    planned_set = {p for p in new_task.scope_files if p}
+    if not planned_set or not existing_branches:
+        return []
+
+    # Try `main`, then `master`, then `HEAD`.
+    base_candidates = ("main", "master", "HEAD")
+
+    conflicts: list[Conflict] = []
+    for branch in existing_branches:
+        changed: set[str] = set()
+        for base in base_candidates:
+            changed = _run_git_diff_files(repo_path, base, branch)
+            if changed:
+                break
+        if not changed:
+            continue
+        overlap = sorted(planned_set & changed)
+        if overlap:
+            evidence = [f"{branch}: {p}" for p in overlap]
+            conflicts.append(
+                Conflict(
+                    severity="blocker",
+                    category="dependency_chain",
+                    summary=(
+                        f"new task '{new_task.task_id}' depends on "
+                        f"in-flight worker '{branch}': shared file(s) "
+                        f"{overlap}"
+                    ),
+                    evidence=evidence,
+                    remediation=(
+                        "merge the in-flight branch and rebase the new "
+                        "task against it, or split the new task's scope"
+                    ),
+                )
+            )
+    return conflicts
+
+
+def suggest_serialization(
+    conflicting_tasks: list[Task],
+    repo_path: str,
+    config: dict[str, Any] | None = None,
+) -> list[Conflict]:
+    """Suggest a serialization order for tasks that share files.
+
+    Algorithm:
+        1. For each shared file, check whether it's lockfile-shaped
+           (config-driven set + default patterns). If yes: blocker with
+           remediation to serialize.
+        2. For non-lockfile shared files, check recent git history
+           (`git log --oneline -20 -- <file>`). The task that aligns
+           with the most recent commit history goes first (least likely
+           to conflict on existing lines).
+        3. If history is empty: minor remediation ("parallel OK; root
+           should rebase after merge") — disjoint line overlap is
+           safe to parallelise as long as the operator rebases.
+
+    Args:
+        conflicting_tasks — Tasks whose scope_files overlap.
+        repo_path         — Filesystem path to the repo root for git log.
+        config            — Optional config dict (lockfile_files, ignored_paths).
+
+    Returns:
+        list[Conflict]; one entry per shared file. Blockers for lockfiles,
+        minors otherwise.
+    """
+    cfg = config or {}
+    patterns = list(DEFAULT_LOCKFILE_PATTERNS)
+    extras = cfg.get("lockfile_files") or []
+    if isinstance(extras, list):
+        patterns.extend(str(x) for x in extras)
+    ignored = cfg.get("ignored_paths") or []
+    if not isinstance(ignored, list):
+        ignored = []
+
+    file_to_tasks: dict[str, list[str]] = {}
+    for t in conflicting_tasks:
+        if not t.task_id:
+            continue
+        for f in t.scope_files:
+            if not f or _is_ignored(f, ignored):
+                continue
+            file_to_tasks.setdefault(f, []).append(t.task_id)
+
+    conflicts: list[Conflict] = []
+    for path, owners in file_to_tasks.items():
+        unique_owners = sorted(set(owners))
+        if len(unique_owners) < 2:
+            continue
+        evidence = [f"{o}: {path}" for o in unique_owners]
+        if _matches_lockfile(path, patterns):
+            conflicts.append(
+                Conflict(
+                    severity="blocker",
+                    category="serialization_lockfile",
+                    summary=(
+                        f"lockfile contention: '{path}' touched by "
+                        f"{len(unique_owners)} tasks ({', '.join(unique_owners)})"
+                    ),
+                    evidence=evidence,
+                    remediation=(
+                        "serialize; lowest-risk task first (the task "
+                        "touching fewest other files should run first)"
+                    ),
+                )
+            )
+            continue
+
+        # Non-lockfile: check git history for recent activity.
+        log_out = _run_git(
+            repo_path, "log", "--oneline", "-20", "--", path
+        )
+        recent_commits = [line for line in log_out.splitlines() if line.strip()]
+        if not recent_commits:
+            conflicts.append(
+                Conflict(
+                    severity="minor",
+                    category="serialization_overlap",
+                    summary=(
+                        f"shared file '{path}' across {len(unique_owners)} "
+                        f"tasks with no recent commit history"
+                    ),
+                    evidence=evidence,
+                    remediation=(
+                        "parallel OK; root should rebase after merge "
+                        "to surface any line-range conflicts"
+                    ),
+                )
+            )
+        else:
+            evidence.append(f"recent_commits={len(recent_commits)}")
+            conflicts.append(
+                Conflict(
+                    severity="minor",
+                    category="serialization_overlap",
+                    summary=(
+                        f"shared file '{path}' across {len(unique_owners)} "
+                        f"tasks; order by git history recency"
+                    ),
+                    evidence=evidence,
+                    remediation=(
+                        "run the task aligned with the most recent commit "
+                        "history first; parallel OK only if disjoint line "
+                        "ranges — root should rebase after merge"
+                    ),
+                )
+            )
+    return conflicts
+
+
+def _read_tasks_file(path: str) -> list[Task]:
+    """Load a JSON file of `[{"task_id": ..., "scope_files": [...]}, ...]`."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError(
+            f"tasks file must be a JSON list, got {type(data).__name__}"
+        )
+    out: list[Task] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        tid = str(entry.get("task_id", "")).strip()
+        files = entry.get("scope_files") or []
+        if isinstance(files, list):
+            out.append(Task(task_id=tid, scope_files=[str(x) for x in files]))
+        else:
+            out.append(Task(task_id=tid, scope_files=[]))
+    return out
+
+
+def _format_text_plan(plan: ExecutionPlan) -> str:
+    """Plain-text rendering for an ExecutionPlan."""
+    if plan.phases == [[]]:
+        return (
+            "execution plan: CYCLE DETECTED — caller must surface as blocker\n"
+        )
+    if not plan.phases:
+        return "execution plan: (no tasks)\n"
+    lines: list[str] = ["execution plan:"]
+    for i, phase in enumerate(plan.phases):
+        tag = "parallel" if len(phase) > 1 else "serial"
+        lines.append(f"  phase {i} ({tag}): {', '.join(phase)}")
+    lines.append(f"  critical_path: {' -> '.join(plan.critical_path)}")
+    lines.append(
+        f"  parallel_batches: "
+        f"{', '.join('[' + ','.join(b) + ']' for b in plan.parallel_batches) or '(none)'}"
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _emit_plan(plan: ExecutionPlan, fmt: str, out: Any = None) -> int:
+    """Print an ExecutionPlan in the chosen format.
+
+    Cycle sentinel (`phases == [[]]`) returns exit code 2 (blocker).
+    Otherwise the planning command is informational and returns 0.
+    """
+    out = out or sys.stdout
+    payload = {
+        "phases": plan.phases,
+        "critical_path": plan.critical_path,
+        "parallel_batches": plan.parallel_batches,
+        "is_cycle": plan.phases == [[]],
+    }
+    if fmt == "json":
+        out.write(json.dumps(payload, indent=2) + "\n")
+    else:
+        out.write(_format_text_plan(plan))
+    return 2 if plan.phases == [[]] else 0
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -736,6 +1159,27 @@ def _build_parser() -> argparse.ArgumentParser:
     sp6.add_argument("--repo", default=".", help="repo root for git commands")
     sp6.add_argument("--config", default=None, help="optional YAML config file")
 
+    sp7 = sub.add_parser("plan-order", parents=[fmt_parent],
+                          help="plan task execution order based on file overlap")
+    sp7.add_argument("--tasks", required=True,
+                     help="JSON file of [{task_id, scope_files}]")
+
+    sp8 = sub.add_parser("dep-chain", parents=[fmt_parent],
+                          help="detect if a planned task depends on in-flight workers' branches")
+    sp8.add_argument("--scope", required=True,
+                     help="JSON file of [Task] (first entry is the new task)")
+    sp8.add_argument("--branches", nargs="+", default=[],
+                     help="in-flight branch names")
+    sp8.add_argument("--repo", default=".", help="repo root for git commands")
+
+    sp9 = sub.add_parser("serialize", parents=[fmt_parent],
+                          help="suggest serialization order for tasks sharing files")
+    sp9.add_argument("--tasks", required=True,
+                     help="JSON file of [{task_id, scope_files}]")
+    sp9.add_argument("--config", default=None,
+                     help="optional YAML config file (default set if omitted)")
+    sp9.add_argument("--repo", default=".", help="repo root for git commands")
+
     return p
 
 
@@ -786,6 +1230,28 @@ def main(argv: list[str] | None = None) -> int:
                 in_flight_branches=list(args.branches),
                 repo_root=args.repo,
             )
+        )
+
+    elif args.command == "plan-order":
+        tasks = _read_tasks_file(args.tasks)
+        plan = plan_execution_order(tasks)
+        return _emit_plan(plan, fmt)
+
+    elif args.command == "dep-chain":
+        tasks = _read_tasks_file(args.scope)
+        new_task = tasks[0] if tasks else Task(task_id="?", scope_files=[])
+        conflicts = detect_dependency_chain(
+            new_task=new_task,
+            existing_tasks=tasks[1:],
+            existing_branches=list(args.branches),
+            repo_path=args.repo,
+        )
+
+    elif args.command == "serialize":
+        tasks = _read_tasks_file(args.tasks)
+        config = load_config(args.config)
+        conflicts = suggest_serialization(
+            tasks, repo_path=args.repo, config=config
         )
 
     return _emit(conflicts, fmt)
