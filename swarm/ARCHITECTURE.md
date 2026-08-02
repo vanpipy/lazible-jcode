@@ -26,12 +26,30 @@ the architecture in one read.
 
 ## Topology
 
-```
-                    root (main agent)
-                   /  |  |  |  \
-                  /   |  |  |   \
-                 v    v  v  v    v
-            w1    w2  w3 w4  w5  w6
+<!-- Diagram: star topology showing root at top, 6 workers below, and labeled communication edges -->
+```mermaid
+graph TD
+    Root["root (main agent)"]
+    W1["reviewer"]
+    W2["investigator"]
+    W3["migrator"]
+    W4["test-writer"]
+    W5["doc-writer"]
+    W6["implementer"]
+
+    Root -->|"spawn + dm / assign_task"| W1
+    Root -->|"spawn + dm / assign_task"| W2
+    Root -->|"spawn + dm / assign_task"| W3
+    Root -->|"spawn + dm / assign_task"| W4
+    Root -->|"spawn + dm / assign_task"| W5
+    Root -->|"spawn + dm / assign_task"| W6
+
+    W1 -->|"complete_node / report / follow_up"| Root
+    W2 -->|"complete_node / report / follow_up"| Root
+    W3 -->|"complete_node / report / follow_up"| Root
+    W4 -->|"complete_node / report / follow_up"| Root
+    W5 -->|"complete_node / report / follow_up"| Root
+    W6 -->|"complete_node / report / follow_up"| Root
 ```
 
 - 1 root per session, N workers spawned on demand
@@ -88,6 +106,15 @@ Every worker completion must include:
 Missing fields = incomplete work; root will reject and ask for redo.
 
 ### Cross-worker handoff (overlay `### Cross-worker handoff protocol`)
+
+<!-- Diagram: 4-step sequence for cross-worker dependency resolution between Worker A, Root, and Worker B -->
+```mermaid
+sequenceDiagram
+    WorkerA->>Root: open_questions[]: "depends on Worker B output"
+    Root->>WorkerB: merge branch into integration target
+    Root->>WorkerA: rebase onto new base + dm with updated context
+    WorkerA->>Root: fresh artifact with validation against new base
+```
 
 When worker A's slice depends on worker B's output:
 
