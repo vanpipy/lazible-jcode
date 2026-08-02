@@ -60,8 +60,10 @@ lazible-jcode/
 │       ├── test-writer.md
 │       └── doc-writer.md
 ├── scripts/
-│   ├── install.sh                     # Repo-level installer: jcode binary + overlay + swarm symlinks
+│   ├── install.sh                     # Linear, unconditional, overwrite-by-default installer (4 steps)
 │   ├── uninstall.sh                   # Removes binary + lazible-jcode-owned symlinks
+│   ├── build-jcode-canary.sh          # selfdev: clone jcode + apply patch + cargo build canary
+│   ├── sync-jcode-source.sh           # selfdev: pull upstream + re-validate patches
 │   └── lib/
 │       └── configure_path.sh
 ├── docs/
@@ -76,40 +78,36 @@ lazible-jcode/
 git clone https://github.com/vanpipy/lazible-jcode.git
 cd lazible-jcode
 
-# 2. Install jcode using this repo's installer (no curl | bash required).
-#    This installs the jcode binary AND symlinks the overlay + swarm config.
+# 2. Install jcode + overlay + skills + AGENTS.md (one command, overwrite-by-default).
 ./scripts/install.sh
 
 # 3. (Optional) Pull the current machine's jcode config into this repo
 ./skills/copy-from-jcode/copy-from-jcode.sh
 ```
 
+If `jcode-patches/*.patch` exists in the repo, step 1 builds a canary from
+those patches and replaces `~/.local/bin/jcode` automatically. If no patch
+exists, the upstream installer runs instead. Either way the result overwrites
+the binary unconditionally.
+
 ### Install options
 
-`scripts/install.sh` accepts overlay-specific flags (forwarded separately from
-the binary-installer flags):
+`scripts/install.sh` is intentionally minimal — only one flag:
 
 | Flag | Effect |
 |---|---|
-| (default) | Install jcode binary **and** symlink overlay + swarm config |
-| `--no-overlay` | Skip the overlay/swarm symlinks; binary only |
-| `--overlay <path>` | Use `<path>` as the overlay source instead of `swarm/prompt-overlay.md` |
-| `--refresh` | Force overwrite mismatched symlinks; back up non-symlinks to `<dst>.bak` |
-| `--install-skills` | Also symlink each `skills/<name>` into `~/.jcode/skills/` |
-| `--skip-binary` | Skip the jcode binary installer (overlay-only refresh) |
-| `--dry-run` | Print the plan; write nothing |
+| `--canary-version <v>` | Pin the jcode tag used for the canary build (only matters when `jcode-patches/*.patch` exists). Default: latest |
+| `-h`, `--help` | Show usage |
 
-Examples:
+The script **always** runs all 4 steps, **always** overwrites the destination,
+and **always** backs up any pre-existing file at the destination to
+`<dst>.bak.<timestamp>` first. There are no `--skip-*` / `--refresh` /
+`--dry-run` flags.
+
+To pin the canary build:
 
 ```bash
-# Refresh overlay symlinks only (jcode binary already installed):
-./scripts/install.sh --skip-binary --refresh
-
-# Use a personal overlay file:
-./scripts/install.sh --overlay ~/my-overrides/prompt-overlay.md
-
-# Full reset: re-link all overlay + swarm + skills symlinks (binary stays):
-./scripts/install.sh --skip-binary --refresh --install-skills
+./scripts/install.sh --canary-version v0.65.0
 ```
 
 Run `./scripts/install.sh --help` for the full usage block.
@@ -169,17 +167,17 @@ overlay — use `install.sh` for that.
 
 The overlay (above) is **additive** — it sits after jcode's base system prompt
 in the prompt concatenation order. To make the swarm-coordinator-first
-behavior truly baked-in, lazible-jcode ships a patch against jcode's source:
+behavior truly baked-in, lazible-jcode ships patches against jcode's source in
+`jcode-patches/`. When the repo has any `*.patch` file there, `scripts/install.sh`
+step 1 automatically builds a canary from those patches and replaces
+`~/.local/bin/jcode` (backed up as `jcode.bak.<ts>`). No flag needed.
 
 ```bash
-# Build a canary binary side-by-side with the regular jcode (~5-10 min)
+# Re-run the installer to rebuild the canary against the current patches:
+./scripts/install.sh --canary-version v0.65.0
+
+# Or run the canary build script standalone (side-by-side, doesn't touch main):
 ./scripts/build-jcode-canary.sh --jcode-version v0.65.0
-
-# Or, do everything in one shot during install
-./scripts/install.sh --enable-selfdev --canary-version v0.65.0
-
-# Promote the canary to the main jcode binary
-./scripts/build-jcode-canary.sh --jcode-version v0.65.0 --replace-main
 ```
 
 The patch replaces the upstream identity line "maximally proactive coding
@@ -187,6 +185,10 @@ agent" with "swarm-coordinator-first coding agent" inside
 `crates/jcode-base/src/prompt/system_prompt.md` (which is compiled into the
 binary via `include_str!`). See `docs/SELFDEV.md` for the full flow including
 re-syncing against upstream jcode releases.
+
+To **stop** selfdev and fall back to upstream-only installs, simply remove the
+files under `jcode-patches/`. The next `install.sh` will use the upstream
+installer instead.
 
 ## What is and isn't committed
 

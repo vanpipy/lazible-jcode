@@ -44,19 +44,21 @@ code lives here.
   `~/.jcode/mcp.json` carries MCP server tokens; `config/mcp.json.example` is
   the only safe place to reference its shape.
 - Installer lives at `scripts/install.sh` (repo-level wrapper) and
-  `skills/install-jcode/jcode-install.sh` (standalone binary installer).
-  The wrapper does three things in order:
-  1. Calls the standalone installer to install the jcode binary + PATH.
-  2. Symlinks the overlay + swarm config into `~/.jcode/`. Flags:
-     `--no-overlay` (skip step 2), `--overlay <path>` (custom overlay file),
-     `--refresh` (force overwrite mismatched symlinks, backup non-symlinks),
-     `--install-skills` (also symlink `skills/<name>`),
-     `--skip-binary` (only run step 2), `--dry-run` (plan only).
-  3. (opt-in) `scripts/build-jcode-canary.sh` clones jcode source, applies
-     `jcode-patches/swarm-coordinator-first.patch` to the BASE system prompt,
-     cargo-builds a canary binary. Enable with `--enable-selfdev`.
-     Pin the version with `--canary-version <v>`. Replace the main binary
-     with `--replace-main-binary` (backed up first as `jcode.bak.<ts>`).
+  `skills/install-jcode/jcode-install.sh` (standalone upstream binary installer).
+  The wrapper is **linear and unconditional**: it runs 4 steps every time and
+  overwrites the destination without prompting. Only flag is `--canary-version <v>`.
+  Steps:
+  1. Install jcode binary. If `jcode-patches/*.patch` exists, build a canary
+     from those patches (via `scripts/build-jcode-canary.sh --replace-main`);
+     otherwise call the standalone upstream installer. Either way, the result
+     replaces `~/.local/bin/jcode` (the previous binary is backed up as
+     `jcode.bak.<ts>`).
+  2. Symlink overlay + swarm config (`swarm/prompt-overlay.md`,
+     `swarm/swarm-prompt.md`, `swarm/roles/`) into `~/.jcode/`.
+  3. Symlink each `skills/<name>/SKILL.md` directory into `~/.jcode/skills/<name>`.
+  4. Symlink `AGENTS.md` into `~/.jcode/AGENTS.md`.
+  Existing files at any destination are backed up to `<dst>.bak.<timestamp>`
+  before being replaced.
 - `jcode-patches/swarm-coordinator-first.system_prompt.md` is the source of
   truth for the rewritten base identity. The matching `.patch` file is
   generated from it against the upstream jcode HEAD at time of commit; see
@@ -119,9 +121,10 @@ bash -n skills/copy-from-jcode/copy-from-jcode.sh
 git clone --depth 1 https://github.com/1jehuang/jcode.git /tmp/jcode-verify
 (cd /tmp/jcode-verify && git apply --check jcode-patches/swarm-coordinator-first.patch)
 rm -rf /tmp/jcode-verify
-# Optional but recommended: a dry-run
-bash scripts/install.sh --dry-run
+# Help output should match the committed help text
+bash scripts/install.sh --help
 ```
 
 All shell scripts must pass `bash -n`. The patch must apply cleanly. The
-`--dry-run` must print a plan without writing to disk.
+`--help` output must look correct (linear 4-step description, only `--canary-version`
+flag).

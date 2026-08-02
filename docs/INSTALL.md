@@ -10,24 +10,27 @@ cd lazible-jcode
 ./scripts/install.sh
 ```
 
-This is a wrapper that does **two things**:
+The wrapper is **linear and unconditional** — it runs 4 steps every time and
+overwrites the destination without prompting:
 
-1. Validates the checkout and calls the standalone binary installer:
-   ```
-   scripts/install.sh
-   └─ skills/install-jcode/jcode-install.sh
-   ```
-2. Symlinks this repo's `swarm/prompt-overlay.md` → `~/.jcode/prompt-overlay.md`
-   so jcode picks up the enhanced main-agent prompt at session start. It also
-   symlinks `swarm/swarm-prompt.md` and `swarm/roles/` to their canonical
-   locations.
+1. Install jcode binary. If `jcode-patches/*.patch` exists, build a canary
+   from those patches (via `scripts/build-jcode-canary.sh --replace-main`);
+   otherwise call the standalone upstream installer. Either way, the result
+   replaces `~/.local/bin/jcode` (the previous binary is backed up as
+   `jcode.bak.<ts>`).
+2. Symlink `swarm/prompt-overlay.md`, `swarm/swarm-prompt.md`, and
+   `swarm/roles/` into their canonical locations under `~/.jcode/`.
+3. Symlink each `skills/<name>/SKILL.md` directory into `~/.jcode/skills/<name>`.
+4. Symlink `AGENTS.md` to `~/.jcode/AGENTS.md`.
 
-If you want the standalone installer without the wrapper (no overlay):
+Existing files at any destination are backed up to `<dst>.bak.<timestamp>`
+before being replaced.
+
+If you want the standalone installer without the wrapper (no overlay,
+no selfdev, no symlinks):
 
 ```bash
 ./skills/install-jcode/jcode-install.sh
-# or, via the wrapper, with overlay disabled:
-./scripts/install.sh --no-overlay
 ```
 
 ## 2. Use the upstream installer
@@ -46,43 +49,30 @@ reviewable.
 ## 3. From source
 
 ```bash
-./scripts/install.sh --from-source
+./scripts/install.sh
 ```
 
-Requires `git` and `cargo`. Builds `1jehuang/jcode` at the latest tag (or a
-pinned version with `--version`).
+If `jcode-patches/*.patch` exists, the canary build path takes over and
+`scripts/build-jcode-canary.sh` runs `cargo build --release` against the
+patches. If no patch exists, the standalone upstream installer falls back to
+downloading a prebuilt tarball. Pin the version with
+`./scripts/install.sh --canary-version <v>` (only honored when canary build
+runs).
+
+Requires `git` and `cargo` for the canary path.
 
 ## Flags
 
-`scripts/install.sh` is the wrapper. It consumes its own flags first, then
-forwards everything else to `skills/install-jcode/jcode-install.sh`.
-
-### Wrapper-specific (overlay + symlinks)
+`scripts/install.sh` is intentionally minimal — only one flag:
 
 | Flag | Effect |
 |---|---|
-| (no flag) | Default: install jcode binary **and** symlink overlay + swarm config |
-| `--no-overlay` | Skip the overlay/swarm symlinks; binary install only |
-| `--overlay <path>` | Use `<path>` as the overlay source instead of `swarm/prompt-overlay.md` |
-| `--refresh` | Force overwrite mismatched symlinks; existing non-symlink files at the destination are backed up to `<dst>.bak` first |
-| `--install-skills` | Also symlink each `skills/<name>` into `~/.jcode/skills/`. Default: leave `~/.jcode/skills/` untouched (users may have personal skills) |
-| `--skip-binary` | Skip the jcode binary installer (overlay-only refresh on a machine that already has jcode) |
-| `--dry-run` | Print the plan; write nothing |
+| `--canary-version <v>` | Pin the jcode tag the canary build runs against. Only used when `jcode-patches/*.patch` exists. Default: latest |
+| `-h`, `--help` | Show usage |
 
-### Forwarded to the binary installer
-
-| Flag | Effect |
-|---|---|
-| `--version <v>` | Pin a release tag (e.g. `v0.64.2`) |
-| `--install-dir <dir>` | Override launcher install dir (default `~/.local/bin`) |
-| `--from-source` | `cargo build --release` instead of downloading |
-| `--local-artifact <path>` | Use a local tarball/zip instead of downloading |
-| `--skip-path` | Do not edit shell rc files |
-| `--skip-server-reload` | Do not reload a running jcode server |
-| `--no-telemetry` | Skip install-funnel telemetry |
-
-Run `./scripts/install.sh --help` for the full wrapper usage, and
-`./skills/install-jcode/jcode-install.sh --help` for the full installer list.
+There is **no** `--skip-binary`, `--refresh`, `--install-skills`, `--dry-run`,
+`--no-overlay`, or `--enable-selfdev`. Every run does all 4 steps and
+overwrites every destination (with `.bak.<ts>` backup first).
 
 ## Verification
 
@@ -128,55 +118,47 @@ installer added, edit the rc file by hand.
 ## Self-development (advanced)
 
 If the overlay isn't strong enough for your taste (because the upstream
-`system_prompt.md` still anchors "maximally proactive"), enable selfdev to
-build a custom jcode binary with the swarm-coordinator-first base prompt
-baked in. See `docs/SELFDEV.md` for the full flow.
+`system_prompt.md` still anchors "maximally proactive"), enable selfdev by
+placing patches under `jcode-patches/`. When any `*.patch` file exists there,
+the wrapper's step 1 automatically builds a canary from those patches and
+replaces `~/.local/bin/jcode` (backed up as `jcode.bak.<ts>`). No flag needed.
+See `docs/SELFDEV.md` for the full flow.
 
 ```bash
-# Build a canary side-by-side (5-10 min first run)
-./scripts/install.sh --skip-binary --enable-selfdev --canary-version v0.65.0
+# Re-run the wrapper to rebuild the canary against the current patches
+./scripts/install.sh --canary-version v0.65.0
 
-# Then promote
-./scripts/build-jcode-canary.sh --from-source --replace-main
+# Or run the canary build script standalone (side-by-side, doesn't touch main)
+./scripts/build-jcode-canary.sh --jcode-version v0.65.0
 ```
 
-After `--replace-main`, your regular `jcode` invocation runs the swarm-tuned
-build. The original is at `~/.local/bin/jcode.bak.<timestamp>` for rollback.
+After the canary replaces `~/.local/bin/jcode`, your regular `jcode` invocation
+runs the swarm-tuned build. The original is at
+`~/.local/bin/jcode.bak.<timestamp>` for rollback.
+
+To **stop** selfdev and fall back to upstream-only installs, simply remove the
+files under `jcode-patches/`. The next `install.sh` will use the upstream
+installer instead.
 
 ## Re-install / overwrite
 
-The wrapper is **idempotent**: running `./scripts/install.sh` on a machine
-that already has jcode is safe. Default behavior:
+The wrapper is **always idempotent and unconditional**: running
+`./scripts/install.sh` always runs all 4 steps and always overwrites every
+destination. Any pre-existing file or symlink at the destination is backed up
+to `<dst>.bak.<timestamp>` first. There is no `--refresh` flag — rerunning
+**is** the refresh.
 
 | Destination state | What `install.sh` does |
 |---|---|
 | Does not exist | Creates the symlink |
-| Already a symlink to **this** repo | Skips (no change) |
-| A symlink to **somewhere else** | Skips with a warning (run with `--refresh` to replace) |
-| A **regular file or directory** | Skips with a warning (run with `--refresh` to back up as `<dst>.bak` then replace) |
+| Already a symlink to **this** repo | Removes, backs up the link, re-links (so any drift in the link is corrected) |
+| A symlink to **somewhere else** | Removes, backs up as `<dst>.bak.<ts>`, replaces with repo symlink |
+| A **regular file or directory** | Moves to `<dst>.bak.<ts>`, replaces with repo symlink |
 
-To force a clean re-link of every overlay + swarm + skill symlink:
-
-```bash
-./scripts/install.sh --skip-binary --refresh --install-skills
-```
-
-To also force-reinstall the binary:
+To pin the canary version:
 
 ```bash
-./scripts/install.sh --refresh --install-skills
-```
-
-To preview without writing:
-
-```bash
-./scripts/install.sh --skip-binary --refresh --install-skills --dry-run
-```
-
-To use your own overlay file instead of the one in this repo:
-
-```bash
-./scripts/install.sh --overlay ~/my-overrides/prompt-overlay.md
+./scripts/install.sh --canary-version v0.65.0
 ```
 
 ## Sync installed skills
@@ -200,13 +182,13 @@ To snapshot the live `~/.jcode/skills/` back into the repo:
 
 | Symptom | Fix |
 |---|---|
-| `curl: command not found` | Install `curl` or use `--from-source` |
-| `cargo: command not found` | Install Rust via `rustup` |
+| `curl: command not found` | Install `curl` |
+| `cargo: command not found` | Install Rust via `rustup` (required only when canary build runs) |
 | `xattr: com.apple.quarantine` | Re-run after granting the binary once via Finder |
 | Quarantine still blocks on macOS | `xattr -d com.apple.quarantine "$(command -v jcode)"` |
 | Wrong arch on Windows ARM64 | Check `PROCESSOR_ARCHITECTURE`, not `uname -m` |
 | `pkg install glibc patchelf` (Termux) | Required for the prebuilt Linux binary to load |
 | Launcher installed but `jcode: not found` | `source ~/.bashrc` or open a new shell |
-| `skip <name> — exists and is not a symlink (use --refresh to backup + replace)` | A file or directory is already at `~/.jcode/<name>`. Re-run with `--refresh` to back it up as `<name>.bak` then symlink |
+| Old file / dir at a destination is replaced during rerun | It's backed up as `<dst>.bak.<ts>` automatically; `ls -la ~/.jcode/` to inspect |
 | `prompt-overlay.md` not picked up by jcode | Confirm `~/.jcode/prompt-overlay.md` exists and is a symlink to `swarm/prompt-overlay.md` in this repo. `ls -la ~/.jcode/prompt-overlay.md` should show the target. jcode reads it at session start — restart jcode after editing |
-| Want to test the overlay without touching your `~/.jcode/` | `./scripts/install.sh --dry-run` prints the full plan without writing anything |
+| Want to inspect what install.sh would do | `bash scripts/install.sh --help` and read the printed 4-step plan; the script itself does not support `--dry-run` — all runs write |
