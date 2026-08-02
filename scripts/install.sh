@@ -142,6 +142,19 @@ overwrite_link() {
   info "linked $label → $src"
 }
 
+# Like overwrite_link(), but consults IDEMPOTENT: when IDEMPOTENT=1 and dst
+# already resolves to the same canonical target as src, skip without backing
+# up or re-linking. When IDEMPOTENT=0 (default), behavior matches overwrite_link
+# exactly. Returns 0 in both branches.
+maybe_overwrite_link() {
+  local src="$1" dst="$2" label="$3"
+  if [[ "$IDEMPOTENT" == "1" ]] && is_same_link "$src" "$dst"; then
+    info "skipping: $label (already linked to same target)"
+    return 0
+  fi
+  overwrite_link "$src" "$dst" "$label"
+}
+
 # ── step 1: install jcode binary ──────────────────────────────────────────────
 info "── step 1/4: install jcode binary ──"
 mkdir -p "$INSTALL_DIR"
@@ -173,10 +186,10 @@ fi
 # ── step 2: overlay + swarm config ─────────────────────────────────────────────
 info "── step 2/4: overlay + swarm config ──"
 mkdir -p "$JCODE_HOME" "$JCODE_HOME/roles"
-overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md" "prompt-overlay.md"
-overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"   "swarm-prompt.md"
-overwrite_link "$repo_root/swarm/ARCHITECTURE.md"   "$JCODE_HOME/ARCHITECTURE.md"   "ARCHITECTURE.md"
-overwrite_link "$repo_root/swarm/roles"             "$JCODE_HOME/roles"             "roles/"
+maybe_overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md" "prompt-overlay.md"
+maybe_overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"   "swarm-prompt.md"
+maybe_overwrite_link "$repo_root/swarm/ARCHITECTURE.md"   "$JCODE_HOME/ARCHITECTURE.md"   "ARCHITECTURE.md"
+maybe_overwrite_link "$repo_root/swarm/roles"             "$JCODE_HOME/roles"             "roles/"
 
 # ── step 3: skills ────────────────────────────────────────────────────────────
 info "── step 3/4: skills ──"
