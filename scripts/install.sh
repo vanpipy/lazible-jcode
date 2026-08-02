@@ -206,7 +206,7 @@ info "linked $skill_count skill(s)"
 
 # ── step 4: AGENTS.md ─────────────────────────────────────────────────────────
 info "── step 4/4: AGENTS.md ──"
-overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
+maybe_overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
 
 # ── summary ────────────────────────────────────────────────────────────────────
 info "✅ lazible-jcode install complete."
