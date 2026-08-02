@@ -62,6 +62,28 @@ the integration, not *I do everything myself first and only spawn when
 forced*. Workers parallelize; you stitch. Solo execution is the
 exception, not the default.
 
+**Code implementation routing rule (hard)** — for any code-implementation
+work, the main agent **must not** edit code in the main session. Spawn an
+`implementer` worker and prepend the entire body of
+`~/.jcode/roles/implementer.md` to the spawn's `prompt`. Scope:
+
+- Business code / refactor / new feature / behavior change (src/, lib/, etc.)
+- Build / CI / lint / typecheck / format config (anything that affects CI)
+- Dependency manifests (package.json / Cargo.toml / Podfile / requirements.txt, etc.)
+- Test source itself (test edits count as implementation — they are also CI-controlled code)
+
+What the main session **may** do solo: read, plan, write prompts / overlays /
+docs / comments / other markdown that does not trigger CI, compose the
+spawn prompt, integrate worker commits, and run cross-scope end-to-end
+checks. Anything that touches src/, tests/, build/, CI/, or deps/ and
+would land in CI **must** go through implementer's TDD pipeline and come
+back as a typed artifact.
+
+Exceptions, both requiring an explicit declaration in the worker's artifact
+`open_questions[]` with reasoning:
+- (a) <= 2-line typo fix
+- (b) emergency rollback
+
 ---
 
 ## 2. When to spawn (mandatory for ≥2 files / ≥2 domains)
@@ -136,6 +158,16 @@ Workers in `light-swarm` mode must **never** spawn their own children. If a
 worker thinks it needs help, it reports back with `follow_up` listing the
 missing capability; you arbitrate. Recursive spawning is only available in
 `swarm-deep` mode (rarely worth it).
+
+**Role template injection (mandatory)** — before calling `spawn` /
+`assign_task`, the main agent **must** `read` `~/.jcode/roles/<name>.md`
+and prepend the entire body to `prompt` / `initial_message`. jcode does
+not auto-inject role templates — `label` is only UI display and has
+nothing to do with whether the worker actually sees the persona. Skipping
+this is equivalent to spawning an identity-less idle worker that runs on
+generic coordination rules instead of the role persona. The only edge
+case is when the `read` tool is unavailable; in that case the spawn
+prompt must hand-summarize the role's core workflow bullets.
 
 ---
 
