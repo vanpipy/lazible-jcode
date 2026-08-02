@@ -15,11 +15,16 @@
 # point. Existing files at the destination are always backed up to <dst>.bak.<ts>
 # before being replaced, so rerunning this script is safe.
 #
+# Opt-in: set IDEMPOTENT=1 to skip the symlink steps (2/3/4) when their target
+# is already a symlink pointing at the right source. Step 1 (the jcode binary)
+# always runs. See --help for details.
+#
 # Usage:
 #   ./scripts/install.sh                          # run all 4 steps with defaults
 #   ./scripts/install.sh --canary-version v0.65.0 # pin jcode tag for the canary build
 #   ./scripts/install.sh --clean                  # wipe source-dir before canary build
 #   ./scripts/install.sh --help                   # show usage
+#   IDEMPOTENT=1 ./scripts/install.sh             # skip already-correct symlinks
 #
 # Flags:
 #   --canary-version <v>   Pin the jcode tag the canary is built from. Default: latest.
@@ -33,7 +38,9 @@
 #
 # Every run does all 4 steps and overwrites every destination (backed up as
 # <dst>.bak.<ts> first). The flags above are *values* (which tag, whether to
-# clean the canary source), not step toggles.
+# clean the canary source), not step toggles. IDEMPOTENT is an env var, not a
+# flag, on purpose: the CLI shape stays "linear and unconditional", and the
+# safety guarantee is opt-in via environment.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -60,6 +67,16 @@ overwrites the destination unconditionally:
 Existing files at any destination are backed up to <dst>.bak.<timestamp> before
 being replaced, so rerunning is safe.
 
+Environment variables:
+  IDEMPOTENT=1           Opt into skip-if-unchanged mode for the symlink steps
+                         (2/3/4). When set, already-correct symlinks are left
+                         in place and 'skipping: <reason>' is printed instead
+                         of backing them up + re-linking. Step 1 (the jcode
+                         binary install) still runs every time — its own
+                         mtime/version-pin logic lives in the upstream
+                         installer / canary builder. Default: unset (always
+                         overwrite, original behavior).
+
 Options:
   --canary-version <v>   Pin the jcode tag the canary is built from. Default: latest.
                          Only used when jcode-patches/*.patch exists.
@@ -79,6 +96,9 @@ Examples:
 
   # Wipe the canary source-dir first (when a previous build polluted it).
   $0 --clean
+
+  # Re-run safely: skip symlinks that already point at the right target.
+  IDEMPOTENT=1 $0
 EOF
 }
 
@@ -103,9 +123,29 @@ JCODE_HOME="${JCODE_HOME:-$HOME/.jcode}"
 INSTALL_DIR="${JCODE_INSTALL_DIR:-$HOME/.local/bin}"
 TIMESTAMP="$(date +%s)"
 
+# IDEMPOTENT opt-in env var. When set to a non-zero, non-empty value, the
+# symlink steps (2/3/4) skip already-correct links instead of backing them up
+# and overwriting. Default 0 preserves the original "overwrite unconditionally"
+# behavior. The jcode binary install (step 1) is not affected: that step still
+# always runs and is handled by the upstream installer / canary builder, which
+# already has its own mtime + version-pin logic.
+IDEMPOTENT="${IDEMPOTENT:-0}"
+
 info()  { printf '\033[1;34m%s\033[0m\n' "$*"; }
 warn()  { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
 err()   { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Returns 0 (true) if $dst is a symlink that already resolves to the same
+# canonical target as $src (compared via `readlink -f`). Returns 1 otherwise.
+# Only consulted when IDEMPOTENT=1; the unconditional path ignores this.
+is_same_link() {
+  local src="$1" dst="$2"
+  [[ -L "$dst" ]] || return 1
+  local src_real dst_real
+  src_real="$(readlink -f "$src" 2>/dev/null)" || return 1
+  dst_real="$(readlink -f "$dst" 2>/dev/null)" || return 1
+  [[ "$src_real" == "$dst_real" ]]
+}
 
 # Overwrite a file or symlink unconditionally. If dst exists (regular file,
 # symlink, or directory), back it up to <dst>.bak.<ts> first. If dst does not
@@ -120,6 +160,19 @@ overwrite_link() {
   fi
   ln -s "$src" "$dst"
   info "linked $label → $src"
+}
+
+# Like overwrite_link(), but consults IDEMPOTENT: when IDEMPOTENT=1 and dst
+# already resolves to the same canonical target as src, skip without backing
+# up or re-linking. When IDEMPOTENT=0 (default), behavior matches overwrite_link
+# exactly. Returns 0 in both branches.
+maybe_overwrite_link() {
+  local src="$1" dst="$2" label="$3"
+  if [[ "$IDEMPOTENT" == "1" ]] && is_same_link "$src" "$dst"; then
+    info "skipping: $label (already linked to same target)"
+    return 0
+  fi
+  overwrite_link "$src" "$dst" "$label"
 }
 
 # ── step 1: install jcode binary ──────────────────────────────────────────────
@@ -153,10 +206,10 @@ fi
 # ── step 2: overlay + swarm config ─────────────────────────────────────────────
 info "── step 2/4: overlay + swarm config ──"
 mkdir -p "$JCODE_HOME" "$JCODE_HOME/roles"
-overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md" "prompt-overlay.md"
-overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"   "swarm-prompt.md"
-overwrite_link "$repo_root/swarm/ARCHITECTURE.md"   "$JCODE_HOME/ARCHITECTURE.md"   "ARCHITECTURE.md"
-overwrite_link "$repo_root/swarm/roles"             "$JCODE_HOME/roles"             "roles/"
+maybe_overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md" "prompt-overlay.md"
+maybe_overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"   "swarm-prompt.md"
+maybe_overwrite_link "$repo_root/swarm/ARCHITECTURE.md"   "$JCODE_HOME/ARCHITECTURE.md"   "ARCHITECTURE.md"
+maybe_overwrite_link "$repo_root/swarm/roles"             "$JCODE_HOME/roles"             "roles/"
 
 # ── step 3: skills ────────────────────────────────────────────────────────────
 info "── step 3/4: skills ──"
@@ -166,19 +219,23 @@ for skill_dir in "$repo_root/skills"/*; do
   [[ -d "$skill_dir" ]] || continue
   [[ -f "$skill_dir/SKILL.md" ]] || continue
   name="$(basename "$skill_dir")"
-  overwrite_link "$skill_dir" "$JCODE_HOME/skills/$name" "skill:$name"
+  maybe_overwrite_link "$skill_dir" "$JCODE_HOME/skills/$name" "skill:$name"
   skill_count=$((skill_count + 1))
 done
 info "linked $skill_count skill(s)"
 
 # ── step 4: AGENTS.md ─────────────────────────────────────────────────────────
 info "── step 4/4: AGENTS.md ──"
-overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
+maybe_overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
 
 # ── summary ────────────────────────────────────────────────────────────────────
 info "✅ lazible-jcode install complete."
+info "   mode:           $([[ "$IDEMPOTENT" == "1" ]] && echo "idempotent (IDEMPOTENT=1)" || echo "overwrite (IDEMPOTENT unset)")"
 info "   jcode binary:   $INSTALL_DIR/jcode"
 info "   jcode home:     $JCODE_HOME"
 info "   overlay:        $JCODE_HOME/prompt-overlay.md → $repo_root/swarm/prompt-overlay.md"
 info "   architecture:   $JCODE_HOME/ARCHITECTURE.md → $repo_root/swarm/ARCHITECTURE.md"
 info "   AGENTS.md:      $JCODE_HOME/AGENTS.md → $repo_root/AGENTS.md"
+info ""
+info "Tip: re-running with IDEMPOTENT=1 skips symlinks that already point at"
+info "     the right target — no backups, no rewrites. See --help for details."
