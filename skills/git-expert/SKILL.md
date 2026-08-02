@@ -72,7 +72,7 @@ Then:
 | `recovering` | "undo / recover / reflog / stash pop" | Mistake undo |
 | `pushing` | "push / pull / fetch" | Pre-remote last check |
 
-Switch to `recovering` immediately if user says "oh no", "lost", "undo", "我刚才错了", "撤销".
+Switch to `recovering` immediately if user says "oh no", "lost", "undo", "i just messed up", "revert".
 
 ## When to Use
 
@@ -267,7 +267,7 @@ husky does **not** run the CI gates. The agent must run them. Default: no `--no-
 ```
 fix(order): populate itemDiscounts on /orderPay lines per BFF spec
 feat(security): mask member phone and staff name via pillars-security-crypto
-feat(shopcart): 明细弹窗对齐算价结果显示活动优惠与券抵扣
+feat(shopcart): item-detail popup aligns with pricing screen to show promo discounts and coupon offsets
 fix: shopcart item card layout
 merge feat/shopcart-item-card: unit price and discount price on the same row
 ```
