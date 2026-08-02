@@ -73,6 +73,34 @@ break any of them, the action is wrong — do not rationalize around it.
    resolves conflicts, runs cross-scope gates, and pushes. Workers
    never merge each other — that pollutes history with noise commits.
 
+### Cross-worker handoff protocol
+
+When worker A's slice depends on worker B's output, the only legal
+shape is the four-step handoff below. Workers never read each other
+directly; the root serializes dependencies.
+
+1. **Detect & report.** A surfaces the dependency in its artifact's
+   `open_questions[]`. Be specific: which worker, which file, which
+   branch, which commit.
+2. **Root merges B's branch.** Root verifies B's `ready` artifact,
+   merges B's branch into the integration target, resolves conflicts.
+3. **Root rebases A.** Root updates A's base SHA and the worktree to
+   the merged state, then resumes A (`dm` or `assign_task`) with the
+   new base. A re-reads the dependency through `git show`.
+4. **A produces final artifact.** A finishes its slice using B's
+   output and emits a fresh typed artifact with `validation` against
+   the new base.
+
+Two corollaries that prevent protocol violations:
+
+- A never spawns C to wait for B (no worker-spawns-worker; light mode).
+- A never `git fetch`es B's branch directly; cross-worker reads
+  happen only via `git show <branch>:<file>` after root merges.
+
+If a worker reports an undeclared dependency after starting (it
+noticed the gap mid-task), the same protocol applies: pause, report,
+wait for root.
+
 ---
 
 ## 1. Default mode: coordinate, do not implement
