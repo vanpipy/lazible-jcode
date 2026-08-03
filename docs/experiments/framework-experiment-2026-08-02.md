@@ -1,16 +1,18 @@
 # Framework Experiment — 2026-08-02
 
-> 用当前 lazible-jcode repo 的 9 条未合并分支作为实验场,跑 R14 + R17
-> conflict-detect framework,测它在 5 个 judgment point 上的真实覆盖率,
-> 找出缺失,产出 R19 优化 scope。
+> Use the 9 unmerged branches in the current `lazible-jcode` repo as the
+> experiment substrate. Run the R14 + R17 `conflict-detect` framework against
+> them and measure its real coverage across 5 judgment points; identify the
+> gaps and produce the R19 scope for improvement.
 
-## 实验对象
+## Experiment Subject
 
-**main 分支 HEAD**: `2c1abf1`(ARCHITECTURE.md 提交,停在 16 轮训练之前)
+**main branch HEAD**: `2c1abf1` (the ARCHITECTURE.md commit, stopped before
+the 16-round training session)
 
-**未合并到 main 的 9 条分支**:
+**9 branches not yet merged into main**:
 
-| branch | 起点 | commits ahead | 触达文件数 | LOC |
+| branch | base | commits ahead | files touched | LOC |
 |---|---|---|---|---|
 | `feat/r1-check-swarm-consistency_2c1abf1` | main | 2 | 3 | +391 |
 | `feat/r11-model-id-case_3e9314d` | R7 tip | 1 | 13 | +855 |
@@ -22,18 +24,20 @@
 | `feat/r7-role-templates_250ed77` | R1 tip | 1 | 11 | +845 |
 | `refactor/r12-idempotent-install_2c1abf1` | main | 7 | 6 | +346 |
 
-**当前 HEAD**: `7cd4652` on `feat/r18-timeout-policy_7253239`(**落后于 main 的 10 个 commit 是 R12 链原子提交 + R15 + R18**)。
+**Current HEAD**: `7cd4652` on `feat/r18-timeout-policy_7253239` (the 10
+commits behind main are the R12 atomic commit chain + R15 + R18).
 
 **Uncommitted**:
-- `swarm/CONTRIBUTING.md`(R8 hatchling 写了没 commit)
-- `tests/__pycache__/test_install_smoke.cpython-313.pyc`(test runner 残留)
+- `swarm/CONTRIBUTING.md` (R8 hatchling wrote it but did not commit)
+- `tests/__pycache__/test_install_smoke.cpython-313.pyc` (test runner residue)
 
-**工具**:
+**Tools**:
 - R14 framework: `scripts/conflict-detect.py` from `fc6e22b` — 6 detectors
-- R17 framework: same file from `60b3191` — adds 3 detectors (plan-order, dep-chain, serialize)
-- 共 9 detectors,794 行 (R14) → 1260 行 (R17)
+- R17 framework: same file from `60b3191` — adds 3 detectors (plan-order,
+  dep-chain, serialize)
+- Total: 9 detectors, 794 lines (R14) → 1260 lines (R17)
 
-## 实际跑 framework 的输出
+## Actual framework run output
 
 ### R14 (6 detectors)
 
@@ -75,45 +79,54 @@ dep-chain output:
   (correct — R18 doesn't depend on R14's commit)
 ```
 
-## 5 个 judgment point 的 ground truth vs framework 覆盖率
+## 5 judgment points — ground truth vs framework coverage
 
-| # | Judgment point | 实际要求 | Framework 是否抓到 | 抓到的内容 | gap |
+| # | Judgment point | Actual requirement | Caught by framework? | What it caught | Gap |
 |---|---|---|---|---|---|
-| 1 | **Sequencing** | 3 phases(Chain A → Chain B → cleanup) | partial | plan-order 给 6 phases | **未考虑 branch ancestry**,把 R12/R5a 当独立 task |
-| 2 | **Conflict hunk 选边** | R11 case fix 在 R15+R18 之上,R15 case fix 在 R18 之上 | ✗ | serialize 只说 "minor" 不管 N | **没 prefer_side 配置**,AGENTS.md × 6 也是 minor |
-| 3 | **Scope drift** | R13 修改 AGENTS.md 但未声明 scope(走 R12 链) | ✗ | 无 detector | **完全缺失** |
-| 4 | **Topology choice** | main 落后 HEAD 10 commits,应 fast-forward 到 R18 tip 后逐 chain merge | ✗ | 无 detector | **完全缺失** |
-| 5 | **Cleanup** | 删除 `__pycache__/`,commit R8 CONTRIBUTING.md,决定 R13 AGENTS.md 越权 | partial | dirty 只报 blocker | **未升格为可执行 cleanup list**,scope drift 也没接到 cleanup |
+| 1 | **Sequencing** | 3 phases (Chain A → Chain B → cleanup) | partial | plan-order returns 6 phases | **Branch ancestry not considered**; R12/R5a are treated as independent tasks |
+| 2 | **Conflict hunk selection** | R11 case fix on top of R15+R18, R15 case fix on top of R18 | ✗ | serialize only says "minor", ignores N | **No `prefer_side` config**; AGENTS.md × 6 is also reported as minor |
+| 3 | **Scope drift** | R13 modified AGENTS.md but did not declare scope (rode the R12 chain) | ✗ | no detector | **Completely missing** |
+| 4 | **Topology choice** | main is 10 commits behind HEAD; should fast-forward to R18 tip, then merge chain by chain | ✗ | no detector | **Completely missing** |
+| 5 | **Cleanup** | Delete `__pycache__/`, commit R8 CONTRIBUTING.md, decide R13 AGENTS.md overreach | partial | dirty only reports blocker | **Not promoted into an executable cleanup list**; scope drift also not wired into cleanup |
 
-**实测覆盖率: ~30%**(4 个 point 抓到 partial,1 个完全没)
+**Measured coverage: ~30%** (4 judgment points caught partial, 1 not at all)
 
-## 8 个具体 gap
+## 8 specific gaps
 
-| # | gap | 后果 | R19 模块 |
+| # | Gap | Consequence | R19 module |
 |---|---|---|---|
-| 1 | plan-order 不接受 git-derived scope,要求手工 scopes.json | root 要先跑 git diff 自己拼 JSON | `auto_extract_scope(branches, repo)` — 让 plan-order 直接吃 branches |
-| 2 | plan-order 不考虑分支谱系 | 给出错误的 6 phases 而不是 3 | `detect_branch_ancestry(branches)` + 折叠 plan-order phases |
-| 3 | serialize severity 永远 minor(除非 lockfile) | AGENTS.md × 6 应该是 blocker | 加 `severity_threshold_n` config(N≥4 升 major,N≥6 升 blocker) |
-| 4 | 无 conflict hunk 级别 picker | "serialize or rebase" 不是答案 | `resolve_conflict_hunks(branch_a, branch_b, file, prefer_side)` |
-| 5 | 无 scope drift detector | R13 越权改 AGENTS.md 没被任何 detector 抓到 | `detect_scope_drift(branch, declared_scope_files)` + auto-revert policy |
-| 6 | 无 topology chooser | root 决定 fast-forward vs --no-ff | `pick_merge_strategy(branches, base)` |
-| 7 | 无 cleanup list promoter | dirty 只说 blocker,不说怎么 clean | `cleanup_worktree_artifacts(dirty_paths)` 输出可执行命令 |
-| 8 | 无 per-repo guardian file config | 不知道哪些文件算 "off-limits" | `.jcode/conflict-config.yaml` schema 加 `guardian_files` |
+| 1 | plan-order does not accept git-derived scope; requires a hand-written `scopes.json` | root has to run `git diff` and assemble JSON by hand | `auto_extract_scope(branches, repo)` — let plan-order consume branches directly |
+| 2 | plan-order does not consider branch lineage | returns wrong 6 phases instead of 3 | `detect_branch_ancestry(branches)` + collapse plan-order phases |
+| 3 | serialize severity is always minor (unless lockfile) | AGENTS.md × 6 should be blocker | Add `severity_threshold_n` config (N≥4 → major, N≥6 → blocker) |
+| 4 | No conflict-hunk-level picker | "serialize or rebase" is not an answer | `resolve_conflict_hunks(branch_a, branch_b, file, prefer_side)` |
+| 5 | No scope-drift detector | R13's out-of-scope AGENTS.md edit was caught by no detector | `detect_scope_drift(branch, declared_scope_files)` + auto-revert policy |
+| 6 | No topology chooser | root has to decide fast-forward vs `--no-ff` | `pick_merge_strategy(branches, base)` |
+| 7 | No cleanup-list promoter | dirty only says "blocker", not "how to clean" | `cleanup_worktree_artifacts(dirty_paths)` returns executable commands |
+| 8 | No per-repo guardian file config | unclear which files count as "off-limits" | Add `guardian_files` to `.jcode/conflict-config.yaml` schema |
 
-## R19 scope 草稿
+## R19 scope draft
 
-**目标**:把 framework 覆盖率从 ~30% 推到 ~80%。
+**Goal**: push framework coverage from ~30% to ~80%.
 
-**新增 5 detector + 1 fix + 1 schema**:
+**Add 5 detectors + 1 fix + 1 schema**:
 
-1. `detect_branch_ancestry(branches)` → 返回 `(parents: dict, chains: list[list[branch]])`
-2. `auto_extract_scope(branches, repo)` → 返回 `{branch: [files]}` 从 `git diff main..branch`
-3. `detect_scope_drift(branch, declared_scope, repo)` → 比较 diff vs declared,标 out-of-scope commits/hunks
-4. `resolve_conflict_hunks(branch_a, branch_b, file, prefer_side, repo)` → 用 `git merge --no-commit` 跑出冲突,按 prefer_side 选 hunk
-5. `pick_merge_strategy(branches, base, repo)` → 检查 fast-forward 可行性,返回 "fast-forward" / "merge --no-ff" / "rebase-then-merge"
-6. `cleanup_worktree_artifacts(dirty_paths, patterns)` → 把 `__pycache__/` / `.bak.*` / untracked 映射到 `rm` / `git add` 命令
-7. **Fix**: plan-order 升级 — 接受 `--branches` 自动 derive scope,内部 fold ancestry chains
-8. **Config schema**: `.jcode/conflict-config.yaml` 加
+1. `detect_branch_ancestry(branches)` → returns
+   `(parents: dict, chains: list[list[branch]])`
+2. `auto_extract_scope(branches, repo)` → returns `{branch: [files]}` from
+   `git diff main..branch`
+3. `detect_scope_drift(branch, declared_scope, repo)` → compares diff vs
+   declared; flags out-of-scope commits/hunks
+4. `resolve_conflict_hunks(branch_a, branch_b, file, prefer_side, repo)` →
+   run `git merge --no-commit` to surface conflicts, pick hunks by
+   `prefer_side`
+5. `pick_merge_strategy(branches, base, repo)` → checks fast-forward
+   feasibility; returns "fast-forward" / "merge --no-ff" /
+   "rebase-then-merge"
+6. `cleanup_worktree_artifacts(dirty_paths, patterns)` → map
+   `__pycache__/` / `.bak.*` / untracked into `rm` / `git add` commands
+7. **Fix**: plan-order upgrade — accept `--branches` to auto-derive scope,
+   internally collapse ancestry chains
+8. **Config schema**: add to `.jcode/conflict-config.yaml`
    ```yaml
    guardian_files: [AGENTS.md, README.md, ...]
    severity_threshold_n: {major: 4, blocker: 6}
@@ -121,25 +134,33 @@ dep-chain output:
    cleanup_patterns: ["__pycache__/", "*.bak.*", ...]
    ```
 
-**实现工作**:约 800-1200 行 framework + 400-600 行 test。
-**估计**:比 R17 (1 commit, 3 detector) 大 2-3 倍,需要 1 个 implementer + 1 个 doc-writer(写 schema 文档 + R20)。
+**Implementation work**: roughly 800–1200 lines of framework + 400–600 lines
+of tests.
+**Estimate**: 2–3× larger than R17 (1 commit, 3 detectors); needs 1
+implementer + 1 doc-writer (for schema docs + R20).
 
-## R20 scope 草稿
+## R20 scope draft
 
-**目标**:把 framework 使用方式写进 overlay + swarm-prompt,确保 root 真的会调用它。
+**Goal**: wire framework usage into overlay + swarm-prompt so root actually
+calls it.
 
-1. overlay 加 "Automation coverage target: 80% in framework, 20% in human" 段
-2. swarm-prompt 加 "Pre-merge checklist: run `conflict-detect all` before any merge operation"
-3. AGENTS.md 加 "Framework conventions" 段,链接到 conflict-detect.py
+1. overlay adds an "Automation coverage target: 80% in framework, 20% in
+   human" section
+2. swarm-prompt adds a "Pre-merge checklist: run `conflict-detect all`
+   before any merge operation" section
+3. AGENTS.md adds a "Framework conventions" section linking to
+   `conflict-detect.py`
 
-## 实验产出
+## Experiment outputs
 
-- 本 docs 文件记录实验过程与发现
-- memory tag `experiment-2026-08-02` 记录关键 gap 编号
-- R19 implementer prompt 用本文件 §"R19 scope 草稿" 作为种子
+- This `docs/` file records the experiment and findings.
+- Memory tag `experiment-2026-08-02` records the key gap numbers.
+- R19 implementer prompt uses the §"R19 scope draft" section above as seed.
 
-## 待验证
+## Pending verification
 
-- R17 mizaru 的 dep-chain CLI 参数 `--scope` 实际上是 JSON 文件路径,help 文本描述正确
-- R17 framework 暂无 branch_ancestry 处理 — 已在实验中发现
-- 待 R19 落地后,重跑 framework 对比覆盖率
+- R17 mizaru's `dep-chain` CLI parameter `--scope` is actually a JSON file
+  path; help text describes it correctly.
+- R17 framework does not currently handle `branch_ancestry` — discovered
+  during this experiment.
+- After R19 lands, re-run the framework and compare coverage.
