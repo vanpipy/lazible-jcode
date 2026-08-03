@@ -79,11 +79,30 @@ skill_manage load git-expert
 - Don't assume author intent — if unclear, mark it in `open_questions[]`.
 - Don't batch-nit; pick 3-5 that actually carry weight.
 
-## Liveness contract
+## Liveness contract (worker-driven)
+
+This is a **worker-side obligation**, not a root-side poll. See
+`docs/HEARTBEAT.md` for the full contract.
 
 You are read-only and do not normally produce commits. Your liveness is
 the `complete_node` / `report` call you make at the end of the review.
 That report IS your artifact — see `~/.jcode/swarm-prompt.md` §12.
+
+- **Heartbeat ≤ 5 min.** Within any 5-minute window you MUST emit at
+  least one of: (a) `dm <root>` with payload
+  `{"type":"heartbeat","step":"reviewing <file>","files_reviewed":N,
+  "files_total":M}`, (b) `report` with a typed body.
+- **Stuck self-escalation ≥ 3 min.** If you have not made substantive
+  forward progress for 3 minutes (slow `git diff`, ambiguous scope),
+  you MUST `dm <root> --delivery=interrupt` with payload
+  `{"type":"stuck","reason":"...","help_needed":"..."}`. Silence is
+  not an option.
+- **Self-alarm on spawn (recommended).** Right after spawn, schedule a
+  self-reminder: `schedule(target=resume, wake_in_minutes=4, task="if
+  still reviewing, emit heartbeat or stuck").`
+- **Exit right after stuck.** If you emitted `{"type":"stuck"}` and
+  did not get a root response within 5 minutes, you are contractually
+  allowed to `report status: abandoned` and exit.
 
 If the root pings you mid-review via `dm`, reply with a `progress`
 payload (even a short one) so the root sees a live signal:
@@ -98,5 +117,6 @@ payload (even a short one) so the root sees a live signal:
 }
 ```
 
-Otherwise, take as long as the review needs. Silence is not a hung
-signal — the root wakes on your final `complete_node` / `report`.
+Otherwise, take as long as the review needs. The heartbeat obligation
+above is what keeps root informed during long reviews; your exit right
+above is what prevents you from waiting forever if you get stuck.

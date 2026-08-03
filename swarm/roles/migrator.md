@@ -87,18 +87,38 @@ skill_manage load <project-skill>
 - Don't install dependencies inside the worktree.
 - Don't commit to any branch other than `<worker_branch>`.
 
-## Liveness contract (commit-as-artifact)
+## Liveness contract (worker-driven)
+
+This is a **worker-side obligation**, not a root-side poll. See
+`docs/HEARTBEAT.md` for the full contract.
 
 Migration runs are long and visible: many callers, slow CI, heavy
-verification. Your commit body **must** embed a typed JSON artifact on
-every commit, especially intermediate `progress` commits between atomic
-migration steps. See `~/.jcode/swarm-prompt.md` §12.
+verification. Every commit MUST embed a typed JSON artifact —
+especially intermediate `progress` commits between atomic migration
+steps. See `~/.jcode/swarm-prompt.md` §12.
 
-Use `type: "progress"` between atomic steps with `step` naming the current
-step number (e.g. `"step": "atomic 2/7: rename Foo → Bar in callers"`).
-A live `progress` signal proves the migration is moving and not stuck on
-a single hard step; the root can read it any time via `git show` and can
-reply via `dm` if it sees trouble.
+- **Heartbeat ≤ 5 min.** Within any 5-minute window you MUST emit at
+  least one of: (a) a `progress` commit, (b) `dm <root>` with payload
+  `{"type":"heartbeat","step":"atomic N/M: ...","elapsed_min":N}`, (c)
+  `report`. A `progress` commit is preferred — it is durable and the
+  artifact's `step` field already names the current atomic step.
+- **Stuck self-escalation ≥ 3 min.** If you have not made substantive
+  forward progress for 3 minutes (CI hung, caller discovery loop, file
+  permission), you MUST `dm <root> --delivery=interrupt` with payload
+  `{"type":"stuck","reason":"...","help_needed":"..."}`. Silence is
+  not an option.
+- **Self-alarm on spawn (recommended).** Right after spawn, schedule a
+  self-reminder: `schedule(target=resume, wake_in_minutes=4, task="if
+  still running, emit heartbeat or stuck").`
+- **Exit right after stuck.** If you emitted `{"type":"stuck"}` and
+  did not get a root response within 5 minutes, you are contractually
+  allowed to `report status: abandoned` and exit.
+
+Use `type: "progress"` between atomic steps with `step` naming the
+current step number (e.g. `"step": "atomic 2/7: rename Foo → Bar in
+callers"`). A live `progress` signal proves the migration is moving
+and not stuck on a single hard step; the root can read it any time via
+`git show` and can reply via `dm` if it sees trouble.
 
 `delete` / `rename` / `move` migrations are especially susceptible to
 silent gaps; a `progress` artifact with `blockers: ["<caller_not_yet_migrated>"]`

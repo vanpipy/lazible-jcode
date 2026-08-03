@@ -318,20 +318,25 @@ Per-repo config at `.jcode/conflict-config.yaml` (lockfile list, heartbeat TTL, 
 
 ---
 
-## 12. Liveness via commit-as-artifact
+## 12. Liveness: worker-driven heartbeat + root responsiveness
 
-The framework does **not** run a periodic heartbeat daemon. Worker liveness
-is derived from git itself, which is durable, auditable, and survives both
-server restarts and worker-session death.
+The framework has **no watchdog, no enforced timer, no real-time
+deadline**. Every "X minutes" in this section is a **soft contract** —
+LLM-followed discipline, not runtime-enforced. Be honest about the
+boundary.
 
-### The contract
+The contract is **two-sided** but liveness is **worker-driven**:
+workers make themselves observable; root responds when woken.
 
-Every worker commit on `<worker_branch>` **must** embed a typed artifact in
-the commit body. The artifact is the worker's self-report at the moment of
-commit, and it is the only signal the root session uses to reason about
-worker state.
+### The artifact contract (unchanged)
 
-Required structure (single fenced JSON block at the bottom of the commit body):
+Every worker commit on `<worker_branch>` **must** embed a typed artifact
+in the commit body. The artifact is the worker's self-report at the
+moment of commit, and it is the primary signal root uses to reason
+about worker state.
+
+Required structure (single fenced JSON block at the bottom of the
+commit body):
 
 ````
 ```json artifact
@@ -353,31 +358,92 @@ Required structure (single fenced JSON block at the bottom of the commit body):
 `type: "progress"` for mid-task commits; `type: "final"` for the commit
 that completes the spawn scope (paired with `complete_node` / `report`).
 
-### Why artifact, not heartbeat
+### Worker obligations (liveness source)
 
-| Concern | Heartbeat daemon | Commit-as-artifact |
+Three concrete rules; see `docs/HEARTBEAT.md` for the rationale:
+
+1. **Heartbeat channel ≤ 5 min.** Within any 5-minute window during a
+   task, the worker MUST emit at least one of:
+   - a `progress` commit (preferred — durable + auditable),
+   - `dm <root> --delivery=notify` with payload
+     `{"type":"heartbeat","step":"...","elapsed_min":N}`,
+   - `report` with a typed body.
+   Two consecutive misses = contract violation; root is allowed to
+   treat the worker as abandoned.
+2. **Stuck self-escalation ≥ 3 min.** If the worker has not made
+   substantive forward progress for 3 minutes, it MUST
+   `dm <root> --delivery=interrupt` with payload
+   `{"type":"stuck","reason":"...","help_needed":"..."}`.
+   Silence is not an option.
+3. **Self-alarm (recommended).** On spawn, the worker SHOULD
+   `schedule(target=resume, wake_in_minutes=4, task="if still running,
+   commit progress + dm heartbeat")`. Self-reminder; wakes the worker,
+   worker self-checks, worker emits the heartbeat. Free if the worker
+   is already active.
+
+### Worker exit right (abandonment)
+
+If the worker has emitted `{"type":"stuck"}` and has not received a
+root response within **5 minutes**, the worker is contractually allowed
+to abandon the task: stop work, `report status: abandoned` with a typed
+artifact explaining the silence, and exit cleanly. This is **not a
+failure mode** — it is the contract working.
+
+### Root obligations (responsiveness, soft)
+
+1. **Priority on `{"type":"stuck"}` and `follow_up`.** When a worker
+   reports stuck or asks for help, root SHOULD respond with `dm`
+   within the current context (information, scope expansion, or
+   `stop`). There is **no hard deadline** — root is an LLM session.
+   The worker exit right above is the safety valve.
+2. **No scheduled self-poke.** Root MUST NOT call
+   `schedule(target=resume, wake_in_minutes=N)` for the purpose of
+   "checking on workers". The previous self-poke design was removed
+   because it added 8 minutes of latency to every spawn without
+   helping root notice workers any faster than the worker's own
+   handoff. There is no `schedule(target=resume, wake_in_minutes=N)`
+   on the spawn path.
+
+### Why worker-driven, not heartbeat daemon
+
+| Concern | Heartbeat daemon | Worker-driven liveness |
 |---|---|---|
-| Survives server restart | No (in-memory) | Yes (git is durable) |
-| Survives worker death | No | Yes (commit is durable) |
-| Proves work happened | No (only "alive") | Yes (artifact has findings) |
-| Cost | Per-worker timer + manifest writes | Zero — already happens at commit time |
+| Survives server restart | No (in-memory) | Yes (commits survive; `git show` recovers) |
+| Survives worker death | No | Yes (final commit's artifact reconstructs handoff) |
+| Proves work happened | No (only "alive") | Yes (artifact has step + findings) |
+| Cost | Per-worker timer + manifest writes | Worker self-discipline; ~0 infra |
 | Cross-worker visibility | Root only (manifest is private) | Anyone with `git show` |
+| Honors honest silence | No (treats as failure) | Yes (long thinking is allowed; report says so) |
 
-The `last_heartbeat` field declared in `.jcode/worktree-manifest.json` is a
-**passive** detector for the worktree cleanup safety net. It is **not**
-the primary liveness signal. The primary signal is the latest commit on
-`<worker_branch>` and its embedded artifact.
+The `last_heartbeat` field declared in `.jcode/worktree-manifest.json`
+is a **passive** detector for the worktree cleanup safety net. It is
+**not** the primary liveness signal. The primary signal is the latest
+commit on `<worker_branch>` and its embedded artifact, supplemented by
+worker `dm` heartbeats and `{"type":"stuck"}` escalations.
 
-The root session gets woken by the worker's own `dm` / `report` /
-`complete_node` calls and the runtime's per-message wake hooks. There is
-no scheduled self-poke: it adds latency without helping the root notice
-workers any faster than the worker's natural handoff.
+### What the framework CANNOT guarantee
 
-### Failure modes the artifact contract catches
+Out-of-band; only runtime changes (added in a future jcode) could fix:
 
-- **Worker hangs in long thinking** — no commit, no artifact. Root only
-  notices when the worker eventually responds or after the user pokes the
-  session; it is acceptable to wait — do not invent a heartbeat daemon.
+- Real-time detection of a truly dead worker (OOM, network partition,
+  worker process killed without flush). Neither heartbeat nor
+  stuck-escalation can fire. Recovery is `git show <branch>` on root's
+  next conscious turn.
+- Root response time (root is an LLM).
+- Worker honesty (root cross-checks artifact against diff + tests).
+
+### Failure modes the contract catches
+
+- **Worker stuck on a hard step** — emits `{"type":"stuck"}`. Root
+  `dm`s back, expands scope, or stops.
+- **Worker silent because busy thinking** — mid-task `progress` commit
+  or heartbeat dm keeps root informed.
+- **Worker hung on long test / install** — self-alarm `schedule` fires,
+  worker self-checks, emits heartbeat or stuck dm.
+- **Worker honest-but-too-quiet** — two consecutive 5-min heartbeat
+  misses; worker exit right; root treats as abandoned.
+- **Root did not respond to stuck** — 5 min since `{"type":"stuck"}`;
+  worker `report status: abandoned`.
 - **Worker dies after committing but before reporting** — final commit's
   artifact is `type: "final"`. Root recovers via `git show`. No data loss.
 - **Worker reports "done" but commit is missing** — root rejects artifact;
@@ -395,3 +461,9 @@ workers any faster than the worker's natural handoff.
   will choke on stray braces. Use a clean JSON object.
 - Don't poll `swarm status <session>` more than once per minute — runtime
   status lags reality and adds noise.
+- Don't `dm` root "just to check in" — heartbeats are LLM-disciplined;
+  random dms add noise to root's queue.
+- Don't silently wait forever after emitting `{"type":"stuck"}` —
+  exit right exists for a reason. 5 minutes and out.
+- Don't trust `status: ready` from a worker that has no commit on its
+  branch. Reject the artifact; require the commit first.
