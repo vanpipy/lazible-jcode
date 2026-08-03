@@ -85,9 +85,8 @@ You are read-only and do not normally produce commits. Your liveness is
 the `complete_node` / `report` call you make at the end of the review.
 That report IS your artifact — see `~/.jcode/swarm-prompt.md` §12.
 
-If the root session's self-poke wakes you before you finish reading, you
-**must** reply with a `progress` payload (even a short one) so the root
-sees a live signal:
+If the root pings you mid-review via `dm`, reply with a `progress`
+payload (even a short one) so the root sees a live signal:
 
 ```
 {
@@ -99,5 +98,5 @@ sees a live signal:
 }
 ```
 
-Never stay silent past 8 minutes without a `progress` signal — the root
-will assume you have hung.
+Otherwise, take as long as the review needs. Silence is not a hung
+signal — the root wakes on your final `complete_node` / `report`.

@@ -368,34 +368,22 @@ The `last_heartbeat` field declared in `.jcode/worktree-manifest.json` is a
 the primary liveness signal. The primary signal is the latest commit on
 `<worker_branch>` and its embedded artifact.
 
-### Root-session poke protocol
-
-After spawning a worker, the root session MUST schedule its own
-self-interrogation rather than poll the runtime. Pattern:
-
-1. Right after `spawn`, call `schedule(target=resume, wake_in_minutes=N)`
-   with task text that includes:
-   - The worker's session id + worker branch
-   - The recovery command: `git -C <worktree_path> log -1 --format=%B <branch>`
-     to read the latest artifact
-   - The decision tree (see below)
-2. On wake, run the recovery command. If the artifact's `type: "final"`
-   appears, integrate; otherwise poke or wait.
-
-Default cadence: schedule one timer at 8 minutes. If the worker has not
-committed by then, escalate (see §1 of `~/.jcode/prompt-overlay.md`
-"Self-poke" section).
+The root session gets woken by the worker's own `dm` / `report` /
+`complete_node` calls and the runtime's per-message wake hooks. There is
+no scheduled self-poke: it adds latency without helping the root notice
+workers any faster than the worker's natural handoff.
 
 ### Failure modes the artifact contract catches
 
-- **Worker hangs in long thinking** — no commit, no artifact. Root's
-  scheduled wake sees `git log` empty → poke via `dm --delivery=interrupt`.
+- **Worker hangs in long thinking** — no commit, no artifact. Root only
+  notices when the worker eventually responds or after the user pokes the
+  session; it is acceptable to wait — do not invent a heartbeat daemon.
 - **Worker dies after committing but before reporting** — final commit's
   artifact is `type: "final"`. Root recovers via `git show`. No data loss.
 - **Worker reports "done" but commit is missing** — root rejects artifact;
   worker must commit before claim is honored.
 - **Server restart kills worker session** — git state is unchanged. On
-  next root session, scheduled wake or first `git log` reveals state.
+  next root session, the latest commit + artifact reveal state.
 
 ### Anti-patterns
 

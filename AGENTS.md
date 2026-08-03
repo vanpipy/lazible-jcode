@@ -40,9 +40,10 @@ code lives here.
   after install. Read this first if you are new to the swarm layout.
 - `docs/HEARTBEAT.md` — worker-liveness mechanism. The framework does not
   run a heartbeat daemon; liveness comes from commit-as-artifact
-  (a typed JSON block in every worker's commit body) and the root
-  session's self-poke via `schedule`. Read this before designing any
-  new worker role or changing the spawn contract.
+  (a typed JSON block in every worker's commit body). The root session
+  is woken by the worker's own `dm` / `report` / `complete_node` calls,
+  not by any scheduled poll. Read this before designing any new worker
+  role or changing the spawn contract.
 - Config templates under `config/*.example` are **reference only**. Live config
   lives in `~/.jcode/`. Use `skills/copy-from-jcode/copy-from-jcode.sh` to pull
   a machine's `~/.jcode/` into this repo.

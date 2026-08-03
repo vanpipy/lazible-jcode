@@ -78,7 +78,6 @@ side_panel = true
 memory = true
 swarm = true
 mermaid = true
-auto_poke = true
 message_timestamps = true
 persist_memory_injections = false
 kv_cache_miss_notices = true
