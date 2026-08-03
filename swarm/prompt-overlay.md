@@ -189,9 +189,10 @@ leave. That is not a worker failure; it is the contract working. But
 you SHOULD treat the `stuck` dm as a priority signal: drop unrelated
 work, decide what the worker needs, and reply.
 
-Do not invent a self-poke via `schedule(target=resume, wake_in_minutes=N)`
-to "check on workers" — it adds latency without helping. Liveness is
-worker-driven; you are the responder, not the watchdog.
+Do not invent a scheduled self-wakeup via
+`schedule(target=resume, wake_in_minutes=N)` to "check on workers"
+— it adds latency without helping. Liveness is worker-driven; you
+are the responder, not the watchdog.
 
 **Passive worktree inspection (recommended).** Once per active session,
 do `git log <worker_branch>` on each active worker branch. This is
@@ -287,15 +288,16 @@ gate is about avoiding *false positives*, not about being fast.
    "resume from <commit-SHA>, continue with: <next step>".
 
 The cost of proactive monitoring is one `git log` per branch at
-each decision point — cheaper than a scheduled auto-poke because
+each decision point — cheaper than a scheduled self-wakeup because
 it triggers only when there is something to look at. Workers
 self-report via heartbeat / stuck / abandoned, so most decisions
 arrive via dm rather than requiring passive inspection.
 
 This is the framework mechanism for the worker-recovery gap that
-prompt-overlay §1 historically punted on. It is **not** auto-poke
-(no scheduled timer, no periodic wakeup), but it is **active**
-(root observes state at decision points, not just on demand).
+prompt-overlay §1 historically punted on. It is **not** a scheduled
+self-wakeup (no periodic timer, no automatic wakeup), but it is
+**active** (root observes state at decision points, not just on
+demand).
 
 **Code implementation routing rule (hard)** — for any code-implementation
 work, the main agent **must not** edit code in the main session. Spawn an

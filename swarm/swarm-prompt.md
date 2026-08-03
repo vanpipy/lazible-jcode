@@ -402,12 +402,12 @@ window. This is **not a failure mode** — it is the contract working.
    within the current context (information, scope expansion, or
    `stop`). There is **no hard deadline** — root is an LLM session.
    The worker exit right above is the safety valve.
-2. **No scheduled self-poke.** Root MUST NOT call
+2. **No scheduled self-wakeup.** Root MUST NOT call
    `schedule(target=resume, wake_in_minutes=N)` for the purpose of
-   "checking on workers". The previous self-poke design was removed
-   because it added 8 minutes of latency to every spawn without
-   helping root notice workers any faster than the worker's own
-   handoff. There is no `schedule(target=resume, wake_in_minutes=N)`
+   "checking on workers". The previous scheduled self-wakeup design
+   was removed because it added 8 minutes of latency to every spawn
+   without helping root notice workers any faster than the worker's
+   own handoff. There is no `schedule(target=resume, wake_in_minutes=N)`
    on the spawn path.
 
 ### Why worker-driven, not heartbeat daemon
