@@ -60,7 +60,8 @@ overwrites the destination unconditionally:
   1. Install jcode binary to ~/.local/bin/jcode
        (or build a canary from jcode-patches/*.patch if any exist)
   2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md,
-     swarm/ARCHITECTURE.md, swarm/roles/ into ~/.jcode/
+     swarm/ARCHITECTURE.md, swarm/roles/, and docs/HEARTBEAT.md
+     into ~/.jcode/
   3. Symlink each skills/<name> into ~/.jcode/skills/<name>
   4. Symlink AGENTS.md to ~/.jcode/AGENTS.md
 
@@ -210,6 +211,12 @@ maybe_overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-ov
 maybe_overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"   "swarm-prompt.md"
 maybe_overwrite_link "$repo_root/swarm/ARCHITECTURE.md"   "$JCODE_HOME/ARCHITECTURE.md"   "ARCHITECTURE.md"
 maybe_overwrite_link "$repo_root/swarm/roles"             "$JCODE_HOME/roles"             "roles/"
+# docs/HEARTBEAT.md is referenced by the overlay + swarm-prompt + every role
+# file's liveness contract. It must be discoverable from $JCODE_HOME so jcode
+# can resolve the reference regardless of cwd.
+if [[ -f "$repo_root/docs/HEARTBEAT.md" ]]; then
+  maybe_overwrite_link "$repo_root/docs/HEARTBEAT.md" "$JCODE_HOME/HEARTBEAT.md" "HEARTBEAT.md"
+fi
 
 # ── step 3: skills ────────────────────────────────────────────────────────────
 info "── step 3/4: skills ──"
