@@ -46,6 +46,10 @@ code lives here.
   or self-schedule. The commit-as-artifact schema is unchanged. Read
   this before designing any new worker role or changing the spawn
   contract.
+- `docs/LIVENESS_VALIDATION.md` — 5-turn interactive walkthrough of
+  the contract (trivial / productive / blocked / abandoned / dead
+  worker). Verdict per turn + net assessment. Read this if you want
+  to understand *why* the contract works, not just *what* it says.
 - Config templates under `config/*.example` are **reference only**. Live config
   lives in `~/.jcode/`. Use `skills/copy-from-jcode/copy-from-jcode.sh` to pull
   a machine's `~/.jcode/` into this repo.
