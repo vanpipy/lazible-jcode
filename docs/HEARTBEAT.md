@@ -111,6 +111,25 @@ window. This is **not a failure mode** — it is the contract working.
 The alternative (waiting forever) is worse: it costs the worker tokens
 and the root never learns the worker is stuck.
 
+### Reminder-loop stall (environmental lock)
+
+If the worker is receiving repeated identical system reminders (e.g.
+"N incomplete todos") and the `todo` tool rejects every write with the
+same error, the worker is in a **reminder loop** — an environmental
+lock where the normal `todo` close-out path is unavailable. The same
+contract applies:
+
+1. After 5 consecutive identical reminders with no successful tool
+   action, treat this as `{"type":"stuck"}` and dm root with
+   `reason: "todo store in reminder loop"`.
+2. After the standard 5-min exit-right window without a concrete
+   next step, report `status: abandoned` with
+   `what_i_did_not_check: ["todo store recovery procedure"]`.
+3. Do not waste tokens re-trying the same todo write; the lock will
+   not lift from inside the session.
+
+See `docs/TODO_STALL_RECOVERY.md` for the full recovery procedure.
+
 ### Root obligations (responsiveness)
 
 The root does not poll. The root does not schedule itself. But when the

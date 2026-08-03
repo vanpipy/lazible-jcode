@@ -204,6 +204,78 @@ expectation (e.g. > 5 min on a non-trivial task) or its artifact
 `type` is `progress` with no subsequent `final`, the worker is
 silently stuck; integrate the partial work or spawn a successor.
 
+**Reminder-loop stall (root-side protocol).** If you observe the
+same "N incomplete todos" reminder arriving 3+ times in a row with
+no successful `todo` write in between, you are in a **reminder
+loop** — the todo store has a persistent lock that your writes
+cannot lift. **Do NOT keep retrying the todo tool.** The behavior
+switch:
+
+1. **Stop attempting `todo` writes for that item.** Each retry
+   costs tokens and will be rejected identically.
+2. **Switch to "finish what's possible" mode.** Continue whatever
+   end-to-end work remains: commit uncommitted changes, push to
+   origin, write `docs/TODO_STALL_RECOVERY.md` if not yet written,
+   link it from AGENTS.md, close any open initiative, exit
+   gracefully.
+3. **Output one explicit "stalled" message to the user** explaining
+   the loop, what got delivered, what remains environmentally
+   blocked, and pointing to the recovery doc. Do not let the loop
+   run silently.
+4. **Trust commits over todo state.** The git history is durable
+   and will outlast this session. The todo store will reset on
+   session restart; the commits are permanent.
+
+This is the framework's mechanism for an environmental lock that
+no tool call can override. Workers (per `docs/HEARTBEAT.md` §
+Reminder-loop stall) apply the symmetric protocol: 5 identical
+reminders = `{"type":"stuck"}`, 5 more min = `status: abandoned`.
+
+**Root proactive worker-state monitoring + recovery.** You do not
+poll. But you do actively observe worker state at natural decision
+points (not via scheduled timer). The trigger conditions and
+recovery actions:
+
+| Trigger (worker-side signal)               | Root action                                            |
+| ------------------------------------------ | ------------------------------------------------------ |
+| `{"type":"stuck"}` dm from worker          | Reply with concrete next step within current context. |
+| Worker branch has `progress` but no `final`, last commit > 5 min | `git log <branch>` + `git show <branch>:<files>` to read state, decide continue/help/recover. |
+| `{"type":"abandoned"}` report from worker  | Read abandoned artifact; integrate partial work or spawn successor. |
+| Worker silent on branch for > heartbeat SLA | Passive `git log <branch>` once; if stale, surface to user. |
+
+**Three recovery actions, picked by root based on what the worker
+needs (not a fixed sequence):**
+
+1. **Continue.** Worker has a specific blocker only you can answer
+   (missing decision, missing info, scope ambiguity). Reply via
+   `dm` with the concrete answer; worker resumes. Cheapest option;
+   use when the work is on track and the blocker is small.
+
+2. **Reset.** Worker is fundamentally stuck — wrong scope, dead-end
+   approach, conflicting requirements. `stop` the worker. Spawn a
+   fresh worker with corrected scope, optionally prepended with
+   `git show <old_branch>:<files>` to preserve any useful partial
+   work. Use when continuing would waste more tokens than starting
+   fresh.
+
+3. **Recover.** Worker died (OOM, killed, network drop) before
+   `complete_node`. The branch has progress commits but no final.
+   Spawn a fresh worker with the recovery context:
+   `git log <branch> --format=%B` to read the latest artifact's
+   `next:` field, then `assign_task` with explicit
+   "resume from <commit-SHA>, continue with: <next step>".
+
+The cost of proactive monitoring is one `git log` per branch at
+each decision point — cheaper than a scheduled auto-poke because
+it triggers only when there is something to look at. Workers
+self-report via heartbeat / stuck / abandoned, so most decisions
+arrive via dm rather than requiring passive inspection.
+
+This is the framework mechanism for the worker-recovery gap that
+prompt-overlay §1 historically punted on. It is **not** auto-poke
+(no scheduled timer, no periodic wakeup), but it is **active**
+(root observes state at decision points, not just on demand).
+
 **Code implementation routing rule (hard)** — for any code-implementation
 work, the main agent **must not** edit code in the main session. Spawn an
 `implementer` worker and prepend the entire body of

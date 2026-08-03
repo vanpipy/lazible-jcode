@@ -136,6 +136,14 @@ This is a **worker-side obligation**, not a root-side poll. See
 - **Every commit embeds the artifact.** Even mid-task WIP commits carry
   a fenced JSON artifact at the bottom of the commit body. The full
   schema and rationale live in `~/.jcode/swarm-prompt.md` §12.
+- **Reminder-loop stall.** If you observe the same "N incomplete
+  todos" reminder arriving 5+ times in a row with no successful `todo`
+  write, treat this as `{"type":"stuck"}` and dm root with
+  `reason: "todo store in reminder loop"`. After 5 more minutes without
+  a concrete next step, `report status: abandoned` with
+  `what_i_did_not_check: ["todo store recovery procedure"]`. Do not
+  re-attempt the same `todo` write — it will be rejected identically.
+  See `docs/TODO_STALL_RECOVERY.md`.
 
 For the **final commit** (paired with `complete_node` / `report`), use:
 
