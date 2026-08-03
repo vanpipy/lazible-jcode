@@ -38,6 +38,11 @@ code lives here.
   (main = organizer, worker = executor, star topology), topology, contracts
   (invariants + output contract + cross-worker handoff), and the path map
   after install. Read this first if you are new to the swarm layout.
+- `docs/HEARTBEAT.md` — worker-liveness mechanism. The framework does not
+  run a heartbeat daemon; liveness comes from commit-as-artifact
+  (a typed JSON block in every worker's commit body) and the root
+  session's self-poke via `schedule`. Read this before designing any
+  new worker role or changing the spawn contract.
 - Config templates under `config/*.example` are **reference only**. Live config
   lives in `~/.jcode/`. Use `skills/copy-from-jcode/copy-from-jcode.sh` to pull
   a machine's `~/.jcode/` into this repo.
@@ -115,6 +120,9 @@ code lives here.
 - No runtime state lives in this repo.
 - The standalone installer writes nothing outside `~/.jcode/builds/`,
   `~/.local/bin/`, and the user's shell rc files (path lines, idempotent).
+- Worker liveness does **not** live in this repo. It lives in the
+  worker's commit history on its `<worker_branch>`. See
+  `docs/HEARTBEAT.md`.
 
 ## Verification before push
 
