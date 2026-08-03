@@ -87,3 +87,32 @@ skill_manage load <project-skill>
 - Don't skip catch / error paths.
 - Don't mock dependencies you don't understand (mock = contract).
 - Don't install new test deps inside the worktree — report to root.
+
+## Liveness contract (commit-as-artifact)
+
+Coverage runs and large test suites are slow. Your commit body **must**
+embed a typed JSON artifact on every commit. See
+`~/.jcode/swarm-prompt.md` §12.
+
+For **mid-coverage commits** (you're still adding cases for orthogonal
+paths), use `type: "progress"` with `step` naming the current path family
+and a running coverage number:
+
+```
+{
+  "type": "progress",
+  "step": "adding null/undefined boundary tests",
+  "covered_paths": 47,
+  "total_paths": 55,
+  "next": "async catch paths"
+}
+```
+
+This lets the root see coverage is climbing without waiting for the full
+sweep. The `next` field also helps the root decide whether to interrupt
+with a different scope if priorities shifted.
+
+For the **final commit** (target coverage ≥ 90%), use `type: "final"`
+with the final coverage numbers in `step`. If you finish below 90%
+because some paths were unreachable or out-of-scope, declare it in
+`blockers` and downgrade `confidence`.

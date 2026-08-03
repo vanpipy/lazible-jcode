@@ -315,3 +315,95 @@ worktree exists.
 Loss rate = `(dispatched - landed) / dispatched`, where `dispatched` is spawn calls and `landed` is branches root merged with green gates. Target 0%, hard ceiling 3%. Above ceiling, pause and run `scripts/conflict-detect.py all`. TDD covers single-slice correctness; the framework covers multi-slice safety. Both are required.
 
 Per-repo config at `.jcode/conflict-config.yaml` (lockfile list, heartbeat TTL, ignored paths).
+
+---
+
+## 12. Liveness via commit-as-artifact
+
+The framework does **not** run a periodic heartbeat daemon. Worker liveness
+is derived from git itself, which is durable, auditable, and survives both
+server restarts and worker-session death.
+
+### The contract
+
+Every worker commit on `<worker_branch>` **must** embed a typed artifact in
+the commit body. The artifact is the worker's self-report at the moment of
+commit, and it is the only signal the root session uses to reason about
+worker state.
+
+Required structure (single fenced JSON block at the bottom of the commit body):
+
+````
+```json artifact
+{
+  "type": "progress | final",
+  "session_id": "<from swarm>",
+  "task_id": "<root-supplied>",
+  "branch": "<worker_branch>",
+  "commit": "<sha>",
+  "elapsed_min": <int>,
+  "step": "<what the worker is doing right now>",
+  "next": "<what the worker plans to do>",
+  "confidence": "low | medium | high",
+  "blockers": ["..."]
+}
+```
+````
+
+`type: "progress"` for mid-task commits; `type: "final"` for the commit
+that completes the spawn scope (paired with `complete_node` / `report`).
+
+### Why artifact, not heartbeat
+
+| Concern | Heartbeat daemon | Commit-as-artifact |
+|---|---|---|
+| Survives server restart | No (in-memory) | Yes (git is durable) |
+| Survives worker death | No | Yes (commit is durable) |
+| Proves work happened | No (only "alive") | Yes (artifact has findings) |
+| Cost | Per-worker timer + manifest writes | Zero — already happens at commit time |
+| Cross-worker visibility | Root only (manifest is private) | Anyone with `git show` |
+
+The `last_heartbeat` field declared in `.jcode/worktree-manifest.json` is a
+**passive** detector for the worktree cleanup safety net. It is **not**
+the primary liveness signal. The primary signal is the latest commit on
+`<worker_branch>` and its embedded artifact.
+
+### Root-session poke protocol
+
+After spawning a worker, the root session MUST schedule its own
+self-interrogation rather than poll the runtime. Pattern:
+
+1. Right after `spawn`, call `schedule(target=resume, wake_in_minutes=N)`
+   with task text that includes:
+   - The worker's session id + worker branch
+   - The recovery command: `git -C <worktree_path> log -1 --format=%B <branch>`
+     to read the latest artifact
+   - The decision tree (see below)
+2. On wake, run the recovery command. If the artifact's `type: "final"`
+   appears, integrate; otherwise poke or wait.
+
+Default cadence: schedule one timer at 8 minutes. If the worker has not
+committed by then, escalate (see §1 of `~/.jcode/prompt-overlay.md`
+"Self-poke" section).
+
+### Failure modes the artifact contract catches
+
+- **Worker hangs in long thinking** — no commit, no artifact. Root's
+  scheduled wake sees `git log` empty → poke via `dm --delivery=interrupt`.
+- **Worker dies after committing but before reporting** — final commit's
+  artifact is `type: "final"`. Root recovers via `git show`. No data loss.
+- **Worker reports "done" but commit is missing** — root rejects artifact;
+  worker must commit before claim is honored.
+- **Server restart kills worker session** — git state is unchanged. On
+  next root session, scheduled wake or first `git log` reveals state.
+
+### Anti-patterns
+
+- Don't skip the artifact block "because it's just a WIP commit". WIP commits
+  are precisely the ones the root needs to see during long tasks.
+- Don't put the artifact in the commit *subject* — keep it in the body so
+  `git log --oneline` stays readable.
+- Don't use a single fenced block that mixes JSON and prose; the parser
+  will choke on stray braces. Use a clean JSON object.
+- Don't poll `swarm status <session>` more than once per minute — runtime
+  status lags reality and adds noise.
