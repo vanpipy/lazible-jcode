@@ -301,12 +301,16 @@ worker thinks it needs help, it reports back with `follow_up` listing the
 missing capability; you arbitrate. Recursive spawning is only available in
 `swarm-deep` mode (rarely worth it).
 
-若任务涉及 delete / rename / move:
-  spawn prompt 必须包含:
-  - "先 `git grep` 旧符号列出全量生产引用"
-  - "所有引用必须在新 commit 中迁移完毕"
-  - "`validation` 必须包含 `git grep` 旧符号零引用证据"
-  main agent 在发 spawn 前应自检这些条款, 缺一项则不 spawn.
+When the task involves `delete` / `rename` / `move`, the spawn prompt MUST
+include the following clauses:
+
+- "First `git grep` the old symbol to enumerate every production reference."
+- "Every reference must be migrated in the new commit."
+- "`validation` must include evidence from `git grep <old-symbol>` returning
+  zero matches."
+
+The main agent must self-check these clauses before issuing the spawn; if
+any clause is missing, do not spawn.
 
 **Role template injection (mandatory)** — before calling `spawn` /
 `assign_task`, the main agent **must** `read` `~/.jcode/roles/<name>.md`
@@ -362,8 +366,10 @@ These are the failure modes that waste the most wall-clock:
 For shared infrastructure changes (build, CI, deps), require **end-to-end**
 verification — not just "tests pass on my slice".
 
-- 报告 `confidence: high` 但未对 "delete / rename / move" 后的反向 grep 给出证据 → fake high confidence.
-- "tests pass" 不足以证明 fold / replace 完成, 必须叠加 import-graph 验证.
+- Reporting `confidence: high` without providing reverse-grep evidence after
+  a `delete` / `rename` / `move` operation is fake high confidence.
+- "tests pass" alone is not sufficient to prove a fold / replace is
+  complete; an import-graph verification must be layered on top.
 
 ---
 

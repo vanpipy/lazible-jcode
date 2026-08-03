@@ -132,8 +132,12 @@ Every completion artifact **must** declare `confidence: low | medium | high`.
   about edge cases the worker did not enumerate.
 - `low` — work partially done, or verification relied on the worker's judgment
   rather than an observation. Must be reported honestly.
-- 发现了 spawn scope 外的依赖但未处理 (例如: 用户要求删 facade, 你发现 3 个生产 call site 仍用旧 import, 但用户没说要迁移)
-- 新公开 API 与现有 call site 调用模式不匹配 (需明确说明为什么这是对的, 否则不算 low confidence)
+- Discovered dependencies outside the spawn scope that were left unhandled
+  (e.g., user asked to delete a facade, you found 3 production call sites
+  still using the old import, but the user did not ask for migration).
+- A new public API does not match the call-site usage patterns it is meant
+  to serve (must explicitly explain why this is correct, otherwise it does
+  not count as `low` confidence).
 
 `low` confidence is **not** failure. It routes follow-up work automatically. A
 fake `high` is far worse than an honest `low`.
