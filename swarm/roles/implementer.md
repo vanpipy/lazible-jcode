@@ -46,11 +46,26 @@ each field should read.
 1. Load relevant project skills (e.g. `/rn-dev`).
 2. Load `git-expert` to learn commit / branch conventions.
 3. Read the spec + existing implementation, list tasks via the `todo` tool.
+
+### API 替换型重构约束 (适用于 fold/replace/rename/move)
+
+1. 删除/重命名/移动任何公开符号前, 必须先 `git grep <旧符号>` 全仓库列出所有生产引用.
+2. 设计新 API 前必须读所有现有 call site 的调用模式, 新方法签名必须能直接替换至少一处现有调用.
+3. 任何 `delete` / `rename` / `move` 后, `validation` 必须包含:
+   - `git grep <旧符号>` 退出码 1 (零引用), 否则 `confidence` 不能 high.
+   - 所有原 call site 已迁移到新 API 的 evidence.
+4. 如果发现 spawn scope 外的依赖 (例如 "用户没说要迁移 X 但 X 仍用旧 API"), 必须写 `open_questions[]`, 不能静默假定已处理.
+
 4. **Confirm worktree and branch**: `pwd` must equal `<worktree_path>`, `git branch --show-current` must equal `<worker_branch>`. If not, report immediately — do not fix it yourself.
 5. **Red — write a failing test that proves the new behavior**. Run it once to confirm it really fails. Capture the failure stdout / stderr / line numbers as evidence into the artifact. The only exceptions are pure refactor / pure docs / typo fixes — these are zero-behavior-change tasks; mark `no-test scope` in the artifact and explain why.
 6. **Green — minimal implementation to turn the red test green**. Change only the minimum code needed to pass the red test; refuse "while I'm here" cleanups. Run the test again, capture the passing output as evidence.
 7. **Refactor — only after green**. Now optimize names, extract functions, dedupe, pay down tech debt. The red + green tests are the safety net; re-run after refactor to confirm still green.
 8. **Run full CI gates** (typecheck / lint / format / full test suite) — any failure blocks the commit. CI output goes verbatim into the artifact's `validation` field.
+
+- **反向验证 (post-condition check)**:
+  - delete / rename / move 后, 必须执行 `git grep <旧符号>` 证明零引用.
+  - 这是验收门槛, 不算额外的 optional check.
+
 9. Single scope, single commit onto `<worker_branch>`. No bundling.
 10. Report via `complete_node` with all gate outputs.
 
