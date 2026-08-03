@@ -174,35 +174,69 @@ If questions 1 and 2 both say "spawn", spawn. Always pass `label`,
 `model`, `effort`, worktree path, base SHA, and worker branch on the
 spawn call (see §4 below).
 
-### Worker timeout policy
+### Self-poke via schedule + git-probe (replaces ad-hoc timeout policy)
 
 Workers stall in three ways: (a) genuinely thinking, (b) waiting on a
-long-running test, (c) stuck in a tool-call loop. Root's default is to
-**wait passively up to a threshold, then escalate**.
+long-running test, (c) stuck in a tool-call loop. Rather than polling
+`swarm status` and burning attention budget, the root session uses
+**self-poke**: schedule a future wake-up, then go quiet until that
+wake. The wake-up task reads the worker's git state directly.
 
-| Time since last signal                  | Action                                   |
-| --------------------------------------- | ---------------------------------------- |
-| < 5 min, file mtimes moving             | Wait. Do not dm.                         |
-| 5–15 min, slow but moving               | Wait. Optional dm: "still progressing?"  |
-| 15–30 min, no file mtime movement       | **dm** with "commit or report failure". If no response in 60 s, stop and respawn. |
-| > 30 min                                | **stop**, mark failed in manifest, respawn with same `task_id`. If the same task fails twice, split it. |
+#### Pattern (mandatory after every spawn)
 
-Signals to watch:
+```
+# Right after `spawn` returns:
+schedule(
+    action=create,
+    target=resume,
+    wake_in_minutes=8,
+    task="""
+Check worker '<label>' (session <session_id>, branch <branch>):
+  1. Run `git -C <wt_path> log -1 --format=%B <branch>`.
+  2. Parse the trailing ```json artifact``` block (if any).
+  3. If `type: "final"` and `confidence != "low"` → call `complete_node`
+     with the artifact's findings + integrate.
+  4. If artifact is missing or `type: "progress"`:
+     a. `dm <session_id> --delivery=interrupt --payload '{"type":"poke"}'`
+     b. Wait 60 seconds for ack (worker should re-commit + reply).
+     c. If still no commit → schedule another poke at +10 min.
+        If 3 pokes fail → `stop <session_id>` and respawn with same task_id.
+"""
+)
+```
 
-- `git -C <worktree_path> log -1 --format=%ct` (latest commit timestamp)
-- `find <worktree_path> -type f -newer <baseline> -not -path '*/__pycache__/*'` (file mtime since last commit)
-- `swarm status <worker_session>` (worker liveness)
-- The worker's typed artifact, if any (use as the truth signal)
+#### Default cadence and escalation
 
-Anti-patterns:
+| Time since spawn | Action |
+|---|---|
+| 0–8 min | Do nothing. Worker is in the red or green step. |
+| 8 min | Self-poke via scheduled wake. Read artifact. |
+| 8–18 min, no `final` artifact | One `dm --delivery=interrupt` poke, wait 60 s for ack. |
+| 18–28 min, still no commit | Schedule another poke at +10 min. |
+| > 28 min, zero commits | `stop` the session, mark `status: failed_no_output`, respawn with same `task_id`. If the same task fails twice, split it. |
 
-- Don't poll `swarm status` more than once per minute — the runtime
-  doesn't update faster than that.
-- Don't keep waiting past 30 min — long thinking is real, but
-  silent thinking past the threshold is more often a stuck loop.
-- Don't respawn without first reading the worker's last `validation`
-  output — it may already have everything you need.
+#### Why this beats polling
+
+- `swarm status` lags reality (runtime updates every ~30 s). It tells you
+  the worker is alive, not whether work has progressed.
+- The git log on `<worker_branch>` is the **truth signal**: a commit means
+  work happened; the embedded artifact tells you how much.
+- Self-poke via `schedule` costs zero tokens while waiting; polling costs
+  one round-trip per minute with no extra information.
+- A worker that finishes and dies before reporting is fully recoverable:
+  `git show` reconstructs the artifact.
+
+#### Anti-patterns
+
+- Don't poll `swarm status` more than once per minute.
 - Don't `dm` more than once per stuck episode; multiple dms are noise.
+- Don't respawn without first reading the latest artifact — the worker
+  may already have everything you need.
+- Don't trust `status: ready` from a worker that has no commit on its
+  branch. Reject the artifact; require the commit first.
+- Don't write the liveness check into a tight `while true` loop — it
+  burns tokens and adds nothing. Use `schedule` and let the runtime
+  wake you.
 
 **Code implementation routing rule (hard)** — for any code-implementation
 work, the main agent **must not** edit code in the main session. Spawn an
