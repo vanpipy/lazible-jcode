@@ -1,169 +1,202 @@
 # Ten-Round Experiment Plan — 2026-08-02
 
-> 在 R19 iwazaru 落地后,用 10 轮实验验证 framework 在 DAG 排序 + 并发监控 + 状态清理
-> 三大支柱上的真实覆盖率,收集量化证据,识别 R20/R21/R22 的优先级。
+> After R19 iwazaru lands, run 10 rounds of experiments to verify the
+> framework's real coverage on the three pillars (DAG ordering, concurrent
+> monitoring, state cleanup). Collect quantitative evidence and identify
+> R20/R21/R22 priorities.
 
-## 实验设计原则
+## Experiment design principles
 
-每轮实验满足:
-- **可重复**:同样的 git 状态、framework 版本、CLI 命令能复现
-- **可测量**:有明确的输入(构造场景)、输出(framework 行为)、ground truth(预期行为)
-- **可对比**:每轮记录 framework 输出 vs ground truth 的差,数字 ≥ 80% 算 pass
-- **可持久化**:每轮结果写入 `docs/experiments/round-<N>.md`,包含原始 command + framework 输出 + 评估
+Each round must satisfy:
 
-## 10 轮实验清单
+- **Reproducible**: same git state, framework version, CLI command can be
+  replayed.
+- **Measurable**: explicit inputs (constructed scenario), outputs
+  (framework behavior), ground truth (expected behavior).
+- **Comparable**: each round records framework output vs ground truth
+  delta; ≥80% counts as pass.
+- **Persistent**: each round's results write to
+  `docs/experiments/round-<N>.md`, including raw command + framework
+  output + evaluation.
 
-### Round 1 — DAG 排序:已知拓扑的小规模
+## 10-round experiment checklist
 
-**目标**:验证 `plan_execution_order` 对简单线性 DAG 的排序准确性
+### Round 1 — DAG ordering: small known topology
 
-**构造**:3 个独立分支(R1→R2→R3 线性,无重叠)
-**输入**:tasks.json = 3 tasks
-**预期**:phase 0 = R1, phase 1 = R2, phase 2 = R3
-**Ground truth**:线性拓扑
-**Pass 标准**:phase 顺序与拓扑序一致
-**对应 gap**:R19 #2 `detect_branch_ancestry`
+**Goal**: verify `plan_execution_order` accuracy on a simple linear DAG.
 
-### Round 2 — DAG 排序:分支谱系折叠
+**Construct**: 3 independent branches (R1 → R2 → R3 linear, no overlap).
+**Input**: `tasks.json` = 3 tasks.
+**Expected**: phase 0 = R1, phase 1 = R2, phase 2 = R3.
+**Ground truth**: linear topology.
+**Pass criteria**: phase order matches topological order.
+**Maps to gap**: R19 #2 `detect_branch_ancestry`.
 
-**目标**:验证谱系折叠(parent child branch 合并到同一 phase)
+### Round 2 — DAG ordering: branch lineage collapse
 
-**构造**:5 个分支(A→B→C 线性 + D, E 与 A 平行)
-**输入**:tasks.json = 5 tasks
-**预期**:phase 0 = [A, D, E] parallel, phase 1 = B, phase 2 = C (谱系折叠后)
-**Ground truth**:谱系折叠后的拓扑
-**Pass 标准**:B 和 C 不在 phase 0(因为被 A 折叠)
-**对应 gap**:R19 #2
+**Goal**: verify lineage collapse (parent + child branch merged into same
+phase).
 
-### Round 3 — 并发监控:serialize severity 升级
+**Construct**: 5 branches (A → B → C linear + D, E parallel to A).
+**Input**: `tasks.json` = 5 tasks.
+**Expected**: phase 0 = [A, D, E] parallel, phase 1 = B, phase 2 = C
+(after lineage collapse).
+**Ground truth**: topology after lineage collapse.
+**Pass criteria**: B and C are not in phase 0 (because they collapse with A).
+**Maps to gap**: R19 #2.
 
-**目标**:验证 `severity_threshold_n` 配置生效(N≥4 → major, N≥6 → blocker)
+### Round 3 — Concurrent monitoring: serialize severity escalation
 
-**构造**:6 个分支都改同一文件
-**输入**:tasks.json = 6 tasks, config with severity_threshold_n
-**预期**:`suggest_serialization` 对该文件返回 blocker severity
-**Ground truth**:6 branches touching 1 file 应该是 blocker
-**Pass 标准**:severity 字段实际升级
-**对应 gap**:R19 #3
+**Goal**: verify `severity_threshold_n` config takes effect (N≥4 → major,
+N≥6 → blocker).
 
-### Round 4 — 并发监控:scope-drift 检测
+**Construct**: 6 branches all touch the same file.
+**Input**: `tasks.json` = 6 tasks, config with `severity_threshold_n`.
+**Expected**: `suggest_serialization` returns blocker severity for that
+file.
+**Ground truth**: 6 branches touching 1 file should be blocker.
+**Pass criteria**: severity field actually escalates.
+**Maps to gap**: R19 #3.
 
-**目标**:验证 `detect_scope_drift` 能识别 out-of-scope commit
+### Round 4 — Concurrent monitoring: scope-drift detection
 
-**构造**:1 个分支,declared scope = ["a.py"],实际 diff = ["a.py", "AGENTS.md"]
-**输入**:branch + declared_scope
-**预期**:返回 1 个 conflict,severity = blocker(因为 AGENTS.md 是 guardian)
-**Ground truth**:AGENTS.md 是 guardian file,out-of-scope = blocker
-**Pass 标准**:检测到 AGENTS.md 并标 blocker
-**对应 gap**:R19 #5
+**Goal**: verify `detect_scope_drift` identifies out-of-scope commits.
 
-### Round 5 — 并发监控:prefer_side 配置生效
+**Construct**: 1 branch, declared scope = `["a.py"]`, actual diff =
+`["a.py", "AGENTS.md"]`.
+**Input**: branch + declared_scope.
+**Expected**: returns 1 conflict, severity = blocker (because AGENTS.md is
+a guardian).
+**Ground truth**: AGENTS.md is a guardian file; out-of-scope = blocker.
+**Pass criteria**: detects AGENTS.md and tags blocker.
+**Maps to gap**: R19 #5.
 
-**目标**:验证 `resolve_conflict_hunks` 按 prefer_side 选边
+### Round 5 — Concurrent monitoring: prefer_side config takes effect
 
-**构造**:2 个分支改同一文件同一行(branch A 写 "X", branch B 写 "Y")
-**输入**:branch_a, branch_b, file, prefer_side="worker"
-**预期**:选 branch B 的内容(worker)
-**Ground truth**:prefer_side="worker" → B 的内容胜出
-**Pass 标准**:实际选择匹配 prefer_side
-**对应 gap**:R19 #4
+**Goal**: verify `resolve_conflict_hunks` picks by `prefer_side`.
 
-### Round 6 — 状态清理:cleanup patterns 匹配
+**Construct**: 2 branches change the same line of the same file (branch A
+writes "X", branch B writes "Y").
+**Input**: `branch_a, branch_b, file, prefer_side="worker"`.
+**Expected**: selects branch B's content (worker).
+**Ground truth**: `prefer_side="worker"` → B's content wins.
+**Pass criteria**: actual selection matches `prefer_side`.
+**Maps to gap**: R19 #4.
 
-**目标**:验证 `cleanup_worktree_artifacts` 对 `__pycache__/` / `.bak.*` 的识别
+### Round 6 — State cleanup: cleanup patterns match
 
-**构造**:在临时 worktree 里 touch `__pycache__/x.pyc`、`tests/foo.bak.123`、`a.tmp`
-**输入**:patterns = ["__pycache__/", "*.bak.*", "*.pyc", "*.tmp"]
-**预期**:返回 3 个 cleanup action:rm -rf __pycache__/, rm tests/foo.bak.123, rm a.tmp
-**Ground truth**:3 个匹配
-**Pass 标准**:全部命中
-**对应 gap**:R19 #7
+**Goal**: verify `cleanup_worktree_artifacts` recognizes `__pycache__/` /
+`.bak.*`.
 
-### Round 7 — DAG 排序:pick_merge_strategy
+**Construct**: in a temporary worktree, `touch __pycache__/x.pyc`,
+`tests/foo.bak.123`, `a.tmp`.
+**Input**: `patterns = ["__pycache__/", "*.bak.*", "*.pyc", "*.tmp"]`.
+**Expected**: returns 3 cleanup actions: `rm -rf __pycache__/`,
+`rm tests/foo.bak.123`, `rm a.tmp`.
+**Ground truth**: 3 matches.
+**Pass criteria**: all hit.
+**Maps to gap**: R19 #7.
 
-**目标**:验证 `pick_merge_strategy` 对 fast-forward / --no-ff / rebase 的判断
+### Round 7 — DAG ordering: pick_merge_strategy
 
-**构造**:3 个场景
-  - 场景 A:branch 是 main 的 fast-forward 后裔 → "fast-forward"
-  - 场景 B:branch 与 main 有分叉但无冲突 → "merge --no-ff"
-  - 场景 C:branch 与 main 有冲突 → "rebase-then-merge"
-**预期**:3 个场景返回 3 个不同策略
-**Ground truth**:策略选择
-**Pass 标准**:3 个场景正确分类
-**对应 gap**:R19 #6
+**Goal**: verify `pick_merge_strategy` correctly judges fast-forward /
+`--no-ff` / rebase.
 
-### Round 8 — DAG 排序:auto_extract_scope
+**Construct**: 3 scenarios:
+  - Scenario A: branch is fast-forward descendant of main → "fast-forward"
+  - Scenario B: branch diverged from main but no conflicts → "merge --no-ff"
+  - Scenario C: branch diverged with conflicts → "rebase-then-merge"
+**Expected**: 3 scenarios return 3 different strategies.
+**Ground truth**: strategy selection.
+**Pass criteria**: 3 scenarios correctly classified.
+**Maps to gap**: R19 #6.
 
-**目标**:验证 `auto_extract_scope(branches, repo)` 直接从 git diff 提取
+### Round 8 — DAG ordering: auto_extract_scope
 
-**构造**:3 个分支已知 diff(用 git show 验证)
-**输入**:branches + repo path
-**预期**:返回的 scope_files 与 git diff --name-only 一致
-**Ground truth**:git diff 输出
-**Pass 标准**:文件集完全一致(顺序不要求)
-**对应 gap**:R19 #1
+**Goal**: verify `auto_extract_scope(branches, repo)` extracts directly
+from `git diff`.
 
-### Round 9 — 并发监控:guardian_files config 加载
+**Construct**: 3 branches with known diff (verified via `git show`).
+**Input**: branches + repo path.
+**Expected**: returned `scope_files` matches `git diff --name-only`.
+**Ground truth**: `git diff` output.
+**Pass criteria**: file sets identical (order not required).
+**Maps to gap**: R19 #1.
 
-**目标**:验证 `.jcode/conflict-config.yaml` schema 正确加载并生效
+### Round 9 — Concurrent monitoring: guardian_files config loaded
 
-**构造**:写一个 minimal valid config 文件,guardian_files = ["AGENTS.md"]
-**输入**:config file path
-**预期**:`detect_scope_drift` 看到 AGENTS.md 自动升级为 blocker
-**Ground truth**:配置生效
-**Pass 标准**:bad config 报错,good config 通过
-**对应 gap**:R19 #8
+**Goal**: verify `.jcode/conflict-config.yaml` schema loads correctly and
+takes effect.
 
-### Round 10 — 端到端:9 分支合并覆盖率
+**Construct**: write a minimal valid config file with
+`guardian_files = ["AGENTS.md"]`.
+**Input**: config file path.
+**Expected**: `detect_scope_drift` sees AGENTS.md and auto-escalates to
+blocker.
+**Ground truth**: config takes effect.
+**Pass criteria**: bad config errors out; good config passes.
+**Maps to gap**: R19 #8.
 
-**目标**:用真实的 9 个未合并分支跑 framework 全套,测量 loss-rate
+### Round 10 — End-to-end: 9-branch merge coverage
 
-**构造**:当前 repo 状态(9 branches + 1 uncommitted + __pycache__/ 污染)
-**输入**:实际 repo
-**预期**:
-  - DAG 排序:输出 ≤ 3 phases(谱系折叠后)
-  - 并发监控:标出 AGENTS.md × 6 + scripts/install.sh × 6 都是 blocker
-  - 状态清理:输出 cleanup list(commit CONTRIBUTING.md, rm __pycache__/)
-**Ground truth**:人工评估的合并路径
-**Pass 标准**:framework 输出能让 root 在 1 步之内决定 merge 顺序,不需要再读 18 个文件的 git diff
-**Coverage target**:≥ 80% 的合并决策由 framework 直接给出
+**Goal**: run the full framework against the real 9 unmerged branches and
+measure loss-rate.
 
-## 10 轮实验时间表
+**Construct**: current repo state (9 branches + 1 uncommitted +
+`__pycache__/` pollution).
+**Input**: actual repo.
+**Expected**:
+  - DAG ordering: output ≤ 3 phases (after lineage collapse)
+  - Concurrent monitoring: flag AGENTS.md × 6 + `scripts/install.sh` × 6 as
+    blocker
+  - State cleanup: output cleanup list (commit `CONTRIBUTING.md`, remove
+    `__pycache__/`)
+**Ground truth**: human-evaluated merge path.
+**Pass criteria**: framework output lets root decide merge order in 1 step
+without re-reading 18 files' `git diff`.
+**Coverage target**: ≥ 80% of merge decisions produced directly by the
+framework.
 
-| 阶段 | 事件 | 估计时间 |
+## 10-round experiment timeline
+
+| Stage | Event | Estimated time |
 |---|---|---|
-| **Pre-flight** | R19 iwazaru 落地 + 全套 framework 可用 | 等 R19 ready |
-| **Round 1-3** | DAG 排序 + serialize 升级 | R19 落地后立即 |
-| **Round 4-5** | scope-drift + prefer_side | 同上 |
-| **Round 6** | cleanup patterns | 同上 |
-| **Round 7-8** | topology + auto_extract | 同上 |
-| **Round 9** | config schema 加载 | 同上 |
-| **Round 10** | 端到端 + loss-rate 测量 | 最后 |
-| **Post** | 写最终报告 `docs/experiments/ten-round-results-2026-08-02.md` | 收尾 |
+| **Pre-flight** | R19 iwazaru lands + full framework available | wait for R19 ready |
+| **Round 1-3** | DAG ordering + serialize escalation | immediately after R19 |
+| **Round 4-5** | scope-drift + prefer_side | same |
+| **Round 6** | cleanup patterns | same |
+| **Round 7-8** | topology + auto_extract | same |
+| **Round 9** | config schema loading | same |
+| **Round 10** | end-to-end + loss-rate measurement | last |
+| **Post** | write final report `docs/experiments/ten-round-results-2026-08-02.md` | wrap-up |
 
-## 评估指标
+## Evaluation metrics
 
-每轮记录:
+Per round, record:
+
 - **pass / fail / partial**
-- **实测覆盖率**:`passes / total_decisions`
-- **framework 行为**:原始 CLI 输出
-- **ground truth**:人工评估
-- **gap 编号**:对应 R19 8 gaps 中的哪一条
+- **Measured coverage**: `passes / total_decisions`
+- **Framework behavior**: raw CLI output
+- **Ground truth**: human evaluation
+- **Gap number**: which of R19's 8 gaps this maps to
 
-最终汇总:
-- **总覆盖率**(10 轮平均)
-- **单支柱覆盖率**(DAG / monitor / cleanup 各几条 pass)
-- **R19 是否达标 80%**
-- **R20/R21/R22 优先级**(哪条 gap 仍然 missing,排入下一轮)
+Final aggregation:
 
-## 不在范围
+- **Total coverage** (10-round average)
+- **Per-pillar coverage** (DAG / monitor / cleanup — how many pass each)
+- **Did R19 hit the 80% target?**
+- **R20/R21/R22 priorities** (which gaps are still missing, queue for next
+  round)
 
-- 不写代码(框架是 R19 iwazaru 的工作)
-- 不修 framework bug(R19 范围内的事,记到 `open_questions[]`)
-- 不真正合并分支(那是 R20/R21 之后的事)
+## Out of scope
 
-## 产出文件
+- Writing code (framework is R19 iwazaru's job)
+- Fixing framework bugs (R19's scope; record into `open_questions[]`)
+- Actually merging branches (that's after R20/R21)
 
-- `docs/experiments/round-<1-10>-<date>.md` — 每轮 1 个文件,固定 schema
-- `docs/experiments/ten-round-results-2026-08-02.md` — 汇总
-- memory tag `experiment-2026-08-02-10r` — 最终 coverage 数字
+## Output files
+
+- `docs/experiments/round-<1-10>-<date>.md` — one file per round, fixed
+  schema
+- `docs/experiments/ten-round-results-2026-08-02.md` — aggregation
+- Memory tag `experiment-2026-08-02-10r` — final coverage number
