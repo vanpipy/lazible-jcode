@@ -193,6 +193,17 @@ Do not invent a self-poke via `schedule(target=resume, wake_in_minutes=N)`
 to "check on workers" — it adds latency without helping. Liveness is
 worker-driven; you are the responder, not the watchdog.
 
+**Passive worktree inspection (recommended).** Once per active session,
+do `git log <worker_branch>` on each active worker branch. This is
+not a poll — it is a passive read that surfaces worker state the
+worker itself cannot report (e.g. truly dead workers that OOM'd or
+network-dropped mid-task will have a progress commit on their branch
+even though they never sent `complete_node`). Cost: one tool call
+per branch. If the latest commit is older than your heartbeat SLA
+expectation (e.g. > 5 min on a non-trivial task) or its artifact
+`type` is `progress` with no subsequent `final`, the worker is
+silently stuck; integrate the partial work or spawn a successor.
+
 **Code implementation routing rule (hard)** — for any code-implementation
 work, the main agent **must not** edit code in the main session. Spawn an
 `implementer` worker and prepend the entire body of

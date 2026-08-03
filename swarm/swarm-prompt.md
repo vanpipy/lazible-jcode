@@ -384,10 +384,16 @@ Three concrete rules; see `docs/HEARTBEAT.md` for the rationale:
 ### Worker exit right (abandonment)
 
 If the worker has emitted `{"type":"stuck"}` and has not received a
-root response within **5 minutes**, the worker is contractually allowed
-to abandon the task: stop work, `report status: abandoned` with a typed
-artifact explaining the silence, and exit cleanly. This is **not a
-failure mode** — it is the contract working.
+**concrete next step from root** within **5 minutes**, the worker is
+contractually allowed to abandon the task: stop work, `report status:
+abandoned` with a typed artifact explaining the silence, and exit
+cleanly. A "concrete next step" is one of: (a) a scope change / scope
+split decision, (b) a directive to keep going on the current path with
+specific guidance, (c) a `stop` order, (d) a concrete blocker answer
+unblocking the worker. A bare "ack, hold" or "noted, will get to it"
+without direction does **not** count — those are exactly the replies
+that leave the worker hanging, and they do not extend the 5-minute
+window. This is **not a failure mode** — it is the contract working.
 
 ### Root obligations (responsiveness, soft)
 
