@@ -86,3 +86,24 @@ skill_manage load <project-skill>
 - Don't continue past typecheck errors (those are early signals).
 - Don't install dependencies inside the worktree.
 - Don't commit to any branch other than `<worker_branch>`.
+
+## Liveness contract (commit-as-artifact)
+
+Migration runs are long and visible: many callers, slow CI, heavy
+verification. Your commit body **must** embed a typed JSON artifact on
+every commit, especially intermediate `progress` commits between atomic
+migration steps. See `~/.jcode/swarm-prompt.md` §12.
+
+Use `type: "progress"` between atomic steps with `step` naming the current
+step number (e.g. `"step": "atomic 2/7: rename Foo → Bar in callers"`).
+The root's self-poke at 8 min reads the latest artifact and decides
+whether to escalate — a live `progress` signal proves the migration is
+moving and not stuck on a single hard step.
+
+`delete` / `rename` / `move` migrations are especially susceptible to
+silent gaps; a `progress` artifact with `blockers: ["<caller_not_yet_migrated>"]`
+gives the root visibility before the next atomic step.
+
+For the **final commit**, use `type: "final"` with `blockers: []` and a
+`confidence` that reflects how thoroughly every caller was migrated.
+`high` only when `git grep <old-symbol>` returns zero matches.

@@ -75,3 +75,24 @@ skill_manage load <project-skill>
 - Don't add example code that won't run.
 - Don't add emoji / marketing tone / subjective opinions.
 - Don't ignore the changelog (it's for upgraders).
+
+## Liveness contract (commit-as-artifact)
+
+Doc edits are fast but the review surface (mkdocs build, link-check,
+grammar) is not. Your commit body **must** embed a typed JSON artifact
+on every commit. See `~/.jcode/swarm-prompt.md` §12.
+
+For **doc PRs that span multiple files** (e.g. a new section with
+diagrams + tutorial + changelog entry), commit once per file with a
+`progress` artifact naming the file and what it adds:
+
+```
+{
+  "type": "progress",
+  "step": "docs/architecture.md: data flow diagram + 3 new sections",
+  "files_remaining": ["docs/tutorial.md", "CHANGELOG.md"]
+}
+```
+
+For the **final commit** (link-check passes, mkdocs builds clean), use
+`type: "final"` with the build / lint output as evidence.

@@ -78,3 +78,17 @@ skill_manage load <project-skill>     # e.g. /rn-dev
 - Don't treat a symptom as the cause.
 - Don't conclude with "maybe it's X" — converge.
 - Don't exceed 5 hypotheses; more means you didn't understand the problem.
+
+## Liveness contract
+
+You are read-only by default; you do not produce commits unless asked.
+Your liveness is your typed artifact: hypotheses + verdicts + evidence.
+That report IS your artifact — see `~/.jcode/swarm-prompt.md` §12.
+
+For investigations that span many reads (large repos, slow `git log`
+queries), commit **a single `progress` artifact** at the 4-minute mark
+even if you have no conclusions yet. The root's self-poke at 8 minutes
+will look for that signal; silence past 8 min = assumed hung.
+
+If asked to produce a fix, switch to `implementer.md`'s commit-as-artifact
+contract and embed the JSON block at the bottom of every commit.

@@ -111,3 +111,38 @@ skill_manage load <project-skill>     # e.g. /rn-dev
 - Don't run `pnpm install` / `pod install` inside the worktree — symlink from the main worktree, install there.
 - Don't commit to any branch other than `<worker_branch>`.
 - Don't `git push` — the root session owns integration + push.
+
+## Liveness contract (commit-as-artifact)
+
+Every commit you make on `<worker_branch>` **must** include a fenced JSON
+artifact block at the bottom of the commit body. This is the only signal
+the root session uses to reason about your state — see
+`~/.jcode/swarm-prompt.md` §12 for the full contract.
+
+For the **final commit** (paired with `complete_node` / `report`), use:
+
+````
+```json artifact
+{
+  "type": "final",
+  "session_id": "<from spawn>",
+  "task_id": "<from spawn>",
+  "branch": "<worker_branch>",
+  "commit": "<sha>",
+  "elapsed_min": <int>,
+  "step": "complete",
+  "next": null,
+  "confidence": "low | medium | high",
+  "blockers": []
+}
+```
+````
+
+For **mid-task WIP commits** (during long thinking or stuck work), use the
+same shape with `type: "progress"`, real `step` / `next` values, and an
+honest `confidence`. Do not skip the block "because it's just WIP" — WIP
+commits are precisely what the root needs to read.
+
+If you ever anticipate your task will exceed 8 minutes (long test, large
+refactor, dependency install), commit at least once before the threshold
+with a `progress` artifact so the root's self-poke sees a live signal.
