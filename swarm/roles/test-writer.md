@@ -88,11 +88,30 @@ skill_manage load <project-skill>
 - Don't mock dependencies you don't understand (mock = contract).
 - Don't install new test deps inside the worktree — report to root.
 
-## Liveness contract (commit-as-artifact)
+## Liveness contract (worker-driven)
 
-Coverage runs and large test suites are slow. Your commit body **must**
-embed a typed JSON artifact on every commit. See
-`~/.jcode/swarm-prompt.md` §12.
+This is a **worker-side obligation**, not a root-side poll. See
+`docs/HEARTBEAT.md` for the full contract.
+
+Coverage runs and large test suites are slow. Every commit MUST embed
+a typed JSON artifact — see `~/.jcode/swarm-prompt.md` §12.
+
+- **Heartbeat ≤ 5 min.** Within any 5-minute window you MUST emit at
+  least one of: (a) a `progress` commit, (b) `dm <root>` with payload
+  `{"type":"heartbeat","step":"...","covered_paths":N,"elapsed_min":M}`,
+  (c) `report`. A `progress` commit is preferred — it is durable and
+  carries the coverage number in `step` / `next`.
+- **Stuck self-escalation ≥ 3 min.** If you have not made substantive
+  forward progress for 3 minutes (slow coverage run, fixture missing,
+  coverage threshold unclear), you MUST `dm <root> --delivery=interrupt`
+  with payload `{"type":"stuck","reason":"...","help_needed":"..."}`.
+  Silence is not an option.
+- **Self-alarm on spawn (recommended).** Right after spawn, schedule a
+  self-reminder: `schedule(target=resume, wake_in_minutes=4, task="if
+  still running, emit heartbeat or stuck").`
+- **Exit right after stuck.** If you emitted `{"type":"stuck"}` and
+  did not get a root response within 5 minutes, you are contractually
+  allowed to `report status: abandoned` and exit.
 
 For **mid-coverage commits** (you're still adding cases for orthogonal
 paths), use `type: "progress"` with `step` naming the current path family
@@ -108,7 +127,8 @@ and a running coverage number:
 }
 ```
 
-This lets the root see coverage is climbing without waiting for the full
+This satisfies the 5-min heartbeat obligation in one durable step and
+lets the root see coverage is climbing without waiting for the full
 sweep. The `next` field also helps the root decide whether to interrupt
 with a different scope if priorities shifted.
 

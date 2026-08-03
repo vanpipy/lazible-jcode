@@ -112,12 +112,30 @@ skill_manage load <project-skill>     # e.g. /rn-dev
 - Don't commit to any branch other than `<worker_branch>`.
 - Don't `git push` — the root session owns integration + push.
 
-## Liveness contract (commit-as-artifact)
+## Liveness contract (worker-driven)
 
-Every commit you make on `<worker_branch>` **must** include a fenced JSON
-artifact block at the bottom of the commit body. This is the only signal
-the root session uses to reason about your state — see
-`~/.jcode/swarm-prompt.md` §12 for the full contract.
+This is a **worker-side obligation**, not a root-side poll. See
+`docs/HEARTBEAT.md` for the full contract and rationale.
+
+- **Heartbeat ≤ 5 min.** Within any 5-minute window you MUST emit at
+  least one of: (a) a `progress` commit, (b) `dm <root>` with payload
+  `{"type":"heartbeat","step":"...","elapsed_min":N}`, (c) `report`.
+- **Stuck self-escalation ≥ 3 min.** If you have not made substantive
+  forward progress for 3 minutes (looping on a tool, blocked on missing
+  info, blocked on external dep), you MUST
+  `dm <root> --delivery=interrupt` with payload
+  `{"type":"stuck","reason":"...","help_needed":"..."}`. Silence is not
+  an option.
+- **Self-alarm on spawn (recommended).** Right after spawn, schedule a
+  self-reminder: `schedule(target=resume, wake_in_minutes=4, task="if
+  still running, emit heartbeat or stuck").` This wakes you; you
+  self-check; you emit the heartbeat. Free if you are already active.
+- **Exit right after stuck.** If you emitted `{"type":"stuck"}` and
+  did not get a root response within 5 minutes, you are contractually
+  allowed to `report status: abandoned` and exit. Don't wait forever.
+- **Every commit embeds the artifact.** Even mid-task WIP commits carry
+  a fenced JSON artifact at the bottom of the commit body. The full
+  schema and rationale live in `~/.jcode/swarm-prompt.md` §12.
 
 For the **final commit** (paired with `complete_node` / `report`), use:
 
@@ -138,12 +156,8 @@ For the **final commit** (paired with `complete_node` / `report`), use:
 ```
 ````
 
-For **mid-task WIP commits** (during long thinking or stuck work), use the
-same shape with `type: "progress"`, real `step` / `next` values, and an
-honest `confidence`. Do not skip the block "because it's just WIP" — WIP
-commits are precisely what the root needs to read.
-
-If you ever anticipate your task will exceed 8 minutes (long test, large
-refactor, dependency install), commit at least once before the threshold
-with a `progress` artifact so the root has a live signal if it next checks
-your branch.
+For **mid-task WIP commits** (during long thinking or stuck work), use
+the same shape with `type: "progress"`, real `step` / `next` values,
+and an honest `confidence`. Do not skip the block "because it's just
+WIP" — WIP commits are precisely what the root needs to read and what
+your heartbeat obligation fires on.

@@ -61,34 +61,99 @@ Required structure (single fenced block at the bottom of the commit body):
 that completes the spawn scope. See `swarm/swarm-prompt.md` §12 and the
 role-specific sections in `swarm/roles/*.md` for details per role.
 
-## How the root notices a worker
+## Liveness contract (worker-driven, root-responsive)
 
-The root session is **woken by the worker's own actions**, not by a
-scheduled poll:
+The framework has **no watchdog, no real-time timer, no enforced
+deadline**. Every "X minutes" in this contract is a **soft contract**
+the LLM session is expected to honor, not a guarantee the runtime
+enforces. Be honest about the boundary: there is a layer the contract
+*can* cover, and a layer it *cannot*. Mislabeling soft contracts as
+hard ones is what produced the original self-poke design and led to its
+removal.
 
-- A worker that wants to hand off, escalate, or ask a question uses
-  `complete_node`, `report`, or `follow_up`. The runtime delivers these
-  to the root's queue and the root wakes to handle them.
-- A worker that finishes and dies before reporting is fully recoverable
-  on the root's next turn via `git show <branch>` — the final commit's
-  artifact reconstructs the handoff.
+### Worker obligations (liveness source)
 
-A previously proposed **self-poke via `schedule`** has been removed:
-the wake-up did not help the root notice workers any faster than the
-worker's natural handoff, and it added 8 minutes of latency to every
-spawn. There is no scheduled poll, no heartbeat daemon, and no
-`schedule(target=resume, wake_in_minutes=N)` call on the spawn path.
+The worker is responsible for being observable. Three concrete rules:
 
-## Failure modes the artifact contract catches
+1. **Heartbeat channel ≤ 5 min.** Within any 5-minute window during a
+   task, the worker MUST emit at least one of:
+   - a `progress` commit (preferred — durable + auditable),
+   - `dm <root> --delivery=notify` with payload
+     `{"type":"heartbeat","step":"...","elapsed_min":N}`,
+   - `report` with a typed body.
+   Two consecutive misses = contract violation; root is allowed to
+   treat the worker as abandoned.
+2. **Stuck self-escalation ≥ 3 min.** If the worker has not made
+   substantive forward progress for 3 minutes (e.g. looping on a single
+   tool call, blocked on missing info, blocked on an external dep),
+   the worker MUST `dm <root> --delivery=interrupt` with payload
+   `{"type":"stuck","reason":"...","help_needed":"..."}`. Silence is
+   not an option; silent hangs are the failure mode this rule kills.
+3. **Self-alarm (recommended).** On spawn, the worker SHOULD
+   `schedule(target=resume, wake_in_minutes=4, task="if still running,
+   commit progress + dm heartbeat")`. This is a self-reminder; the
+   runtime wakes the worker, the worker self-checks, the worker emits
+   the heartbeat. This costs nothing if the worker is already active.
 
-| Failure                                  | Detection signal                   | Recovery                     |
-| ---------------------------------------- | ---------------------------------- | ---------------------------- |
-| Worker hung in long thinking             | No new commit, no worker message   | Root waits; user can poke the session |
-| Worker died after final commit           | `type: "final"` already on disk    | Root reads via `git show`    |
-| Worker reported "done" but didn't commit | Latest commit has no artifact      | Reject the report            |
-| Server restart killed worker session     | Git state unchanged                | Root reads via `git log`     |
-| Worker stuck on a single hard step       | Multiple `progress` artifacts with same `step` | Root sends a new scope via `dm` |
-| Silent gap in `delete` / `rename` migration | `progress` artifact's `blockers[]` list | Root catches before next atomic step |
+### Worker exit right (abandonment)
+
+If the worker has emitted `{"type":"stuck"}` and has not received a
+root response within **5 minutes**, the worker is contractually allowed
+to abandon the task: stop work, `report status: abandoned` with a typed
+artifact explaining the silence, and exit cleanly. This is **not a
+failure mode** — it is the contract working. The alternative (waiting
+forever) is worse: it costs the worker tokens and the root never learns
+the worker is stuck.
+
+### Root obligations (responsiveness)
+
+The root does not poll. The root does not schedule itself. But when the
+root is woken by a worker handoff, the root has two soft obligations:
+
+1. **Priority on `{"type":"stuck"}` and `follow_up`.** When a worker
+   reports stuck or asks for help, the root SHOULD respond with `dm`
+   within the current context (information, scope expansion, or
+   `stop`). There is **no hard deadline** — root is an LLM session and
+   may be busy integrating another worker. The worker exit right above
+   is the safety valve.
+2. **No scheduled self-poke.** Root MUST NOT call
+   `schedule(target=resume, wake_in_minutes=N)` for the purpose of
+   "checking on workers". The original self-poke was removed because
+   it added 8 minutes of latency to every spawn without helping root
+   notice workers any faster than the worker's own handoff. There is
+   no `schedule(target=resume, wake_in_minutes=N)` on the spawn path.
+
+### What the framework CANNOT guarantee
+
+These are out-of-band. No contract can fix them; only runtime changes
+(added in a future jcode) could.
+
+- **Real-time detection of a truly dead worker.** If the worker
+  process is OOM-killed, network-partitioned, or the worker session
+  is otherwise killed without an opportunity to flush, neither the
+  heartbeat nor the stuck-escalation can fire. The framework has no
+  watchdog. The recovery is `git show <branch>` on root's next
+  conscious turn.
+- **Root response time.** Root is an LLM. If root is thinking through
+  a 10-minute plan or integrating a complex worker branch, it will
+  not respond to a stuck worker in 5 minutes. The worker's exit right
+  exists *because* this is true.
+- **Worker honesty.** A worker can lie about its state in a heartbeat
+  or stuck report. Root cross-checks against the diff, the test
+  output, and `git grep` before integration; that is the only defense.
+
+### Failure modes the contract catches
+
+| Failure                                  | Detection signal                                | Recovery                          |
+| ---------------------------------------- | ----------------------------------------------- | --------------------------------- |
+| Worker stuck on a hard step              | `{"type":"stuck"}` dm from worker               | Root `dm`s back, expands scope, or stops |
+| Worker silent because busy thinking      | Mid-task `progress` commit or heartbeat dm     | Root reads latest commit on branch |
+| Worker hung on long test / install       | Self-alarm `schedule` fires, worker self-checks | Worker emits heartbeat or stuck dm |
+| Worker honest-but-too-quiet              | Two consecutive 5-min heartbeat misses          | Worker exit right; root treats as abandoned |
+| Root did not respond to stuck            | 5 min since `{"type":"stuck"}`                  | Worker `report status: abandoned` |
+| Worker dies after final commit           | `type: "final"` already on disk                 | Root reads via `git show`         |
+| Worker reports "done" but didn't commit  | Latest commit has no artifact                   | Root rejects report               |
+| Server restart killed worker session     | Git state unchanged                             | Root reads via `git log`          |
 
 ## Why a daemon would have failed
 
@@ -97,8 +162,9 @@ Each row above is something a daemon would either miss (silent gaps,
 artifact-as-commit model handles them for free because the worker's
 self-report is its work, not a separate signal.
 
-The cost is one fenced block per commit (~200 bytes). No timers, no
-manifest writes, no scheduled wake-ups.
+The cost is one fenced block per commit (~200 bytes) plus, on long
+tasks, a 4-minute self-reminder. No timers, no manifest writes, no
+scheduled wake-ups on the root side.
 
 ## What this is NOT
 
@@ -109,12 +175,13 @@ manifest writes, no scheduled wake-ups.
 - **Not** a guarantee the artifact is correct. A worker can lie. The
   root session cross-checks against the diff, the test output, and
   `git grep` before integration.
+- **Not** a hard real-time guarantee. Heartbeats are LLM-followed soft
+  contracts. A worker that is truly dead cannot heartbeat, and the
+  framework has no watchdog for that.
 - **Not** applicable to the `last_heartbeat` field in
   `.jcode/worktree-manifest.json`. That field exists for the worktree
   cleanup safety net (see `scripts/conflict-detect.py
   detect_heartbeat_stale`); it is a passive detector, not the primary
   liveness signal.
-- **Not** a guarantee that root will notice a stuck worker. The root
-  only wakes when the worker (or the user) sends it a message. Silence
-  past an arbitrary timeout is not, by itself, a signal — it is the
-  default state of any long-running worker.
+- **Not** an excuse for root to ignore a `{"type":"stuck"}`. The
+  worker exit right is the safety valve, not a license to be slow.

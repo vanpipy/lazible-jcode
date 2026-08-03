@@ -174,6 +174,25 @@ If questions 1 and 2 both say "spawn", spawn. Always pass `label`,
 `model`, `effort`, worktree path, base SHA, and worker branch on the
 spawn call (see §4 below).
 
+### Root responsiveness to worker `{"type":"stuck"}` and `follow_up`
+
+You do not poll. You do not schedule yourself to wake up. But when a
+worker sends you a `{"type":"stuck"}` dm (interrupting you) or a
+`follow_up` asking for help, you have a soft obligation to respond in
+the current context: information, scope expansion, scope split, or
+`stop`. See `docs/HEARTBEAT.md` for the full liveness contract and
+`swarm/swarm-prompt.md` §12 for the failure-mode table.
+
+The worker has a 5-minute exit right after emitting `{"type":"stuck"}`
+— if you don't respond, the worker will `report status: abandoned` and
+leave. That is not a worker failure; it is the contract working. But
+you SHOULD treat the `stuck` dm as a priority signal: drop unrelated
+work, decide what the worker needs, and reply.
+
+Do not invent a self-poke via `schedule(target=resume, wake_in_minutes=N)`
+to "check on workers" — it adds latency without helping. Liveness is
+worker-driven; you are the responder, not the watchdog.
+
 **Code implementation routing rule (hard)** — for any code-implementation
 work, the main agent **must not** edit code in the main session. Spawn an
 `implementer` worker and prepend the entire body of
