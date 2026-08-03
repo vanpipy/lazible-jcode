@@ -99,6 +99,14 @@ grammar) is not. Every commit MUST embed a typed JSON artifact — see
 - **Exit right after stuck.** If you emitted `{"type":"stuck"}` and
   did not get a root response within 5 minutes, you are contractually
   allowed to `report status: abandoned` and exit.
+- **Reminder-loop stall.** If you observe the same "N incomplete
+  todos" reminder arriving 5+ times in a row with no successful `todo`
+  write, treat this as `{"type":"stuck"}` and dm root with
+  `reason: "todo store in reminder loop"`. After 5 more minutes without
+  a concrete next step, `report status: abandoned` with
+  `what_i_did_not_check: ["todo store recovery procedure"]`. Do not
+  re-attempt the same `todo` write — it will be rejected identically.
+  See `docs/TODO_STALL_RECOVERY.md`.
 
 For **doc PRs that span multiple files** (e.g. a new section with
 diagrams + tutorial + changelog entry), commit once per file with a
