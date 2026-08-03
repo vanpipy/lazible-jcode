@@ -68,8 +68,10 @@ deadline**. Every "X minutes" in this contract is a **soft contract**
 the LLM session is expected to honor, not a guarantee the runtime
 enforces. Be honest about the boundary: there is a layer the contract
 *can* cover, and a layer it *cannot*. Mislabeling soft contracts as
-hard ones is what produced the original self-poke design and led to its
-removal.
+hard ones is what produced the original scheduled-self-wakeup
+design (root waking itself every 8 minutes via
+`schedule(target=resume, wake_in_minutes=8)` to probe worker state)
+and led to its removal.
 
 ### Worker obligations (liveness source)
 
@@ -141,12 +143,13 @@ root is woken by a worker handoff, the root has two soft obligations:
    `stop`). There is **no hard deadline** — root is an LLM session and
    may be busy integrating another worker. The worker exit right above
    is the safety valve.
-2. **No scheduled self-poke.** Root MUST NOT call
+2. **No scheduled self-wakeup.** Root MUST NOT call
    `schedule(target=resume, wake_in_minutes=N)` for the purpose of
-   "checking on workers". The original self-poke was removed because
-   it added 8 minutes of latency to every spawn without helping root
-   notice workers any faster than the worker's own handoff. There is
-   no `schedule(target=resume, wake_in_minutes=N)` on the spawn path.
+   "checking on workers". The scheduled self-wakeup design was
+   removed because it added 8 minutes of latency to every spawn
+   without helping root notice workers any faster than the worker's
+   own handoff. There is no `schedule(target=resume, wake_in_minutes=N)`
+   on the spawn path.
 
 ### What the framework CANNOT guarantee
 
