@@ -87,8 +87,9 @@ That report IS your artifact — see `~/.jcode/swarm-prompt.md` §12.
 
 For investigations that span many reads (large repos, slow `git log`
 queries), commit **a single `progress` artifact** at the 4-minute mark
-even if you have no conclusions yet. The root's self-poke at 8 minutes
-will look for that signal; silence past 8 min = assumed hung.
+even if you have no conclusions yet. Silence past 8 min is fine — the
+root only wakes on your `complete_node` / `report` / `follow_up` call,
+and `git show <branch>` will reconstruct whatever you committed.
 
 If asked to produce a fix, switch to `implementer.md`'s commit-as-artifact
 contract and embed the JSON block at the bottom of every commit.

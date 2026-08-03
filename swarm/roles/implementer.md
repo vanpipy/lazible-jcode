@@ -145,4 +145,5 @@ commits are precisely what the root needs to read.
 
 If you ever anticipate your task will exceed 8 minutes (long test, large
 refactor, dependency install), commit at least once before the threshold
-with a `progress` artifact so the root's self-poke sees a live signal.
+with a `progress` artifact so the root has a live signal if it next checks
+your branch.

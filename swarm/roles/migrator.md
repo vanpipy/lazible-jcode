@@ -96,9 +96,9 @@ migration steps. See `~/.jcode/swarm-prompt.md` §12.
 
 Use `type: "progress"` between atomic steps with `step` naming the current
 step number (e.g. `"step": "atomic 2/7: rename Foo → Bar in callers"`).
-The root's self-poke at 8 min reads the latest artifact and decides
-whether to escalate — a live `progress` signal proves the migration is
-moving and not stuck on a single hard step.
+A live `progress` signal proves the migration is moving and not stuck on
+a single hard step; the root can read it any time via `git show` and can
+reply via `dm` if it sees trouble.
 
 `delete` / `rename` / `move` migrations are especially susceptible to
 silent gaps; a `progress` artifact with `blockers: ["<caller_not_yet_migrated>"]`

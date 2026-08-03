@@ -61,32 +61,33 @@ Required structure (single fenced block at the bottom of the commit body):
 that completes the spawn scope. See `swarm/swarm-prompt.md` §12 and the
 role-specific sections in `swarm/roles/*.md` for details per role.
 
-## Root-session poke protocol
+## How the root notices a worker
 
-The root session never polls the runtime. After `spawn`, it schedules a
-single future wake-up via `schedule(target=resume, wake_in_minutes=8)`.
-The wake-up task is short and mechanical:
+The root session is **woken by the worker's own actions**, not by a
+scheduled poll:
 
-1. `git -C <worktree_path> log -1 --format=%B <branch>` to read the latest
-   artifact.
-2. Parse the trailing ```json artifact``` block.
-3. If `type: "final"` and `confidence != "low"`, integrate. Otherwise
-   poke via `dm --delivery=interrupt` and wait 60 s for ack.
-4. If 3 pokes fail, `stop <session_id>` and respawn with same `task_id`.
+- A worker that wants to hand off, escalate, or ask a question uses
+  `complete_node`, `report`, or `follow_up`. The runtime delivers these
+  to the root's queue and the root wakes to handle them.
+- A worker that finishes and dies before reporting is fully recoverable
+  on the root's next turn via `git show <branch>` — the final commit's
+  artifact reconstructs the handoff.
 
-The full table lives in `swarm/prompt-overlay.md` §1 ("Self-poke via
-schedule + git-probe"). The pattern is mandatory after every spawn — no
-exceptions.
+A previously proposed **self-poke via `schedule`** has been removed:
+the wake-up did not help the root notice workers any faster than the
+worker's natural handoff, and it added 8 minutes of latency to every
+spawn. There is no scheduled poll, no heartbeat daemon, and no
+`schedule(target=resume, wake_in_minutes=N)` call on the spawn path.
 
 ## Failure modes the artifact contract catches
 
 | Failure                                  | Detection signal                   | Recovery                     |
 | ---------------------------------------- | ---------------------------------- | ---------------------------- |
-| Worker hung in long thinking             | No new commit at 8 min             | `dm --delivery=interrupt`    |
+| Worker hung in long thinking             | No new commit, no worker message   | Root waits; user can poke the session |
 | Worker died after final commit           | `type: "final"` already on disk    | Root reads via `git show`    |
 | Worker reported "done" but didn't commit | Latest commit has no artifact      | Reject the report            |
-| Server restart killed worker session     | Git state unchanged                | Resume from `git log`        |
-| Worker stuck on a single hard step       | Multiple `progress` artifacts with same `step` | Root interrupts with new scope |
+| Server restart killed worker session     | Git state unchanged                | Root reads via `git log`     |
+| Worker stuck on a single hard step       | Multiple `progress` artifacts with same `step` | Root sends a new scope via `dm` |
 | Silent gap in `delete` / `rename` migration | `progress` artifact's `blockers[]` list | Root catches before next atomic step |
 
 ## Why a daemon would have failed
@@ -96,8 +97,8 @@ Each row above is something a daemon would either miss (silent gaps,
 artifact-as-commit model handles them for free because the worker's
 self-report is its work, not a separate signal.
 
-The cost is one fenced block per commit (~200 bytes) and one short
-wake-up task at the 8-minute mark. Both are negligible.
+The cost is one fenced block per commit (~200 bytes). No timers, no
+manifest writes, no scheduled wake-ups.
 
 ## What this is NOT
 
@@ -113,10 +114,7 @@ wake-up task at the 8-minute mark. Both are negligible.
   cleanup safety net (see `scripts/conflict-detect.py
   detect_heartbeat_stale`); it is a passive detector, not the primary
   liveness signal.
-
-## When the daemon might still be useful
-
-If a future jcode adds a runtime that runs continuously across multiple
-worker sessions (e.g. a long-lived planner agent that holds a hot model
-connection), a heartbeat may become useful again. Until then, commit-
-as-artifact is the right answer: zero infrastructure, full durability.
+- **Not** a guarantee that root will notice a stuck worker. The root
+  only wakes when the worker (or the user) sends it a message. Silence
+  past an arbitrary timeout is not, by itself, a signal — it is the
+  default state of any long-running worker.
