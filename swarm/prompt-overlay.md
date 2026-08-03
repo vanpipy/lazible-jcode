@@ -238,13 +238,34 @@ recovery actions:
 
 | Trigger (worker-side signal)               | Root action                                            |
 | ------------------------------------------ | ------------------------------------------------------ |
-| `{"type":"stuck"}` dm from worker          | Reply with concrete next step within current context. |
-| Worker branch has `progress` but no `final`, last commit > 5 min | `git log <branch>` + `git show <branch>:<files>` to read state, decide continue/help/recover. |
+| `{"type":"stuck"}` dm from worker          | Reply with concrete next step within current context (one confirmation). |
+| `follow_up` from worker                    | Same as above — treat as one confirmation.             |
+| Worker branch has `progress` but no `final`, last commit > 5 min | `git log <branch>` + `git show <branch>:<files>` (one inspection). |
 | `{"type":"abandoned"}` report from worker  | Read abandoned artifact; integrate partial work or spawn successor. |
 | Worker silent on branch for > heartbeat SLA | Passive `git log <branch>` once; if stale, surface to user. |
 
-**Three recovery actions, picked by root based on what the worker
-needs (not a fixed sequence):**
+**Inspection-confirmation gate (avoid premature re-dispatch).** To
+avoid hindering a worker that is still legitimately working, root
+MUST NOT re-dispatch, reset, or recover a worker based on a single
+observation. The protocol:
+
+1. **First observation** (e.g. progress commit > 5 min, or stuck dm):
+   — root notes the observation, replies or takes passive action.
+   Worker is given benefit of the doubt.
+2. **Second observation** (next decision point, after root has done
+   intervening work): root checks state again. If still unhealthy,
+   increment the confirmation counter.
+3. **Third observation confirms unhealthy state**: NOW root has
+   enough signal to act. Pick the recovery action below.
+
+This is **not** a fixed timer. "Three observations" means three
+actual checks at three separate decision points — not three rounds
+of `git log` in a tight loop. The decision points are: when root
+finishes its own current task, when worker emits a handoff, when
+root is about to integrate, etc. Slow workers get more time; the
+gate is about avoiding *false positives*, not about being fast.
+
+**Three recovery actions (only after 3+ confirmations):**
 
 1. **Continue.** Worker has a specific blocker only you can answer
    (missing decision, missing info, scope ambiguity). Reply via
