@@ -50,6 +50,10 @@ code lives here.
   the contract (trivial / productive / blocked / abandoned / dead
   worker). Verdict per turn + net assessment. Read this if you want
   to understand *why* the contract works, not just *what* it says.
+- `docs/MANUAL_BINARY_SWAP.md` — `mv` + `cp` procedure for replacing
+  the running jcode binary when `install.sh` fails with `Text file
+  busy`. Use this when the canary build is ready but the next session
+  needs to pick it up immediately.
 - Config templates under `config/*.example` are **reference only**. Live config
   lives in `~/.jcode/`. Use `skills/copy-from-jcode/copy-from-jcode.sh` to pull
   a machine's `~/.jcode/` into this repo.
