@@ -73,8 +73,13 @@ Class semantics:
 
 **Stale branch filtering.** The script defaults to `--since=24` hours;
 branches whose latest commit is older are hidden behind an
-`(N stale hidden)` note. Use `--include-stale` for the full list. This
-prevents ancient zombie branches from drowning real signal.
+`(N worker branch(es) hidden)` note. Use `--include-stale` for the full
+list. This prevents ancient zombie branches from drowning real signal.
+
+The hidden-count note uses the same wording for both filter outcomes:
+  - all hidden:  `(N worker branch(es) hidden by --since=H filter; ...)`
+  - some hidden: `(N worker branch(es) hidden; ...)` (the table above
+                 implies the filter via each row's rationale column)
 
 ## 2. Three-observation gate (avoid premature re-dispatch)
 
