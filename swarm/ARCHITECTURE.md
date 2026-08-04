@@ -161,6 +161,90 @@ For shared infrastructure changes (build, CI, deps), require
 
 ---
 
+## Root integration gates (after merging worker branches)
+
+Worker slice-level gates prove the slice behaves correctly. They do
+**not** prove the integrated main behaves correctly. Root owns the
+integration surface and must run additional gates after merging one or
+more worker branches.
+
+### Slice-level vs project-level gates
+
+| Level        | Owner    | Scope                  | Gates                                  |
+|--------------|----------|------------------------|----------------------------------------|
+| Slice-level  | worker   | The worker's branch    | `tsc / lint / jest` on changed files   |
+| Project-level| root     | The integrated main    | Full suite + cross-module typecheck    |
+| End-to-end   | root     | Deployed / smoke path  | Manual reproduction or scripted smoke  |
+
+A worker reporting `confidence: high` with slice-level gates green has
+done its job. It has not proven the integration works.
+
+### When root MUST run project-level gates
+
+- After merging **any** worker branch that touched shared surfaces
+  (`src/`, `lib/`, build config, CI config, dep manifests).
+- After merging **multiple** worker branches in one cycle (cross-cuts).
+- Before `git push origin main`.
+
+### Project-level gate set (default)
+
+The exact commands depend on the project. For a typical repo:
+
+1. **Full test suite**, not just changed-file tests. Cross-module
+   regressions do not surface in slice-level gates.
+2. **Typecheck** across the whole tree, not the worker's slice.
+3. **Lint** with the project's actual linter (not generic).
+4. **Build** the production artifact. Workers may have committed code
+   that compiles in isolation but breaks the build pipeline.
+5. **Dependency graph verification** for any `delete / rename / move`
+   operation — `git grep <old-symbol>` must return zero matches
+   across the whole repo (including docs, tests, configs).
+
+### Confidence downgrade rule
+
+If root cannot run a project-level gate (env missing, dep unavailable,
+CI not reachable), `root` downgrades its own integration confidence
+from `high` to `medium` and surfaces the gap in the user-facing
+integration report. Do **not** claim a green integration when only
+slice-level gates ran.
+
+### Integration report (root → user)
+
+After merging N worker branches, root emits a short typed integration
+report containing:
+
+- `merged_branches`: list of branch names + SHAs
+- `slice_gates_per_branch`: each worker's `validation` block, verbatim
+- `project_gates`: commands run + results
+- `integration_confidence`: `high | medium | low` based on whether all
+  gates ran
+- `push_status`: whether root pushed to `origin main`
+
+This report is the contract root ships to the user. A missing field
+means the integration is incomplete.
+
+---
+
+## Smart Postman (root-side worker observation)
+
+See [`docs/POSTMAN_PROTOCOL.md`](../docs/POSTMAN_PROTOCOL.md) for the
+full protocol. Summary:
+
+- Root observes worker state via `swarm-state-monitor.py tick` at
+  decision points (user message, worker handoff, before spawn /
+  integrate). LLM sessions have no real-time timer; "tick every 5
+  minutes" is aspirational, not enforceable.
+- Three separate decision points must agree on `silent` / `dead` before
+  root re-dispatches, resets, or spawns a recoverer.
+- Three recovery actions: `Continue` (dm with concrete next step),
+  `Reset` (stop + fresh spawn), `Recover` (recoverer role classifies
+  partial work).
+- Root emits a `docs/POSTMAN_SESSION_<ts>.md` snapshot when its own
+  context is at risk of overflow or it is about to issue substantive
+  worker dms. Snapshots are durable; new sessions read them on startup.
+
+---
+
 ## Path map (what lives where, after install)
 
 ```
