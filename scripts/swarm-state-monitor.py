@@ -20,6 +20,8 @@ turns that into chat messages, dm reminders, or recoverer spawns.
 Usage:
 
     python3 scripts/swarm-state-monitor.py tick          # full active-branch table
+    python3 scripts/swarm-state-monitor.py tick --since=1
+    python3 scripts/swarm-state-monitor.py tick --include-stale
     python3 scripts/swarm-state-monitor.py classify <branch>   # one branch
     python3 scripts/swarm-state-monitor.py list         # only branch names
 
@@ -73,6 +75,10 @@ THRESHOLDS = {
     "silent_min": int(__import__("os").environ.get("POSTMAN_SILENT_MIN", "15")),
     "dead_min": int(__import__("os").environ.get("POSTMAN_DEAD_MIN", "30")),
 }
+
+#: Default age window for tick output, in hours. Branches whose latest
+#: commit is older than this are hidden unless --include-stale is passed.
+DEFAULT_SINCE_HOURS = 24
 
 #: Regex to extract the artifact JSON block from a commit body.
 ARTIFACT_RE = re.compile(
@@ -320,7 +326,7 @@ CLASSIFICATION_RANK = {
 }
 
 
-def _format_table(states: list[BranchState]) -> str:
+def _format_table(states: list[BranchState], filter_rationale: str = "") -> str:
     if not states:
         return "(no worker branches found)"
     header = (
@@ -340,6 +346,8 @@ def _format_table(states: list[BranchState]) -> str:
         artifact = s.artifact_type or "—"
         conf = s.artifact_confidence or "—"
         rationale = s.rationale
+        if filter_rationale:
+            rationale = f"{rationale}; {filter_rationale}"
         lines.append(
             f"{branch:<48}  {cls:<13}  {age:>5}  "
             f"{artifact:<10}  {conf:<8}  {rationale}"
@@ -348,17 +356,60 @@ def _format_table(states: list[BranchState]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Age filter
+# ---------------------------------------------------------------------------
+
+
+def _apply_age_filter(
+    states: list[BranchState],
+    *,
+    since_hours: float,
+    include_stale: bool,
+) -> tuple[list[BranchState], str, int]:
+    """Apply the ``--since`` / ``--include-stale`` policy to ``states``.
+
+    Returns ``(visible, rationale, hidden_count)``. Branches without a known
+    commit age (``latest_age_min is None``) are always kept so that operators
+    see them rather than silently dropping them.
+    """
+    if include_stale:
+        return list(states), "--include-stale enabled", 0
+    cutoff_min = since_hours * 60
+    visible = [
+        state for state in states
+        if state.latest_age_min is None or state.latest_age_min <= cutoff_min
+    ]
+    hidden = len(states) - len(visible)
+    return visible, f"within --since={since_hours:g}h filter", hidden
+
+
+# ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 
 
-def cmd_tick(cwd: Path) -> int:
+def cmd_tick(
+    cwd: Path,
+    since_hours: float = DEFAULT_SINCE_HOURS,
+    include_stale: bool = False,
+) -> int:
     branches = _list_worker_branches(cwd)
     if not branches:
         print("(no worker branches found)")
         return 0
-    states = [collect_state(b, cwd) for b in branches]
-    print(_format_table(states))
+    all_states = [collect_state(b, cwd) for b in branches]
+    states, filter_rationale, hidden_count = _apply_age_filter(
+        all_states,
+        since_hours=since_hours,
+        include_stale=include_stale,
+    )
+
+    print(_format_table(states, filter_rationale))
+    if hidden_count:
+        print(
+            f"({hidden_count} stale branches hidden; "
+            "pass --include-stale to show all)"
+        )
     print()
     print(json.dumps(
         {"states": [s.to_dict() for s in states]},
@@ -389,7 +440,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("tick", help="classify all worker branches and emit a table")
+    p_tick = sub.add_parser(
+        "tick",
+        help="classify recent worker branches and emit a table",
+    )
+    p_tick.add_argument(
+        "--since",
+        type=float,
+        default=DEFAULT_SINCE_HOURS,
+        metavar="HOURS",
+        help="hide branches older than HOURS (default: 24)",
+    )
+    p_tick.add_argument(
+        "--include-stale",
+        action="store_true",
+        help="show all branches regardless of age",
+    )
     p_classify = sub.add_parser("classify", help="classify a single branch")
     p_classify.add_argument("branch")
     sub.add_parser("list", help="list worker branch names only")
@@ -404,7 +470,11 @@ def main() -> int:
     _ensure_git(cwd)
 
     if args.cmd == "tick":
-        return cmd_tick(cwd)
+        return cmd_tick(
+            cwd,
+            since_hours=args.since,
+            include_stale=args.include_stale,
+        )
     if args.cmd == "classify":
         return cmd_classify(args.branch, cwd)
     if args.cmd == "list":
