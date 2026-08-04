@@ -111,6 +111,18 @@ That report IS your artifact — see `~/.jcode/swarm-prompt.md` §12.
   `what_i_did_not_check: ["todo store recovery procedure"]`. Do not
   re-attempt the same `todo` write — it will be rejected identically.
   See `docs/TODO_STALL_RECOVERY.md`.
+- **Completion = report AND `complete_node` (both required).** As a
+  read-only role, your durable signal is the typed `report` body and
+  your live signal is the `complete_node` call that fires it. Skip
+  either half and root sits waiting on the dm channel forever. If you
+  can only fire one (e.g. `complete_node` is unavailable), fire the
+  other and surface the gap in `open_questions[]`.
+- **Cross-swarm probe on spawn.** Attempt one `dm <root_session_id>`
+  with payload `{"type":"hello","from":"reviewer"}`. On routing error,
+  switch to report-only mode: skip live dms, deliver the final verdict
+  via `report` only, and set `blockers[]` to
+  `["cross-swarm: dm channel unreachable, report-only mode"]`. Root's
+  passive inspection sees the report and integrates.
 
 If the root pings you mid-review via `dm`, reply with a `progress`
 payload (even a short one) so the root sees a live signal:

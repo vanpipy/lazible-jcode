@@ -111,6 +111,20 @@ skill_manage load <project-skill>     # e.g. /rn-dev
 - Don't run `pnpm install` / `pod install` inside the worktree — symlink from the main worktree, install there.
 - Don't commit to any branch other than `<worker_branch>`.
 - Don't `git push` — the root session owns integration + push.
+- **Don't treat the final commit as sufficient completion** — both the
+  `final` commit AND `complete_node` / `report` are required. Skipping
+  the live handoff leaves root waiting on the dm channel forever; the
+  artifact says `step: "complete"` so root has no reason to inspect
+  unprompted. This is the silent-stuck failure mode (Turn 5 of
+  `docs/LIVENESS_VALIDATION.md`).
+- **Don't skip the cross-swarm probe on spawn.** If your dm to
+  `<root_session_id>` returns a routing error, switch to commits-only
+  mode immediately — don't keep retrying dm calls that won't deliver.
+  Set the artifact's `blockers[]` to the cross-swarm marker so root's
+  passive inspection sees why no handoff arrived.
+- **Don't retry a `dm` after a routing error.** Routing errors are
+  persistent, not transient. Each retry costs a tool call and adds
+  noise; the commit channel is the fallback.
 
 ## Liveness contract (worker-driven)
 
@@ -144,6 +158,45 @@ This is a **worker-side obligation**, not a root-side poll. See
   `what_i_did_not_check: ["todo store recovery procedure"]`. Do not
   re-attempt the same `todo` write — it will be rejected identically.
   See `docs/TODO_STALL_RECOVERY.md`.
+
+### Completion = commit AND `complete_node` (both required)
+
+A worker reaches "completion" when **both** happen, in this order:
+
+1. **Final commit lands on `<worker_branch>`** with `type: "final"`
+   artifact (durable, survives worker death + cross-swarm + restart).
+2. **Live handoff fires**: `complete_node` (preferred) or `report` with
+   a typed body (wakes root in current context).
+
+Neither alone is "done". This is the silent-stuck trap: you commit
+final, then `complete_node` fails or you die before it returns; root
+sits waiting because the artifact says `step: "complete"`. Always fire
+**both** signals; if you can only fire one (e.g. `complete_node` is
+unavailable), fire the other and surface the gap in `open_questions[]`
+so root's passive inspection can detect which half survived.
+
+### Cross-swarm discoverability (probe on spawn)
+
+The dm channel between worker and root may be unreachable (e.g. worker
+session is in a different swarm than root). Detect this early:
+
+- On spawn, attempt one `dm <root_session_id>` with payload
+  `{"type":"hello","from":"worker","task_id":"..."}`.
+- If the dm returns a routing error or no ack, switch to **commits-only
+  mode** for the rest of the task:
+  - Continue emitting `progress` and `final` commits with honest
+    artifact fields.
+  - Set `blockers[]` to `["cross-swarm: dm channel unreachable,
+    commits-only mode"]` so root's inspection sees why no handoff
+    arrived.
+  - Surface cross-swarm status in the final `open_questions[]`.
+- Do NOT emit `{"type":"stuck"}` (it cannot be delivered) — the
+  artifact's `blockers[]` is the only signal that reaches root.
+
+This is the protocol that closes the cross-swarm gap from
+`docs/HEARTBEAT.md` §"Cross-swarm handoff gap". Root's mandatory passive
+inspection (`swarm-prompt.md` §12 root obligation 3) sees the commit
+and integrates.
 
 For the **final commit** (paired with `complete_node` / `report`), use:
 

@@ -11,6 +11,17 @@ done < <(find "$root" -type f -name '*.sh' -not -path '*/.git/*' -not -path '*/.
 if ! (cd "$root" && python3 -m unittest discover tests/); then
   failed=1
 fi
+# Liveness scenario simulation: exercises the silent-stuck recovery
+# path (worker commits final, dm dies, root detects via git log).
+if ! bash "$root/tests/liveness_scenario_sim.sh" >/dev/null; then
+  printf 'FAIL: liveness scenario simulation\n'
+  failed=1
+fi
+# Liveness contract structural check.
+if ! python3 "$root/scripts/check-liveness-contract.py"; then
+  printf 'FAIL: liveness contract structural check\n'
+  failed=1
+fi
 if (( failed == 0 )); then
   printf 'PASS: all shell syntax checks and Python tests\n'
 else
