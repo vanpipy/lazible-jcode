@@ -134,6 +134,44 @@ code lives here.
   it upstream first, then re-run `copy-from-jcode.sh` to refresh. Diverging
   silently makes the next re-sync non-trivial.
 
+## Mandatory root pre-action inspection (silent-stuck guard)
+
+The root session (main agent) **MUST** run `scripts/root-tick.sh` before
+**any** of the following actions:
+
+- merging a worker branch into the integration target (e.g. `git merge --no-ff
+  feat/<name>_<short-sha>`)
+- spawning a new worker on top of an active branch
+- declaring a session's task complete in chat to the user
+- re-running `install.sh` after a worker has touched the install / patch path
+
+This is not a poll and not a scheduled self-wakeup. It is the root agent's
+pre-action gate. The wrapper enforces the silent-stuck discipline that was
+violated in the postman-framework-hardening session: a worker can commit a
+`final` artifact without calling `complete_node`, and without the gate the
+branch rots indefinitely.
+
+Exit code semantics:
+
+- `0` -- no worker action needed; safe to integrate / spawn
+- `1` -- at least one branch has `recommended_action` in
+  `{integrate-now, investigate, dm-heartbeat-reminder}`; root must act
+  directly on the branch listed in the `action` column
+- `2` -- at least one branch is silent / dead / has no commits; spawn a
+  recoverer worker per `docs/POSTMAN_PROTOCOL.md`
+- `3` -- git missing or not a repo (early exit, no action possible)
+
+Do NOT integrate a branch whose tick output shows `integrate-now` without
+first verifying its gate (test/typecheck/lint/build) directly on the commit
+-- the in-session evidence requirement is unchanged. The tick exit code
+tells you *that* integration is needed; the gate evidence tells you *whether*
+the work is ready to integrate.
+
+Rationale: see `docs/POSTMAN_PROTOCOL.md` (root-side protocol that consumes
+this output) and `docs/HEARTBEAT.md` (worker-side obligation this
+complements). The overlay's §12 root obligation 3 ("passive inspection at
+every decision point") is mechanicalized by this wrapper.
+
 ## Logs / state
 
 - No runtime state lives in this repo.
@@ -154,11 +192,16 @@ bash -n scripts/build-jcode-canary.sh
 bash -n scripts/sync-jcode-source.sh
 bash -n skills/install-jcode/jcode-install.sh
 bash -n skills/copy-from-jcode/copy-from-jcode.sh
-bash -n scripts/test_install_idempotent.sh
+bash -n scripts/root-tick.sh
 # IDEMPOTENT flag regression — runs install.sh twice in each mode against a
 # fake repo under $TMPDIR. Asserts non-idempotent rerun creates .bak files,
 # idempotent rerun leaves them alone.
 bash scripts/test_install_idempotent.sh
+# Smart-postman regression — silent-stuck detection (final commit, no handoff,
+# past handoff-pending window → recommended_action = integrate-now → exit 1).
+# Catches the discipline gap that caused the postman-framework-hardening
+# silent-stuck failure mode (worker committed final but root never noticed).
+python3 -m unittest scripts.test_swarm_state_monitor scripts.test_root_tick
 # Verify the patch still applies to upstream jcode
 git clone --depth 1 https://github.com/1jehuang/jcode.git /tmp/jcode-verify
 (cd /tmp/jcode-verify && git apply --check jcode-patches/swarm-coordinator-first.patch)

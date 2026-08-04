@@ -9,6 +9,13 @@ config/mcp.json
 # per-skill local overrides (never committed)
 skills/*/SKILL.md.local
 
+# swarm runtime state — worker spawn manifests + scope files. These contain
+# machine-specific paths (worktree locations, branch SHAs) and must never
+# reach git. The example conflict-config.yaml.example is the only file
+# under .jcode/ that should ever be committed.
+.jcode/*
+!.jcode/*.example
+
 # macOS
 .DS_Store
 
