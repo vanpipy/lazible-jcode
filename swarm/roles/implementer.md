@@ -101,6 +101,26 @@ each field should read.
 }
 ```
 
+**`dependencies` field (optional).** When your work needs another
+worker's commit before you can complete, declare it as a list of
+`{branch, commit, why}` objects. For example:
+
+```json
+{
+  "dependencies": [
+    {"branch": "feat/api-shape_abc1234", "commit": "abc1234",
+     "why": "needs the new /v2/channels endpoint signature"}
+  ]
+}
+```
+
+Root will see the `dependencies[]` field in your artifact, merge the
+named branch first, rebase your worktree onto the merged result, and
+resume you. Most commits have no deps; leave the field out when your
+work is independent. The validator
+(`scripts/artifact_schema.py:validate`) will check that each entry has
+the three required keys as strings.
+
 ## Skills to load
 
 ```
