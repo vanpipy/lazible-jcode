@@ -124,6 +124,12 @@ class BranchState:
     artifact_confidence: Optional[str] = None
     classification: Optional[str] = None  # healthy/progressing/quiet/silent/dead
     rationale: str = ""
+    # Commits on this branch NOT reachable from main. Used to distinguish
+    # "branch tip is in main's history" (rebase state or fresh-alloc — the
+    # branch is just at main HEAD, no real worker output) from "branch has
+    # its own commits" (worker actually committed, possibly without artifact).
+    # Populated by collect_state via `git rev-list --count main..<branch>`.
+    commits_ahead_of_main: int = 0
     # Recommended root action — what root should *do* about this branch.
     # Distinct from `classification` (which describes state). Possible values:
     #   observe                 — fresh commit, handoff may still be in flight
@@ -153,6 +159,7 @@ class BranchState:
             "classification": self.classification,
             "rationale": self.rationale,
             "recommended_action": self.recommended_action,
+            "commits_ahead_of_main": self.commits_ahead_of_main,
         }
 
 
@@ -235,6 +242,41 @@ def _commit_body(cwd: Path, branch: str) -> str:
     if rc != 0:
         return ""
     return out
+
+
+def _commits_ahead_of_main(cwd: Path, branch: str) -> int:
+    """Count commits on `branch` not reachable from `main`.
+
+    Returns 0 if `main` does not exist (no integration target) or if the
+    branch is fully contained in `main`'s history (e.g. a freshly
+    allocated worktree that has only fast-forwarded onto main HEAD via
+    rebase). Returns a positive integer if the worker has actually
+    committed something not yet on main.
+    """
+    rc, out, _ = _git(["rev-list", "--count", f"main..{branch}"], cwd)
+    if rc != 0 or not out.strip():
+        return 0
+    try:
+        return max(0, int(out.strip()))
+    except ValueError:
+        return 0
+
+
+def _branch_family(branch_name: str) -> str:
+    """Strip the trailing ``_<short-sha>`` suffix from a worker branch.
+
+    Worker branches follow the convention ``<type>/<label>_<short-sha>``
+    where ``<short-sha>`` is a 7-character hex fragment of the base
+    commit SHA. After the worker rebases onto a newer main HEAD, the
+    local ref may still carry the *original* short-sha while the
+    worker's artifact now uses the *new* short-sha. The family (``type``
+    + ``label``) is what identifies the worker across rebase; the
+    short-sha suffix is just a base-SHA marker.
+    """
+    head, _, tail = branch_name.rpartition("_")
+    if len(tail) == 7 and all(c in "0123456789abcdef" for c in tail.lower()):
+        return head
+    return branch_name
 
 
 def _parse_artifact(body: str) -> dict:
@@ -371,7 +413,33 @@ def classify(state: BranchState, age_min: Optional[int]) -> None:
         return
 
     # Truly missing artifact — worker forgot the block, or this branch
-    # has a non-worker-style commit. Treat as investigate.
+    # has a non-worker-style commit. BUT first, distinguish two cases:
+    #
+    # (a) Branch has zero commits ahead of main. The branch tip is just
+    #     main HEAD (a fresh-alloc or a post-rebase fast-forward). No
+    #     real worker output yet — this is `observe`, not `investigate`.
+    #
+    # (b) Branch has commits ahead of main, but the tip lacks an artifact.
+    #     Worker committed but forgot the block. Genuine anomaly —
+    #     `investigate` (or `recover` past SLAs).
+    if state.commits_ahead_of_main == 0:
+        # Branch is fully contained in main's history. No worker output.
+        if age_min >= dead_threshold:
+            state.classification = "dead"
+            state.rationale = (
+                f"branch has no commits ahead of main; "
+                f"latest tip {age_min}m ago, past dead SLA"
+            )
+            state.recommended_action = "recover"
+        else:
+            state.classification = "quiet"
+            state.rationale = (
+                f"branch tip is main HEAD (no commits ahead of main); "
+                f"waiting for worker to commit"
+            )
+            state.recommended_action = "observe"
+        return
+
     if age_min >= dead_threshold:
         state.classification = "dead"
         state.rationale = (
@@ -408,6 +476,7 @@ def collect_state(branch: str, cwd: Path) -> BranchState:
     state.has_commits = True
     age = _commit_age_minutes(cwd, branch)
     state.latest_age_min = age
+    state.commits_ahead_of_main = _commits_ahead_of_main(cwd, branch)
     body = _commit_body(cwd, branch)
     artifact = _parse_artifact(body)
     state.artifact_step = artifact.get("step")
@@ -423,7 +492,22 @@ def collect_state(branch: str, cwd: Path) -> BranchState:
     # Without this guard, every newly-allocated worker branch looked like
     # it had a stale `final` artifact (with handoff overdue) until the
     # worker actually committed.
-    if artifact_branch and artifact_branch != branch:
+    #
+    # Two non-stale cases are accepted even when the names differ:
+    #   - Same branch family (everything before the trailing _<short-sha>
+    #     suffix), but different short-sha. Typical after the worker
+    #     rebased onto a newer main HEAD and updated the artifact's
+    #     `branch` field but did not rename the local ref. The ref and
+    #     artifact still describe the same worker.
+    #   - Exact match.
+    artifact_branch_matches = (
+        artifact_branch == branch
+        or (
+            artifact_branch is not None
+            and _branch_family(artifact_branch) == _branch_family(branch)
+        )
+    )
+    if artifact_branch and not artifact_branch_matches:
         state.artifact_type = None
     else:
         state.artifact_type = artifact.get("type")
