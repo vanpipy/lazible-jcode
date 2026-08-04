@@ -179,6 +179,43 @@ class TestTickAgeFilter(unittest.TestCase):
         self.assertNotIn("stale branches hidden", output)
         self.assertIn("--include-stale enabled", output)
 
+    def test_all_filtered_uses_single_clean_message(self) -> None:
+        """When --since hides every branch, tick must NOT print the
+        misleading '(no worker branches found)' header (which would imply
+        there are no branches at all). It should print a single line
+        explaining all are filtered, and not print the table or json.
+        """
+        states = {
+            "feat/old1_abcdef0": self._state(
+                "feat/old1_abcdef0", 120, "progress", "dead"
+            ),
+            "feat/old2_abcdef0": self._state(
+                "feat/old2_abcdef0", 200, "final", "silent"
+            ),
+            "feat/old3_abcdef0": self._state(
+                "feat/old3_abcdef0", 90, "progress", "dead"
+            ),
+        }
+
+        exit_code, output = self._run_tick(states, since_hours=1)
+
+        self.assertEqual(exit_code, 0)
+        # Should NOT contain the misleading header.
+        self.assertNotIn("(no worker branches found)", output)
+        # Should contain the all-hidden explanation.
+        self.assertIn(
+            "(3 worker branch(es) hidden by --since=1h filter; "
+            "pass --include-stale to show all)",
+            output,
+        )
+        # Should NOT also print the per-row "(N stale branches hidden; ...)"
+        # duplicate message — cmd_tick returns early in this case.
+        self.assertNotIn("(3 stale branches hidden;", output)
+        # The branches themselves should not appear (they are filtered).
+        self.assertNotIn("feat/old1_abcdef0", output)
+        self.assertNotIn("feat/old2_abcdef0", output)
+        self.assertNotIn("feat/old3_abcdef0", output)
+
 
 class TestTickCLI(unittest.TestCase):
     def _run_main(self, argv: list[str]) -> mock.Mock:
