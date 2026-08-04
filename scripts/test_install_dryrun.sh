@@ -49,6 +49,7 @@ $jcode_home/swarm-prompt.md|$EXPECTED_DRYRUN_REPO/swarm/swarm-prompt.md
 $jcode_home/ARCHITECTURE.md|$EXPECTED_DRYRUN_REPO/swarm/ARCHITECTURE.md
 $jcode_home/roles|$EXPECTED_DRYRUN_REPO/swarm/roles
 $jcode_home/AGENTS.md|$EXPECTED_DRYRUN_REPO/AGENTS.md
+$jcode_home/scripts|$EXPECTED_DRYRUN_REPO/scripts
 EOF
 
     local skill_linked=0

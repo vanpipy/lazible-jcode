@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/install.sh — lazible-jcode installer.
 #
-# Linear, unconditional, overwrite-by-default. Runs 4 steps every time:
+# Linear, unconditional, overwrite-by-default. Runs 5 steps every time:
 #   1. Install jcode binary to ~/.local/bin/jcode
 #        - If jcode-patches/*.patch exists, build a canary from those patches
 #          and replace ~/.local/bin/jcode (backup the old one as jcode.bak.<ts>)
@@ -10,17 +10,20 @@
 #   2. Symlink overlay + swarm config into ~/.jcode/
 #   3. Symlink every skills/<name>/SKILL.md into ~/.jcode/skills/<name>
 #   4. Symlink AGENTS.md to ~/.jcode/AGENTS.md
+#   5. Symlink scripts/ into ~/.jcode/scripts/ and add ~/.jcode/scripts/ to PATH
+#      so swarm-state-monitor.py + check-*.py + conflict-detect.py are reachable
+#      from any cwd (not just the lazible-jcode checkout).
 #
 # No flags control which step runs or whether to overwrite. Overwriting is the
 # point. Existing files at the destination are always backed up to <dst>.bak.<ts>
 # before being replaced, so rerunning this script is safe.
 #
-# Opt-in: set IDEMPOTENT=1 to skip the symlink steps (2/3/4) when their target
+# Opt-in: set IDEMPOTENT=1 to skip the symlink steps (2/3/4/5) when their target
 # is already a symlink pointing at the right source. Step 1 (the jcode binary)
 # always runs. See --help for details.
 #
 # Usage:
-#   ./scripts/install.sh                          # run all 4 steps with defaults
+#   ./scripts/install.sh                          # run all 5 steps with defaults
 #   ./scripts/install.sh --canary-version v0.65.0 # pin jcode tag for the canary build
 #   ./scripts/install.sh --clean                  # wipe source-dir before canary build
 #   ./scripts/install.sh --help                   # show usage
@@ -54,7 +57,7 @@ print_help() {
   cat <<EOF
 Usage: $0 [options]
 
-Linear install of jcode + lazible-jcode overlay. Runs 4 steps every time and
+Linear install of jcode + lazible-jcode overlay. Runs 5 steps every time and
 overwrites the destination unconditionally:
 
   1. Install jcode binary to ~/.local/bin/jcode
@@ -64,13 +67,16 @@ overwrites the destination unconditionally:
      into ~/.jcode/
   3. Symlink each skills/<name> into ~/.jcode/skills/<name>
   4. Symlink AGENTS.md to ~/.jcode/AGENTS.md
+  5. Symlink scripts/ into ~/.jcode/scripts/ and add ~/.jcode/scripts/ to PATH
+     so swarm-state-monitor.py, conflict-detect.py, check-*.py are reachable
+     from any cwd
 
 Existing files at any destination are backed up to <dst>.bak.<timestamp> before
 being replaced, so rerunning is safe.
 
 Environment variables:
   IDEMPOTENT=1           Opt into skip-if-unchanged mode for the symlink steps
-                         (2/3/4). When set, already-correct symlinks are left
+                         (2/3/4/5). When set, already-correct symlinks are left
                          in place and 'skipping: <reason>' is printed instead
                          of backing them up + re-linking. Step 1 (the jcode
                          binary install) still runs every time — its own
@@ -125,7 +131,7 @@ INSTALL_DIR="${JCODE_INSTALL_DIR:-$HOME/.local/bin}"
 TIMESTAMP="$(date +%s)"
 
 # IDEMPOTENT opt-in env var. When set to a non-zero, non-empty value, the
-# symlink steps (2/3/4) skip already-correct links instead of backing them up
+# symlink steps (2/3/4/5) skip already-correct links instead of backing them up
 # and overwriting. Default 0 preserves the original "overwrite unconditionally"
 # behavior. The jcode binary install (step 1) is not affected: that step still
 # always runs and is handled by the upstream installer / canary builder, which
@@ -177,7 +183,7 @@ maybe_overwrite_link() {
 }
 
 # ── step 1: install jcode binary ──────────────────────────────────────────────
-info "── step 1/4: install jcode binary ──"
+info "── step 1/5: install jcode binary ──"
 mkdir -p "$INSTALL_DIR"
 
 # Detect canary mode by the presence of jcode-patches/*.patch. If any exist,
@@ -205,7 +211,7 @@ else
 fi
 
 # ── step 2: overlay + swarm config ─────────────────────────────────────────────
-info "── step 2/4: overlay + swarm config ──"
+info "── step 2/5: overlay + swarm config ──"
 mkdir -p "$JCODE_HOME" "$JCODE_HOME/roles"
 maybe_overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md" "prompt-overlay.md"
 maybe_overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"   "swarm-prompt.md"
@@ -219,7 +225,7 @@ if [[ -f "$repo_root/docs/HEARTBEAT.md" ]]; then
 fi
 
 # ── step 3: skills ────────────────────────────────────────────────────────────
-info "── step 3/4: skills ──"
+info "── step 3/5: skills ──"
 mkdir -p "$JCODE_HOME/skills"
 skill_count=0
 for skill_dir in "$repo_root/skills"/*; do
@@ -232,8 +238,34 @@ done
 info "linked $skill_count skill(s)"
 
 # ── step 4: AGENTS.md ─────────────────────────────────────────────────────────
-info "── step 4/4: AGENTS.md ──"
+info "── step 4/5: AGENTS.md ──"
 maybe_overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
+
+# ── step 5: scripts/ ──────────────────────────────────────────────────────────
+# Wire the framework's helper scripts (swarm-state-monitor.py, conflict-detect.py,
+# check-*.py, install-dryrun.sh, the test-*.sh harness, etc.) into ~/.jcode/scripts/
+# so they are reachable on the production path — not just from this checkout's cwd.
+# This is what lets the swarm root session call `swarm-state-monitor.py tick` (or
+# `python3 ~/.jcode/scripts/swarm-state-monitor.py tick`) from any directory.
+info "── step 5/5: scripts/ ──"
+maybe_overwrite_link "$repo_root/scripts" "$JCODE_HOME/scripts" "scripts/"
+
+# After linking, add ~/.jcode/scripts/ to PATH so users can call the scripts by
+# name from any cwd. configure_path.sh is idempotent: it grep-checks each rc
+# file for the install_dir and only appends when missing, so re-running this
+# step never duplicates the export line.
+configure_path_lib="$repo_root/scripts/lib/configure_path.sh"
+if [[ -f "$configure_path_lib" ]]; then
+  # shellcheck disable=SC1091
+  . "$configure_path_lib"
+  if command -v jcode_configure_path >/dev/null 2>&1; then
+    jcode_configure_path "$JCODE_HOME/scripts"
+  else
+    warn "jcode_configure_path not defined in $configure_path_lib — skipping PATH edit"
+  fi
+else
+  warn "configure_path.sh missing at $configure_path_lib — skipping PATH edit"
+fi
 
 # ── summary ────────────────────────────────────────────────────────────────────
 info "✅ lazible-jcode install complete."
@@ -243,6 +275,7 @@ info "   jcode home:     $JCODE_HOME"
 info "   overlay:        $JCODE_HOME/prompt-overlay.md → $repo_root/swarm/prompt-overlay.md"
 info "   architecture:   $JCODE_HOME/ARCHITECTURE.md → $repo_root/swarm/ARCHITECTURE.md"
 info "   AGENTS.md:      $JCODE_HOME/AGENTS.md → $repo_root/AGENTS.md"
+info "   scripts:        $JCODE_HOME/scripts → $repo_root/scripts (added to PATH)"
 info ""
 info "Tip: re-running with IDEMPOTENT=1 skips symlinks that already point at"
 info "     the right target — no backups, no rewrites. See --help for details."
