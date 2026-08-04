@@ -49,6 +49,12 @@ touch "$FAKE_REPO/swarm/ARCHITECTURE.md"
 touch "$FAKE_REPO/swarm/roles/.gitkeep"
 touch "$FAKE_REPO/skills/install-jcode/.gitkeep"
 touch "$FAKE_REPO/skills/test-skill/SKILL.md"
+# Mirror scripts/lib/configure_path.sh so step 5 exercises the real
+# jcode_configure_path call (not the "missing → skip" warn path). The fake
+# install writes the export line to $FAKE_HOME's bashrc, which is fine — the
+# fake HOME is wiped on EXIT.
+mkdir -p "$FAKE_REPO/scripts/lib"
+cp "$REPO_ROOT/scripts/lib/configure_path.sh" "$FAKE_REPO/scripts/lib/configure_path.sh"
 
 # Stub installers — neither needs network. Step 1 of install.sh picks the
 # canary builder when jcode-patches/*.patch exists; since we keep that
@@ -114,6 +120,14 @@ HOME="$FAKE_HOME" IDEMPOTENT=1 bash "$FAKE_REPO/scripts/install.sh" >"$TMP/mode_
 BAKS_B2="$(count_baks)"
 info "Mode B run 2 produced $BAKS_B2 .bak.<ts> file(s) (expected: same as B1=$BAKS_B1)"
 [[ "$BAKS_B2" == "$BAKS_B1" ]] || fail "idempotent rerun should not create new .bak files (B1=$BAKS_B1, B2=$BAKS_B2)"
+
+# Step-5 idempotency: the new scripts/ symlink (step 5 of install.sh) must not
+# be backed up on an idempotent rerun. The skip count check above only proves
+# "no new .bak files anywhere" generically; this pinpoints the new step.
+[[ -L "$JCODE_HOME/scripts" ]] || fail "scripts/ should be a symlink after first install (step 5)"
+[[ ! -e "$JCODE_HOME/scripts.bak."* ]] \
+  || fail "idempotent rerun must not back up the scripts/ symlink (found $JCODE_HOME/scripts.bak.*)"
+info "Mode B scripts/ idempotency: linked=$JCODE_HOME/scripts → $(readlink "$JCODE_HOME/scripts"), no .bak file"
 
 # Every linked target should be in the skipping log.
 SKIP_COUNT=$(grep -c '^.*skipping:' "$TMP/mode_b_run2.log" || true)
