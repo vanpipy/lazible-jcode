@@ -10,6 +10,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from typing import Optional
 from unittest import mock
 
 
@@ -174,6 +175,107 @@ class TestRecommendedAction(unittest.TestCase):
             self.assertEqual(state2.recommended_action, "observe")
         finally:
             del os.environ["HANDOFF_PENDING_MIN"]
+
+
+class TestStaleArtifactCrossCheck(unittest.TestCase):
+    """Regression tests for the branch cross-check in collect_state.
+
+    The failure mode: a fresh worker branch's tip is the base commit,
+    which may carry an artifact from a *different* branch's worker
+    (e.g. the previous PR's cherry-pick). Without the cross-check, the
+    classifier sees that artifact as fresh and triggers `integrate-now`
+    on every newly-allocated branch — false positive for silent-stuck.
+
+    These tests pin the cross-check: artifact.branch must match the
+    state.branch for the artifact to be trusted.
+    """
+
+    def _state_with_branch(
+        self,
+        state_branch: str,
+        artifact_branch: str,
+        artifact_type: Optional[str] = "final",
+    ) -> BranchState:
+        """Build a BranchState as if collect_state had populated it."""
+        state = monitor.BranchState(
+            branch=state_branch,
+            has_commits=True,
+            latest_commit="a" * 40,
+            latest_age_min=10,
+            artifact_type=artifact_type,
+            artifact_branch=artifact_branch,
+            artifact_confidence="high",
+        )
+        return state
+
+    def test_matching_artifact_branch_is_trusted(self) -> None:
+        """Same branch → artifact is fresh and trusted."""
+        # The cross-check lives in collect_state, not classify(). Simulate
+        # the result of collect_state when artifact_branch matches: the
+        # artifact_type is preserved. classify() then drives the action.
+        state = monitor.BranchState(
+            branch="feat/w_abcdef0",
+            has_commits=True,
+            latest_commit="a" * 40,
+            latest_age_min=10,
+            artifact_type="final",
+            artifact_branch="feat/w_abcdef0",
+            artifact_confidence="high",
+        )
+        monitor.classify(state, 10)
+        # final + past handoff-pending window (10m > 1m) → integrate-now
+        self.assertEqual(state.recommended_action, "integrate-now")
+
+    def test_mismatched_artifact_branch_is_treated_as_no_artifact(self) -> None:
+        """Different branch → artifact is stale, action is `observe`.
+
+        This is the silent-stuck false positive: a fresh branch whose tip
+        inherits a previous worker's artifact used to be classified as
+        `integrate-now` (because the artifact said `final`). With the
+        cross-check, the stale artifact is dropped and the branch sits
+        at `quiet / observe` until the real worker commits.
+        """
+        state = self._state_with_branch(
+            state_branch="feat/new_abcdef0",
+            artifact_branch="feat/old_abcdef0",
+            artifact_type="final",
+        )
+        # Simulate what collect_state does on mismatch: drop artifact_type
+        state.artifact_type = None
+        monitor.classify(state, 10)
+        # With stale artifact dropped → quiet / observe (waiting for worker)
+        self.assertEqual(state.classification, "quiet")
+        self.assertEqual(state.recommended_action, "observe")
+        self.assertIn("stale", state.rationale)
+        self.assertIn("feat/old_abcdef0", state.rationale)
+
+    def test_truly_missing_artifact_is_investigate(self) -> None:
+        """No artifact block at all → investigate (worker may have forgotten)."""
+        state = monitor.BranchState(
+            branch="feat/w_abcdef0",
+            has_commits=True,
+            latest_commit="a" * 40,
+            latest_age_min=5,
+            artifact_type=None,
+            artifact_branch=None,
+            artifact_confidence=None,
+        )
+        monitor.classify(state, 5)
+        self.assertEqual(state.recommended_action, "investigate")
+        self.assertNotIn("stale", state.rationale)
+
+    def test_artifact_branch_field_is_populated(self) -> None:
+        """The `artifact_branch` field round-trips through to_dict.
+
+        Root operators reading the JSON output need this field to debug
+        stale-artifact situations.
+        """
+        state = monitor.BranchState(
+            branch="feat/w_abcdef0",
+            artifact_branch="feat/old_abcdef0",
+        )
+        d = state.to_dict()
+        self.assertEqual(d["artifact_branch"], "feat/old_abcdef0")
 
 
 class TestArtifactParsing(unittest.TestCase):

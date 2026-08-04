@@ -118,6 +118,7 @@ class BranchState:
     latest_commit: Optional[str] = None
     latest_age_min: Optional[int] = None
     artifact_type: Optional[str] = None  # "progress" / "final" / None
+    artifact_branch: Optional[str] = None  # `branch` field in artifact (for stale cross-check)
     artifact_step: Optional[str] = None
     artifact_next: Optional[str] = None
     artifact_confidence: Optional[str] = None
@@ -145,6 +146,7 @@ class BranchState:
             "latest_commit": self.latest_commit,
             "latest_age_min": self.latest_age_min,
             "artifact_type": self.artifact_type,
+            "artifact_branch": self.artifact_branch,
             "artifact_step": self.artifact_step,
             "artifact_next": self.artifact_next,
             "artifact_confidence": self.artifact_confidence,
@@ -340,7 +342,36 @@ def classify(state: BranchState, age_min: Optional[int]) -> None:
             state.recommended_action = "observe"
         return
 
-    # No artifact in the commit body.
+    # No artifact in the commit body. The tip either has no artifact
+    # block (worker forgot to add one), or carries an artifact from a
+    # *different* branch's worker (stale — see collect_state's branch
+    # cross-check). Stale artifacts are expected right after `alloc`:
+    # the branch tip is the base commit, which carries a previous
+    # worker's artifact until this branch's worker commits. That's
+    # `observe`, not `investigate`. A truly missing artifact (worker
+    # forgot the block) is `investigate`.
+    if state.artifact_branch:
+        # Stale artifact from a different branch's worker. Expected
+        # state right after alloc.
+        if age_min >= dead_threshold:
+            state.classification = "dead"
+            state.rationale = (
+                f"commit {age_min}m ago without artifact, past dead SLA "
+                f"(stale artifact from another branch: "
+                f"{state.artifact_branch!r})"
+            )
+            state.recommended_action = "recover"
+        else:
+            state.classification = "quiet"
+            state.rationale = (
+                f"branch tip is base commit (stale artifact from "
+                f"{state.artifact_branch!r}); waiting for worker to commit"
+            )
+            state.recommended_action = "observe"
+        return
+
+    # Truly missing artifact — worker forgot the block, or this branch
+    # has a non-worker-style commit. Treat as investigate.
     if age_min >= dead_threshold:
         state.classification = "dead"
         state.rationale = (
@@ -379,10 +410,23 @@ def collect_state(branch: str, cwd: Path) -> BranchState:
     state.latest_age_min = age
     body = _commit_body(cwd, branch)
     artifact = _parse_artifact(body)
-    state.artifact_type = artifact.get("type")
     state.artifact_step = artifact.get("step")
     state.artifact_next = artifact.get("next")
     state.artifact_confidence = artifact.get("confidence")
+    artifact_branch = artifact.get("branch")
+    state.artifact_branch = artifact_branch
+
+    # Cross-check: only trust the artifact if its `branch` field matches
+    # the current branch. A fresh branch's tip is the base commit, which
+    # may carry an artifact from a *different* branch's worker — that's
+    # stale and must not trigger integrate-now / silent-stuck handling.
+    # Without this guard, every newly-allocated worker branch looked like
+    # it had a stale `final` artifact (with handoff overdue) until the
+    # worker actually committed.
+    if artifact_branch and artifact_branch != branch:
+        state.artifact_type = None
+    else:
+        state.artifact_type = artifact.get("type")
     classify(state, age)
     return state
 
