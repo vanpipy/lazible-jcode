@@ -612,6 +612,75 @@ class TestWorktreeSwarmE2E(unittest.TestCase):
         self.assertEqual(landed, 3)
         self.assertEqual(loss_rate, 0.0, "loss rate must be 0%")
 
+    # ── R11 ─────────────────────────────────────────────────────────────────
+    def test_r11_alloc_rejects_malformed_base(self):
+        """Round 11: `alloc <name> --base xyz` (non-hex) must exit non-zero
+        with stderr that contains "not a valid SHA".
+
+        Pre-flight validation should reject malformed SHA strings before
+        the deep `git worktree add` call, so the user gets a clear error
+        instead of a confusing git-stack error."""
+        rc, out, err = run_script("alloc", "r11", "--type", "feat", "--base", "xyz")
+        self.assertNotEqual(
+            rc, 0,
+            f"alloc with malformed --base must exit non-zero: rc={rc} stdout={out!r}",
+        )
+        self.assertIn(
+            "not a valid SHA", err,
+            f"stderr must mention 'not a valid SHA': {err!r}",
+        )
+        self.assertEqual(out, "", f"stdout must be empty on error: {out!r}")
+        # No worktree should have been created and manifest should not have grown
+        self.assertEqual(manifest_workers(), [],
+                         "malformed --base must not register a worker")
+
+    # ── R12 ─────────────────────────────────────────────────────────────────
+    def test_r12_alloc_rejects_nonexistent_commit(self):
+        """Round 12: `alloc <name> --base 0000...0000` (well-formed hex but
+        no such commit in this repo) must exit non-zero with stderr that
+        contains "not a known commit".
+
+        Pre-flight validation should reject well-formed-but-nonexistent
+        SHAs before the deep `git worktree add` call."""
+        nonexistent = "0" * 40
+        rc, out, err = run_script("alloc", "r12", "--type", "feat", "--base", nonexistent)
+        self.assertNotEqual(
+            rc, 0,
+            f"alloc with nonexistent --base must exit non-zero: rc={rc} stdout={out!r}",
+        )
+        self.assertIn(
+            "not a known commit", err,
+            f"stderr must mention 'not a known commit': {err!r}",
+        )
+        self.assertEqual(out, "", f"stdout must be empty on error: {out!r}")
+        self.assertEqual(manifest_workers(), [],
+                         "nonexistent --base must not register a worker")
+
+    # ── R13 ─────────────────────────────────────────────────────────────────
+    def test_r13_alloc_accepts_valid_base(self):
+        """Round 13: `alloc <name> --base <HEAD sha>` with a valid commit
+        must exit 0 and produce a worktree visible via `git worktree list`."""
+        sha = short_sha()
+        rc, out, err = run_script("alloc", "r13", "--type", "feat", "--base", sha)
+        self.assertEqual(rc, 0, f"alloc with valid --base failed: stderr={err!r}")
+        wt_path, branch = parse_alloc_output(out)
+
+        self.assertTrue(Path(wt_path).exists(),
+                        f"worktree path missing: {wt_path}")
+        self.assertTrue(branch.startswith("feat/r13_"),
+                        f"unexpected branch: {branch}")
+
+        # git worktree list must contain this worktree
+        r = git("worktree", "list", cwd=REPO_ROOT)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn(wt_path, r.stdout,
+                      f"git worktree list missing worktree: {r.stdout!r}")
+
+        # Cleanup
+        label = f"feat-r13-{sha}"
+        run_script("teardown", label)
+        self.assertEqual(manifest_workers(), [], "manifest not empty after teardown")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
