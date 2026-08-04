@@ -202,6 +202,10 @@ bash scripts/test_install_idempotent.sh
 # Catches the discipline gap that caused the postman-framework-hardening
 # silent-stuck failure mode (worker committed final but root never noticed).
 python3 -m unittest scripts.test_swarm_state_monitor scripts.test_root_tick
+# Every shell script under `scripts/` and `skills/` is executable (catches
+# chmod regressions where a fresh checkout lands with non-executable scripts
+# and the `bash scripts/...` invocations above silently fail to load):
+python3 -m unittest scripts.test_exec_bits
 # Verify the patch still applies to upstream jcode
 git clone --depth 1 https://github.com/1jehuang/jcode.git /tmp/jcode-verify
 (cd /tmp/jcode-verify && git apply --check jcode-patches/swarm-coordinator-first.patch)
