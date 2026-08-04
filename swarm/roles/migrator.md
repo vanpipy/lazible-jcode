@@ -121,6 +121,19 @@ steps. See `~/.jcode/swarm-prompt.md` §12.
   `what_i_did_not_check: ["todo store recovery procedure"]`. Do not
   re-attempt the same `todo` write — it will be rejected identically.
   See `docs/TODO_STALL_RECOVERY.md`.
+- **Completion = commit AND `complete_node` (both required).** Long
+  migration runs amplify the silent-stuck trap: you commit `final`
+  after the last atomic step, then `complete_node` fails or you die
+  before it returns; root sits waiting while the artifact says
+  `step: "complete"`. Always fire both signals. If only one can fire
+  (e.g. cross-swarm), surface the gap in `open_questions[]` so root's
+  passive inspection sees which half survived.
+- **Cross-swarm probe on spawn.** Attempt one `dm <root_session_id>`
+  with payload `{"type":"hello","from":"migrator"}`. On routing error,
+  switch to commits-only mode: keep emitting `progress` and `final`
+  commits with honest artifact fields, set `blockers[]` to the
+  cross-swarm marker, and skip live dms. Root's passive inspection
+  picks up the commit and integrates.
 
 Use `type: "progress"` between atomic steps with `step` naming the
 current step number (e.g. `"step": "atomic 2/7: rename Foo → Bar in

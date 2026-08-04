@@ -120,6 +120,17 @@ a typed JSON artifact — see `~/.jcode/swarm-prompt.md` §12.
   `what_i_did_not_check: ["todo store recovery procedure"]`. Do not
   re-attempt the same `todo` write — it will be rejected identically.
   See `docs/TODO_STALL_RECOVERY.md`.
+- **Completion = commit AND `complete_node` (both required).** Slow
+  coverage runs amplify the silent-stuck trap: you commit `final`
+  when coverage hits the threshold, then `complete_node` fails or you
+  die before it returns. Always fire both signals. If only one can
+  fire, surface the gap in `open_questions[]`.
+- **Cross-swarm probe on spawn.** Attempt one `dm <root_session_id>`
+  with payload `{"type":"hello","from":"test-writer"}`. On routing
+  error, switch to commits-only mode: keep emitting `progress` and
+  `final` commits with honest coverage numbers, set `blockers[]` to
+  the cross-swarm marker. Root's passive inspection picks up the
+  commit and integrates.
 
 For **mid-coverage commits** (you're still adding cases for orthogonal
 paths), use `type: "progress"` with `step` naming the current path family

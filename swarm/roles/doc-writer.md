@@ -107,6 +107,15 @@ grammar) is not. Every commit MUST embed a typed JSON artifact — see
   `what_i_did_not_check: ["todo store recovery procedure"]`. Do not
   re-attempt the same `todo` write — it will be rejected identically.
   See `docs/TODO_STALL_RECOVERY.md`.
+- **Completion = commit AND `complete_node` (both required).** Doc
+  builds and link-checks are slow and unreliable — the silent-stuck
+  trap is real here. Always fire both signals. If only one can fire,
+  surface the gap in `open_questions[]`.
+- **Cross-swarm probe on spawn.** Attempt one `dm <root_session_id>`
+  with payload `{"type":"hello","from":"doc-writer"}`. On routing
+  error, switch to commits-only mode: keep emitting `progress` and
+  `final` commits, set `blockers[]` to the cross-swarm marker. Root's
+  passive inspection picks up the commit.
 
 For **doc PRs that span multiple files** (e.g. a new section with
 diagrams + tutorial + changelog entry), commit once per file with a

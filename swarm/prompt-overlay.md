@@ -194,16 +194,24 @@ Do not invent a scheduled self-wakeup via
 — it adds latency without helping. Liveness is worker-driven; you
 are the responder, not the watchdog.
 
-**Passive worktree inspection (recommended).** Once per active session,
-do `git log <worker_branch>` on each active worker branch. This is
-not a poll — it is a passive read that surfaces worker state the
-worker itself cannot report (e.g. truly dead workers that OOM'd or
-network-dropped mid-task will have a progress commit on their branch
-even though they never sent `complete_node`). Cost: one tool call
-per branch. If the latest commit is older than your heartbeat SLA
-expectation (e.g. > 5 min on a non-trivial task) or its artifact
-`type` is `progress` with no subsequent `final`, the worker is
-silently stuck; integrate the partial work or spawn a successor.
+**Passive worktree inspection (mandatory at every decision point).**
+Once per decision point, do `git log <worker_branch> --format=%B` on
+every active worker branch. This is not a poll — it is a passive read
+that catches the failure modes the live handoff cannot: workers that
+OM'd, network-dropped, or — critically — committed a `type: "final"`
+artifact without calling `complete_node`. The latter happens silently
+in two real situations: (a) the worker crashed between commit and
+handoff; (b) the worker is in a different swarm than root and the dm
+channel is unreachable. Either way, only the commit survives. Cost: one
+tool call per branch per decision point. **Decision points** are
+defined in `swarm/swarm-prompt.md` §12 root obligation 3 (user message,
+worker handoff, or 5-min mark on an active branch). If the latest
+commit's artifact `type` is `progress` and is older than the
+heartbeat SLA, or the latest commit is `final` but no `complete_node`
+/ `report` arrived, the worker is silently stuck; integrate the partial
+work or spawn a successor. The `last_heartbeat` field in
+`.jcode/worktree-manifest.json` is the worktree-cleanup detector; it
+does not satisfy this obligation.
 
 **Reminder-loop stall (root-side protocol).** If you observe the
 same "N incomplete todos" reminder arriving 3+ times in a row with

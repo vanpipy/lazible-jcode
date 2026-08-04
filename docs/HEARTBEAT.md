@@ -61,6 +61,32 @@ Required structure (single fenced block at the bottom of the commit body):
 that completes the spawn scope. See `swarm/swarm-prompt.md` §12 and the
 role-specific sections in `swarm/roles/*.md` for details per role.
 
+### Completion = commit AND `complete_node` (both required)
+
+A worker reaches "completion" when **both** of these happen, in this
+order:
+
+1. **Final commit lands on `<worker_branch>`** with a `type: "final"`
+   artifact. The commit is the durable record; it survives worker
+   death, server restart, cross-swarm boundaries, and offline reviews.
+2. **Live handoff fires**: `complete_node` (preferred) or `report` with
+   a typed body. The handoff is the live signal that wakes root in the
+   current context.
+
+Neither alone is "done". A commit without a handoff leaves root waiting
+on the dm channel forever; the failure mode is silent because the
+artifact says `step: "complete"`. A handoff without a commit cannot be
+audited or recovered later. This split is the gap the 2026-08 silent-stuck
+incident exploited: worker committed final, then died before
+`complete_node`; root sat waiting until a user message prompted manual
+`git log`. The contract now requires root-side passive inspection
+(`swarm-prompt.md` §12 root obligation 3) to catch the missing handoff.
+
+If a worker can only fire one signal (e.g. cross-swarm makes the dm
+channel unreachable), it MUST fire the other — commit-only or handoff-only
+is acceptable but the worker must declare which via `open_questions[]`,
+and root's passive inspection must be able to detect either case.
+
 ## Liveness contract (worker-driven, root-responsive)
 
 The framework has **no watchdog, no real-time timer, no enforced
@@ -182,6 +208,51 @@ These are out-of-band. No contract can fix them; only runtime changes
 | Worker dies after final commit           | `type: "final"` already on disk                 | Root reads via `git show`         |
 | Worker reports "done" but didn't commit  | Latest commit has no artifact                   | Root rejects report               |
 | Server restart killed worker session     | Git state unchanged                             | Root reads via `git log`          |
+
+## Cross-swarm handoff gap
+
+The contract above assumes root and worker share a swarm and the dm
+channel reaches the worker. **Neither is always true.** Two real
+situations break the assumption:
+
+1. **Cross-swarm workers.** Root session ID is `session_hedgehog_…`;
+   worker session ID is `session_skunk_…` (a different swarm entirely,
+   e.g. the worker was spawned by a separate orchestration step or a
+   selfdev run). The worker's `dm <root_session_id>` call returns a
+   routing error — the worker cannot reach root, full stop. The
+   worker MUST detect this on its first attempted dm (it has no
+   fallback channel) and switch to commits-only mode:
+
+   - Continue making `progress` and `final` commits with the
+     artifact's `confidence` field set honestly.
+   - Do NOT emit `{"type":"stuck"}` (it cannot be delivered).
+   - Set the artifact's `blockers[]` to
+     `["cross-swarm: dm channel unreachable, commits-only mode"]` so
+     root's inspection sees why no handoff arrived.
+   - Surface the cross-swarm status in the worker's final
+     `open_questions[]`.
+
+2. **Worker crash between commit and handoff.** The worker's last
+   action is `git commit` writing `type: "final"`. Before
+   `complete_node` returns to the runtime, the worker is killed
+   (OOM, network partition, user abort). The commit is durable; the
+   handoff is gone.
+
+Both situations look identical from root's perspective: a `final`
+commit on the worker branch, no live handoff, no dm in queue. Root's
+mandatory passive inspection (`swarm-prompt.md` §12 root obligation 3)
+is the only thing that catches either case. There is no runtime
+signal that distinguishes "worker is fine, just slow on handoff" from
+"worker is gone". The contract therefore requires root to inspect at
+**every** decision point, not just on user prompts — a worker that
+commits `final` and then sits idle for 5 minutes is, by the contract,
+silently stuck and the partial-or-complete work should be surfaced.
+
+The `cross-swarm` status is also visible to root via the artifact's
+`blockers[]` field. If root's passive inspection reads a `final`
+artifact whose `blockers[]` lists `cross-swarm: …`, root knows the
+worker is alive but on the wrong swarm and can spawn a small relay
+worker (or simply integrate directly via `git show` / `git fetch`).
 
 ## Why a daemon would have failed
 

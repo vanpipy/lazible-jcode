@@ -409,6 +409,28 @@ window. This is **not a failure mode** — it is the contract working.
    without helping root notice workers any faster than the worker's
    own handoff. There is no `schedule(target=resume, wake_in_minutes=N)`
    on the spawn path.
+3. **Mandatory passive inspection at every decision point.** Workers
+   emit two signals on completion: a durable commit (with embedded
+   artifact) and a live handoff (`complete_node` / `report`). The two
+   are not redundant — the commit is auditable from `git show`, the
+   handoff wakes root. Either may be lost: commits survive worker
+   death but not user-invisible state; live handoffs do not survive
+   cross-swarm boundaries or worker crashes between commit and
+   `complete_node`. **Root MUST inspect** every active
+   `<worker_branch>` via `git log <branch> --format=%B` at each of:
+   - **a user message arrives** — before composing the next action;
+   - **a worker handoff arrives** — to cross-check the handoff against
+     the commit's artifact (artifact SHA must equal `HEAD` of branch;
+     `type` must be `final`, not `progress`);
+   - **5 minutes elapsed on an active branch** with no commit newer
+     than that mark — `git log --since=<5min-ago>` must show at least
+     one progress commit per active worker; otherwise the worker is
+     silently stuck even without a `stuck` dm (see Turn 5 in
+     `docs/LIVENESS_VALIDATION.md`).
+   This is not a poll — it is a passive read. Cost: one tool call per
+   branch per decision point. The `last_heartbeat` field in
+   `.jcode/worktree-manifest.json` is the worktree-cleanup detector;
+   it does not satisfy this obligation.
 
 ### Why worker-driven, not heartbeat daemon
 
@@ -456,6 +478,17 @@ Out-of-band; only runtime changes (added in a future jcode) could fix:
   worker must commit before claim is honored.
 - **Server restart kills worker session** — git state is unchanged. On
   next root session, the latest commit + artifact reveal state.
+- **Worker committed final but did not call `complete_node`** — commit
+  carries `type: "final"` artifact, no live handoff arrives. Root's
+  mandatory passive inspection (§12 root obligation 3) catches it on
+  the next decision point: `git log <branch>` shows `final` + 0 newer
+  commits → integrate or surface to user. The durable half survived
+  without the live half.
+- **Cross-swarm handoff** — worker and root are in different swarms; dm
+  channel is unreachable from worker side. Worker commits and
+  `open_questions[]` mentions `cross-swarm, commits-only`; root's
+  passive inspection sees the commit and integrates. See
+  `docs/HEARTBEAT.md` §"Cross-swarm handoff gap".
 
 ### Anti-patterns
 

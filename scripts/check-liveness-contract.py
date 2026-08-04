@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""
+check-liveness-contract.py
+
+Validates the structural and semantic completeness of the swarm's
+liveness contract across role files, the swarm-prompt, the
+prompt-overlay, and the HEARTBEAT doc.
+
+Exits 0 on PASS, 1 on FAIL.
+
+What it checks:
+
+  1. Every role file has a "## Liveness contract (worker-driven)"
+     section.
+  2. Every role's Liveness section contains the required rule markers
+     (heartbeat / stuck / exit right / reminder-loop / completion /
+     cross-swarm). This catches silent regressions where a future
+     edit drops a rule.
+  3. swarm/swarm-prompt.md §12 root obligations carries the
+     "mandatory passive inspection" rule with the "decision point"
+     keyword — the rule added to plug the silent-stuck gap.
+  4. swarm/prompt-overlay.md §1 promotes passive inspection from
+     "recommended" to "mandatory" — the L1 doc edit.
+  5. docs/HEARTBEAT.md has the "Cross-swarm handoff gap" section and
+     the "Completion = commit AND `complete_node`" subsection — the
+     L1 docs that codify the 2026-08 silent-stuck incident.
+
+This is a pure structural / keyword test. It does not evaluate
+semantic correctness of the prose. That is the job of a human reviewer
+or downstream LLM review worker.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+ROLES_DIR = ROOT / "swarm" / "roles"
+SWARM_PROMPT = ROOT / "swarm" / "swarm-prompt.md"
+PROMPT_OVERLAY = ROOT / "swarm" / "prompt-overlay.md"
+HEARTBEAT = ROOT / "docs" / "HEARTBEAT.md"
+
+# Section header for the worker liveness contract.
+LIVENESS_SECTION = "## Liveness contract (worker-driven)"
+
+# Required keyword markers that MUST appear in every role's Liveness
+# section. Each is a regex; the section is searched for any line
+# matching at least one pattern per marker.
+REQUIRED_RULES = {
+    "heartbeat": [
+        r"Heartbeat.*5 min",
+        r"heartbeat.*5[\s\-]min",
+    ],
+    "stuck": [
+        r"Stuck.*self.?escalation",
+        r"stuck.*self.?escalation",
+    ],
+    "exit_right": [
+        r"Exit right",
+        r"exit right",
+    ],
+    "reminder_loop": [
+        r"Reminder.?loop",
+        r"reminder.?loop",
+    ],
+    # L2 additions:
+    "completion": [
+        r"Completion\s*=\s*\S+\s+AND\s+`?complete_node`?",
+    ],
+    "cross_swarm": [
+        r"Cross.?swarm",
+        r"cross.?swarm",
+    ],
+}
+
+# Roles that are expected to carry the Liveness contract.
+EXPECTED_ROLES = (
+    "implementer",
+    "reviewer",
+    "investigator",
+    "migrator",
+    "test-writer",
+    "doc-writer",
+)
+
+
+def _fail(msg: str) -> None:
+    print(f"FAIL: {msg}", file=sys.stderr)
+
+
+def _pass(msg: str) -> None:
+    print(f"PASS: {msg}")
+
+
+def extract_section(content: str, header: str, end_re: str = r"^## ") -> str | None:
+    """Extract the text between `header` and the next `## ` heading."""
+    lines = content.splitlines()
+    start = None
+    end = None
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            start = i + 1
+        elif start is not None and re.match(end_re, line.strip()):
+            end = i
+            break
+    if start is None:
+        return None
+    if end is None:
+        end = len(lines)
+    return "\n".join(lines[start:end])
+
+
+def check_rule(section: str, rule: str, patterns: list[str]) -> bool:
+    """Return True iff at least one pattern matches in section."""
+    for pat in patterns:
+        if re.search(pat, section, flags=re.IGNORECASE | re.MULTILINE):
+            return True
+    return False
+
+
+def check_roles(errors: list[str]) -> None:
+    if not ROLES_DIR.is_dir():
+        errors.append(f"roles directory not found: {ROLES_DIR}")
+        return
+    role_files = sorted(p for p in ROLES_DIR.iterdir() if p.suffix == ".md")
+    found_roles = {p.stem for p in role_files}
+
+    for expected in EXPECTED_ROLES:
+        if expected not in found_roles:
+            errors.append(f"missing role file: {expected}.md")
+
+    for role_path in role_files:
+        role = role_path.stem
+        content = role_path.read_text()
+        section = extract_section(content, LIVENESS_SECTION)
+        if section is None:
+            errors.append(f"{role}: missing '{LIVENESS_SECTION}' section")
+            continue
+        for rule_name, patterns in REQUIRED_RULES.items():
+            if not check_rule(section, rule_name, patterns):
+                errors.append(
+                    f"{role}: Liveness section missing required rule "
+                    f"'{rule_name}' (no pattern matched: {patterns})"
+                )
+
+
+def check_swarm_prompt(errors: list[str]) -> None:
+    if not SWARM_PROMPT.is_file():
+        errors.append(f"swarm-prompt.md not found: {SWARM_PROMPT}")
+        return
+    content = SWARM_PROMPT.read_text()
+
+    # §12 root obligations MUST carry the mandatory passive inspection
+    # rule. We look for a paragraph that contains both "passive
+    # inspection" and "decision point" inside the root obligations
+    # region.
+    root_obligations = extract_section(
+        content,
+        "### Root obligations (responsiveness, soft)",
+    )
+    if root_obligations is None:
+        errors.append(
+            "swarm-prompt.md: '### Root obligations (responsiveness, "
+            "soft)' section missing — §12 contract cannot be enforced"
+        )
+        return
+
+    # Mandatory passive inspection rule must be present.
+    if not re.search(r"passive inspection", root_obligations, re.IGNORECASE):
+        errors.append(
+            "swarm-prompt.md §12 root obligations: missing "
+            "'passive inspection' rule (L1 hardening)"
+        )
+    if not re.search(r"decision point", root_obligations, re.IGNORECASE):
+        errors.append(
+            "swarm-prompt.md §12 root obligations: missing "
+            "'decision point' keyword (defines WHEN to inspect)"
+        )
+    # The rule must be framed as mandatory, not "recommended".
+    # Look for explicit mandatory language; reject permissive frames.
+    if not re.search(
+        r"Mandatory passive inspection|must inspect|MUST inspect",
+        root_obligations,
+        re.IGNORECASE,
+    ):
+        errors.append(
+            "swarm-prompt.md §12 root obligations: passive inspection "
+            "rule not framed as mandatory (must contain 'Mandatory' / "
+            "'MUST inspect' — the L1 hardening)"
+        )
+
+
+def check_prompt_overlay(errors: list[str]) -> None:
+    if not PROMPT_OVERLAY.is_file():
+        errors.append(f"prompt-overlay.md not found: {PROMPT_OVERLAY}")
+        return
+    content = PROMPT_OVERLAY.read_text()
+
+    # §1 must mention passive inspection at least once.
+    if not re.search(r"[Pp]assive worktree inspection", content):
+        errors.append(
+            "prompt-overlay.md: missing 'Passive worktree inspection' "
+            "callout (L1 hardening requires the root overlay to "
+            "reference the rule)"
+        )
+        return
+
+    # Locate the passive-inspection callout and ensure it is framed as
+    # mandatory, not "recommended".
+    # The callout looks like:
+    #   **Passive worktree inspection (mandatory at every decision point).**
+    m = re.search(
+        r"\*\*Passive worktree inspection\s*\(([^)]+)\)\.\*\*",
+        content,
+    )
+    if not m:
+        errors.append(
+            "prompt-overlay.md: 'Passive worktree inspection' callout "
+            "not found in bold form (cannot verify framing)"
+        )
+        return
+    framing = m.group(1).strip().lower()
+    if "recommended" in framing and "mandatory" not in framing:
+        errors.append(
+            f"prompt-overlay.md: passive inspection framed as "
+            f"'{m.group(1).strip()}' — must be promoted to 'mandatory "
+            f"at every decision point' (L1 hardening)"
+        )
+    elif "mandatory" not in framing:
+        errors.append(
+            f"prompt-overlay.md: passive inspection framed as "
+            f"'{m.group(1).strip()}' — must contain 'mandatory' "
+            f"(L1 hardening)"
+        )
+
+
+def check_heartbeat(errors: list[str]) -> None:
+    if not HEARTBEAT.is_file():
+        errors.append(f"HEARTBEAT.md not found: {HEARTBEAT}")
+        return
+    content = HEARTBEAT.read_text()
+
+    # Must have the "Cross-swarm handoff gap" section.
+    if "## Cross-swarm handoff gap" not in content:
+        errors.append(
+            "HEARTBEAT.md: missing '## Cross-swarm handoff gap' "
+            "section (L1 hardening codifies the silent-stuck gap)"
+        )
+
+    # Must have the "Completion = commit AND `complete_node`"
+    # subsection.
+    if not re.search(
+        r"### Completion\s*=\s*commit AND `complete_node`",
+        content,
+    ):
+        errors.append(
+            "HEARTBEAT.md: missing '### Completion = commit AND "
+            "`complete_node`' subsection (L1 hardening)"
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    parser.parse_args()
+
+    errors: list[str] = []
+    check_roles(errors)
+    check_swarm_prompt(errors)
+    check_prompt_overlay(errors)
+    check_heartbeat(errors)
+
+    if errors:
+        for e in errors:
+            _fail(e)
+        print(
+            f"\nFAIL: {len(errors)} liveness-contract violation(s) — "
+            "see errors above",
+            file=sys.stderr,
+        )
+        return 1
+
+    n_roles = sum(1 for p in ROLES_DIR.iterdir() if p.suffix == ".md")
+    _pass(
+        f"all {n_roles} roles carry the 6 required liveness rules "
+        f"(heartbeat / stuck / exit-right / reminder-loop / "
+        f"completion / cross-swarm)"
+    )
+    _pass(
+        "swarm-prompt.md §12 root obligations carries the mandatory "
+        "passive inspection rule with 'decision point' framing"
+    )
+    _pass(
+        "prompt-overlay.md §1 passive inspection is mandatory (not "
+        "recommended)"
+    )
+    _pass(
+        "HEARTBEAT.md has 'Cross-swarm handoff gap' and 'Completion "
+        "= commit AND complete_node' sections"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
