@@ -165,15 +165,22 @@ A worker reaches "completion" when **both** happen, in this order:
 
 1. **Final commit lands on `<worker_branch>`** with `type: "final"`
    artifact (durable, survives worker death + cross-swarm + restart).
-2. **Live handoff fires**: `complete_node` (preferred) or `report` with
-   a typed body (wakes root in current context).
+2. **Live handoff fires `complete_node` with a typed body.** This is
+   the **only** handoff path that wakes the root in its current
+   context. `complete_node` is **mandatory** for the final handoff.
+
+Use `report` only for mid-task status snapshots (heartbeat-style). Never
+as the final completion signal. `report` only updates the swarm status
+field; it does NOT wake root, and you will sit silent-stuck from root's
+perspective until the next decision-point `git log` per the L1 protocol.
 
 Neither alone is "done". This is the silent-stuck trap: you commit
 final, then `complete_node` fails or you die before it returns; root
-sits waiting because the artifact says `step: "complete"`. Always fire
-**both** signals; if you can only fire one (e.g. `complete_node` is
-unavailable), fire the other and surface the gap in `open_questions[]`
-so root's passive inspection can detect which half survived.
+sits waiting because the artifact says `step: "complete"`. If you can
+only fire one signal (e.g. `complete_node` returns a routing error),
+surface the gap in `open_questions[]` AND set `blockers[]` to the
+cross-swarm marker so root's passive inspection can detect which half
+survived.
 
 ### Cross-swarm discoverability (probe on spawn)
 

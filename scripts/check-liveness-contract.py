@@ -147,6 +147,49 @@ def check_roles(errors: list[str]) -> None:
                 )
 
 
+def check_complete_node_mandatory(errors: list[str]) -> None:
+    """implementer.md must mandate `complete_node` (NOT `report`) for final handoff.
+
+    2026-08 silent-stuck incident: worker called `report` instead of
+    `complete_node`, root never received a wake. The lenient "or report"
+    wording in implementer.md must be replaced with mandatory complete_node.
+    """
+    implementer = ROLES_DIR / "implementer.md"
+    if not implementer.is_file():
+        return
+    content = implementer.read_text()
+    section = extract_section(content, LIVENESS_SECTION)
+    if section is None:
+        return  # already reported by check_roles
+
+    # MUST have explicit mandatory/ONLY framing for complete_node.
+    if not re.search(
+        r"complete_node.{0,120}\b(mandatory|only handoff|exclusively)\b|"
+        r"\b(mandatory|only handoff|exclusively)\b.{0,120}complete_node",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        errors.append(
+            "implementer.md: Liveness section missing mandatory "
+            "'complete_node' framing — must contain 'complete_node ONLY' "
+            "or 'complete_node mandatory' (L2 hardening after 2026-08 "
+            "silent-stuck)"
+        )
+
+    # MUST NOT contain the lenient "complete_node ... or report" wording.
+    if re.search(
+        r"\bcomplete_node\b.{0,200}\bor\s+`?report`?|"
+        r"`?report`?[^.\n]{0,60}\bcomplete_node\b[^.\n]{0,40}\b(wake|handoff)\b",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        errors.append(
+            "implementer.md: Liveness section still allows 'report' as "
+            "alternative to 'complete_node' — must be complete_node ONLY "
+            "for final handoff (L2 hardening after 2026-08 silent-stuck)"
+        )
+
+
 def check_swarm_prompt(errors: list[str]) -> None:
     if not SWARM_PROMPT.is_file():
         errors.append(f"swarm-prompt.md not found: {SWARM_PROMPT}")
@@ -268,6 +311,7 @@ def main() -> int:
 
     errors: list[str] = []
     check_roles(errors)
+    check_complete_node_mandatory(errors)
     check_swarm_prompt(errors)
     check_prompt_overlay(errors)
     check_heartbeat(errors)
@@ -299,6 +343,10 @@ def main() -> int:
     _pass(
         "HEARTBEAT.md has 'Cross-swarm handoff gap' and 'Completion "
         "= commit AND complete_node' sections"
+    )
+    _pass(
+        "implementer.md mandates complete_node for final handoff "
+        "(report forbidden for final)"
     )
     return 0
 
