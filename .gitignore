@@ -18,6 +18,10 @@ skills/*/SKILL.md.local
 *.swp
 *.swo
 
+# python bytecode (generated when running scripts/test_*.py)
+__pycache__/
+*.pyc
+
 # build artifacts (none here, but be safe)
 target/
 build/
