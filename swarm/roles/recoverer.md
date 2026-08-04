@@ -110,3 +110,14 @@ Recovery work is bounded by the dead branch's remaining scope. As a rule of thum
 - **Cross-swarm probe on spawn.** One `dm <root_session_id>` with `{"type":"hello","from":"recoverer"}`. On routing error, fall back to report-only mode and set `blockers[]` to `["cross-swarm: dm channel unreachable"]`.
 
 If the dead branch's gates fail in ways that require re-design (architectural issues, missing test fixtures, broken assumptions), **stop, downgrade to `dead`, and let root spawn a fresh implementer**. Do not try to recover from architectural failure.
+
+## Tested behavior
+
+The following scenarios are pinned by `scripts/test_recoverer_logic.py`:
+
+1. Dead progress branch (`progress` artifact, 30 min old) → recoverer.
+2. Final commit without handoff (`final` artifact, 5 min old) →
+   integrate-now (silent-stuck gate catches this).
+3. Empty branch (ref exists, no commits) → recoverer.
+4. Abandoned worker with partial progress → recover / investigate.
+5. Mixed-batch tick returns the worst-action aggregate.
