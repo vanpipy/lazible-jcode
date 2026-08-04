@@ -17,6 +17,11 @@
 #       Skips branches already merged into main unless --force.
 #   worktree-swarm.sh list
 #       Print manifest entries (label, path, branch, age).
+#   worktree-swarm.sh status <label>
+#       Print one tab-separated line for the manifest entry matching <label>:
+#       <worktree_path>\t<branch>\t<base_commit>\t<created_at_epoch>\t<age_hours>
+#       Exit non-zero with stderr `error: status: no manifest entry for '<label>'`
+#       if no entry matches; same shape if the manifest itself is missing.
 #   worktree-swarm.sh help
 #
 # Requires: git, python3.
@@ -257,6 +262,41 @@ for w in d.get("workers", []):
 PY
 }
 
+# ── status ─────────────────────────────────────────────────────────────────
+
+do_status() {
+  local label="${1:-}"
+  [[ -z "$label" ]] && die "status: label required"
+
+  [[ ! -f "$MANIFEST" ]] && die "status: no manifest at $MANIFEST"
+
+  local line
+  line=$(LABEL="$label" python3 - <<'PY'
+import json, os, time
+mf = os.environ["MANIFEST"]
+with open(mf) as f:
+    d = json.load(f)
+target = os.environ["LABEL"]
+now = int(time.time())
+for w in d.get("workers", []):
+    if w.get("label") == target:
+        age_h = (now - w.get("created_at", 0)) / 3600
+        print("\t".join([
+            w["worktree_path"],
+            w["branch"],
+            w.get("base_commit", ""),
+            str(w.get("created_at", 0)),
+            f"{age_h:.4f}",
+        ]))
+        break
+PY
+)
+
+  [[ -z "$line" ]] && die "status: no manifest entry for '$label'"
+
+  printf '%s\n' "$line"
+}
+
 # ── dispatch ───────────────────────────────────────────────────────────────
 
 cmd="${1:-help}"
@@ -267,6 +307,7 @@ case "$cmd" in
   teardown)  do_teardown "$@" ;;
   cleanup)   do_cleanup "$@" ;;
   list)      do_list ;;
+  status)    do_status "$@" ;;
   help|-h|--help) usage ;;
   *) die "unknown subcommand: $cmd (try: help)" ;;
 esac
