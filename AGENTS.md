@@ -46,6 +46,14 @@ code lives here.
   or self-schedule. The commit-as-artifact schema is unchanged. Read
   this before designing any new worker role or changing the spawn
   contract.
+- `docs/POSTMAN_PROTOCOL.md` — Smart Postman tick protocol. The
+  framework's rule for how root observes worker state without polling.
+  Covers inline tick cadence, the three-observation gate before
+  re-dispatch, three recovery actions (Continue / Reset / Recover), and
+  the root session snapshot protocol that protects against context
+  overflow. Companion to `docs/HEARTBEAT.md`: HEARTBEAT is the
+  worker-side obligation, POSTMAN_PROTOCOL is the root-side protocol
+  that consumes it.
 - `docs/LIVENESS_VALIDATION.md` — 5-turn interactive walkthrough of
   the contract (trivial / productive / blocked / abandoned / dead
   worker). Verdict per turn + net assessment. Read this if you want
