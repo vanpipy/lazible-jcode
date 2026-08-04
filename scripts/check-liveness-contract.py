@@ -84,6 +84,35 @@ EXPECTED_ROLES = (
     "migrator",
     "test-writer",
     "doc-writer",
+    "recoverer",
+)
+
+
+# ---------------------------------------------------------------------------
+# Smart Postman L1 / L2 markers (added 2026-08 after silent-stuck incident)
+# ---------------------------------------------------------------------------
+
+
+#: Mandatory keyword markers in swarm-prompt.md §13 "Smart Postman".
+SMART_POSTMAN_REQUIRED_MARKERS = (
+    "Smart Postman",
+    "swarm-state-monitor.py",
+    "tick",
+    "recoverer",
+    "inspection-confirmation",
+    "silent",
+    "dead",
+)
+
+#: Mandatory keyword markers in prompt-overlay.md §1 Smart Postman section.
+PROMPT_OVERLAY_SMART_POSTMAN_MARKERS = (
+    "Smart Postman",
+    "swarm-state-monitor.py",
+    "tick",
+    "recoverer",
+    "ambient",
+    "silent",
+    "dead",
 )
 
 
@@ -305,6 +334,65 @@ def check_heartbeat(errors: list[str]) -> None:
         )
 
 
+def check_smart_postman_swarm_prompt(errors: list[str]) -> None:
+    """swarm-prompt.md §13 must declare the Smart Postman tick protocol.
+
+    Added in the L2 hardening (2026-08). Each marker is searched for
+    anywhere in the file (the §13 anchor is loose in case the section
+    header moves).
+    """
+    if not SWARM_PROMPT.is_file():
+        errors.append(f"swarm-prompt.md not found: {SWARM_PROMPT}")
+        return
+    content = SWARM_PROMPT.read_text()
+    missing = [
+        m for m in SMART_POSTMAN_REQUIRED_MARKERS
+        if not re.search(re.escape(m), content, re.IGNORECASE)
+    ]
+    if missing:
+        errors.append(
+            "swarm-prompt.md: §13 Smart Postman missing required "
+            f"markers: {missing}"
+        )
+
+    # §13 must contain the inline cadence — at minimum, the words
+    # "decision point" and "5 minutes" must co-occur to bind the tick
+    # to the existing decision-point framework.
+    if not re.search(
+        r"decision point",
+        content,
+        re.IGNORECASE,
+    ) or not re.search(
+        r"5\s*min",
+        content,
+        re.IGNORECASE,
+    ):
+        errors.append(
+            "swarm-prompt.md: §13 Smart Postman must reference both "
+            "'decision point' and '5 min' to bind tick cadence to the "
+            "existing decision-point framework"
+        )
+
+
+def check_smart_postman_prompt_overlay(errors: list[str]) -> None:
+    """prompt-overlay.md §1 Smart Postman section must reference the
+    tick protocol, the recoverer role, and the inline-not-background
+    rationale (ambient wake hint)."""
+    if not PROMPT_OVERLAY.is_file():
+        errors.append(f"prompt-overlay.md not found: {PROMPT_OVERLAY}")
+        return
+    content = PROMPT_OVERLAY.read_text()
+    missing = [
+        m for m in PROMPT_OVERLAY_SMART_POSTMAN_MARKERS
+        if not re.search(re.escape(m), content, re.IGNORECASE)
+    ]
+    if missing:
+        errors.append(
+            "prompt-overlay.md: Smart Postman section missing required "
+            f"markers: {missing}"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.parse_args()
@@ -315,6 +403,8 @@ def main() -> int:
     check_swarm_prompt(errors)
     check_prompt_overlay(errors)
     check_heartbeat(errors)
+    check_smart_postman_swarm_prompt(errors)
+    check_smart_postman_prompt_overlay(errors)
 
     if errors:
         for e in errors:
@@ -337,8 +427,16 @@ def main() -> int:
         "passive inspection rule with 'decision point' framing"
     )
     _pass(
+        "swarm-prompt.md §13 Smart Postman tick protocol declared "
+        "(inline cadence, recoverer spawn, decision-point binding)"
+    )
+    _pass(
         "prompt-overlay.md §1 passive inspection is mandatory (not "
         "recommended)"
+    )
+    _pass(
+        "prompt-overlay.md §1 Smart Postman section references "
+        "tick / recoverer / ambient wake hint"
     )
     _pass(
         "HEARTBEAT.md has 'Cross-swarm handoff gap' and 'Completion "

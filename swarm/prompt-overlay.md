@@ -290,10 +290,59 @@ gate is about avoiding *false positives*, not about being fast.
 
 3. **Recover.** Worker died (OOM, killed, network drop) before
    `complete_node`. The branch has progress commits but no final.
-   Spawn a fresh worker with the recovery context:
-   `git log <branch> --format=%B` to read the latest artifact's
-   `next:` field, then `assign_task` with explicit
-   "resume from <commit-SHA>, continue with: <next step>".
+   Spawn a **recoverer** worker (`~/.jcode/roles/recoverer.md`) with
+   the recovery context: `git log <branch> --format=%B` to read the
+   latest artifact's `next:` field, then `assign_task` with explicit
+   "classify and finish/salvage/dead". The recoverer returns a
+   `finishable / salvageable / dead` classification tied to a
+   `suggested_action` for root.
+
+### Smart Postman: tick protocol at decision points
+
+The postman is **not** a daemon. It is an **inline tick** that root
+runs at decision points to replace ad-hoc `git log` polling with a
+structured classification table. The MVP command:
+
+```
+python3 scripts/swarm-state-monitor.py tick
+```
+
+Output is a single table classifying every active worker branch into
+`healthy / progressing / quiet / silent / dead`, plus a JSON block
+root can paste into the next prompt. The classification thresholds
+default to `quiet ≤ 5min, silent 5-15min, dead > 15min` for
+`progress` artifacts and `> 30min` for `final` without handoff;
+override via `POSTMAN_QUIET_MIN`, `POSTMAN_SILENT_MIN`,
+`POSTMAN_DEAD_MIN`.
+
+**Tick cadence:**
+
+- User message arrives.
+- Worker handoff arrives (cross-check).
+- 5 minutes elapsed on an active branch with no new commit.
+- Per-task natural break (about to integrate, about to spawn).
+
+**Action rules from the table:**
+
+| Classification | Action |
+|---|---|
+| `healthy` / `progressing` | No action. |
+| `quiet` | Optional `dm` heartbeat reminder (cheap). |
+| `silent` / `dead` | Increment inspection-confirmation counter; after 3 ticks, spawn **recoverer**. |
+
+The postman is **inline** (not background) because:
+
+1. Co-locating "observe" and "decide" in the same prompt turn keeps
+   the postman cheap (no scheduling latency).
+2. The framework's no-scheduled-self-wakeup rule (§12 root obligation
+   2) forbids a background postman. Inline ticks honor that.
+3. jcode runtime may eventually add `target=ambient` wake that
+   suggests "postman tick?" — that is a future extension, not MVP.
+
+The recoverer role is the **only** role that may amend the dead
+branch's last commit (one amend, residual fix only). Anything more
+goes to a new commit. See `~/.jcode/roles/recoverer.md` for the full
+contract.
 
 The cost of proactive monitoring is one `git log` per branch at
 each decision point — cheaper than a scheduled self-wakeup because

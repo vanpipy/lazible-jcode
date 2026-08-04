@@ -431,6 +431,54 @@ window. This is **not a failure mode** — it is the contract working.
    branch per decision point. The `last_heartbeat` field in
    `.jcode/worktree-manifest.json` is the worktree-cleanup detector;
    it does not satisfy this obligation.
+4. **Smart Postman tick.** When the passive inspection surfaces a
+   silent or dead worker, root MUST run a one-shot
+   `python3 scripts/swarm-state-monitor.py tick` and act on the
+   classification table. The script is the structured replacement for
+   ad-hoc `git log` polls. See §13 for the full protocol.
+
+### Inspection-confirmation gate (avoid premature re-dispatch)
+
+To avoid hindering a worker that is still legitimately working, root
+MUST NOT re-dispatch, reset, or spawn a recoverer based on a single
+silent/dead classification. The protocol:
+
+1. **First observation** (postman tick returns `silent` or `dead`):
+   root notes the observation. No action yet — worker may be doing
+   long-running work.
+2. **Second observation** (next postman tick, after root has done
+   intervening work): root runs `tick` again. If the classification is
+   still `silent` or `dead`, increment the confirmation counter.
+3. **Third observation confirms unhealthy state**: NOW root has enough
+   signal to spawn a recoverer (see §13). Pick the recovery action
+   below.
+
+This is **not** a fixed timer. "Three observations" means three actual
+postman ticks at three separate decision points — not three rounds of
+`tick` in a tight loop. Slow workers get more time; the gate is about
+avoiding *false positives*, not about being fast.
+
+### Three recovery actions (only after 3+ confirmations)
+
+1. **Continue.** Worker has a specific blocker only you can answer
+   (missing decision, missing info, scope ambiguity). Reply via `dm`
+   with the concrete answer; worker resumes. Cheapest option; use
+   when the work is on track and the blocker is small.
+
+2. **Reset.** Worker is fundamentally stuck — wrong scope, dead-end
+   approach, conflicting requirements. `stop` the worker. Spawn a
+   fresh worker with corrected scope, optionally prepended with
+   `git show <old_branch>:<files>` to preserve any useful partial
+   work. Use when continuing would waste more tokens than starting
+   fresh.
+
+3. **Recover.** Worker died (OOM, killed, network drop) before
+   `complete_node`. The branch has progress commits but no final.
+   Spawn a `recoverer` worker (§13) with the recovery context:
+   `git log <branch> --format=%B` to read the latest artifact's
+   `next:` field, then `assign_task` with explicit
+   "classify and finish/salvage/dead". The recoverer returns a
+   `finishable / salvageable / dead` classification.
 
 ### Why worker-driven, not heartbeat daemon
 
@@ -506,3 +554,134 @@ Out-of-band; only runtime changes (added in a future jcode) could fix:
   exit right exists for a reason. 5 minutes and out.
 - Don't trust `status: ready` from a worker that has no commit on its
   branch. Reject the artifact; require the commit first.
+
+---
+
+## 13. Smart Postman: root-side tick protocol
+
+The Smart Postman is the **operating rhythm** of root. It is not a
+worker, not a daemon, not a watchdog. It is a **tick protocol** that
+root runs inline at decision points to take the "wait and see" out of
+"wait and see what the worker is doing".
+
+### Why this exists
+
+The previous architecture asked root to "passively inspect" at every
+decision point (§12 root obligation 3). That works for **healthy**
+workers but fails for **silent** and **dead** workers, where root
+either keeps waiting or makes a one-off `git log` call by hand. The
+Smart Postman replaces ad-hoc inspection with a structured tick:
+
+```
+python3 scripts/swarm-state-monitor.py tick
+```
+
+The script returns a single classification table — `healthy /
+progressing / quiet / silent / dead` — for every active worker
+branch. Root reads the table once and acts.
+
+### Tick cadence
+
+The tick is **not** on a fixed timer. Root runs it at decision points:
+
+- **User message arrives** — before composing the next action.
+- **Worker handoff arrives** — to cross-check.
+- **5 minutes elapsed on an active branch** with no commit since.
+- **Per-task natural break** — when root is about to integrate or
+  spawn something new.
+
+The "5-minute mark" is the soft tick rate. Idling for hours on a
+known-silent worker is no longer acceptable; the postman tick forces
+periodic re-classification.
+
+### Tick output
+
+The script prints a table plus a JSON block. Example:
+
+```
+branch                                            class            age  artifact    conf      rationale
+feat/liveness-hardening                           silent          542m  final       high      final commit 542m ago, no handoff, past silent SLA
+feat/swarm-artifact-liveness_b1d4bb6              dead           1514m  —           —         commit 1514m ago without artifact, past dead SLA
+```
+
+Root's output discipline:
+
+1. **Read the table once** — paste the worst-classified branch into
+   the next prompt as context.
+2. **Decide per branch** — `healthy` and `progressing` need no
+   action; `quiet` may need a `dm` heartbeat reminder; `silent` and
+   `dead` enter the inspection-confirmation gate.
+3. **Do not stay in the loop** — if the table has been
+   `silent/dead` for ≥ 3 ticks, spawn a recoverer. Don't keep
+   re-reading.
+
+### Classification thresholds
+
+Defaults: `quiet` ≤ 5min, `silent` 5-15min, `dead` > 15min for
+`progress` artifact and > 30min for `final` without handoff.
+Override via env vars:
+
+- `POSTMAN_QUIET_MIN` (default 5)
+- `POSTMAN_SILENT_MIN` (default 15)
+- `POSTMAN_DEAD_MIN` (default 30)
+
+Per-repo overrides belong in `.jcode/conflict-config.yaml` (future
+work; MVP uses env vars).
+
+### Recovery spawn (recoverer role)
+
+When the inspection-confirmation gate passes (3 ticks silent/dead),
+root spawns a **recoverer** worker (`swarm/roles/recoverer.md`):
+
+```
+spawn(
+  label="recoverer",
+  role="agent",
+  model="MiniMax-M3",
+  effort="medium",
+  prompt="""
+    Branch: <branch>
+    Last commit: <sha>
+    Last artifact: <type> (confidence=<c>)
+
+    Classify the dead/silent branch and finish / salvage / dead it.
+    Do not introduce new feature work.
+    Run ./scripts/conflict-detect.py all before deciding.
+    Run the project's gates on the partial state.
+    Return a typed artifact with classification + suggested_action.
+  """,
+)
+```
+
+The recoverer is the only role that may amend the dead branch's
+last commit (one amend only, residual fix only). Anything more
+goes to a new commit.
+
+### Why postman is inline, not a background task
+
+A background postman would solve the "root waits in silence" problem,
+but it would conflict with the framework's no-scheduled-self-wakeup
+rule (§12 root obligation 2). The postman is **inline** because:
+
+1. Root is already the one making decisions; co-locating the tick
+   with decision points keeps "observe" and "decide" in the same
+   context window.
+2. jcode runtime may eventually add a `target=ambient` wake
+   mechanism that suggests "postman tick?" without forcing root to
+   sleep. That is a future extension, not MVP.
+3. Inline ticks have no latency — root reads the table within the
+   same prompt turn as the prior decision.
+
+### Anti-patterns
+
+- Don't run `swarm-state-monitor.py tick` more than once per decision
+  point — that's a poll, not a tick. One call, classify, decide.
+- Don't promote a `quiet` worker to `silent` based on a single
+  observation. The 3-tick gate exists for a reason.
+- Don't spawn a recoverer for a `healthy` worker. The postman table
+  is the source of truth; do not act on vibes.
+- Don't replace the table with hand-rolled `git log` calls. The
+  script exists precisely to make that ad-hoc polling unnecessary.
+- Don't override `POSTMAN_QUIET_MIN=0` to "always be quiet". That
+  just means every worker classifies as silent — the table becomes
+  useless.
