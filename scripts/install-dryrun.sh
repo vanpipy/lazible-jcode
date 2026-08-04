@@ -13,7 +13,7 @@ print_help() {
   cat <<EOF
 Usage: $0 [options]
 
-Simulate all four scripts/install.sh steps without touching the real ~/.jcode/.
+Simulate all five scripts/install.sh steps without touching the real ~/.jcode/.
 
 Options:
   --home <path>  Disposable simulated HOME. Default: $DEFAULT_HOME
@@ -112,7 +112,8 @@ for required in \
   "$REPO_ROOT/swarm/swarm-prompt.md" \
   "$REPO_ROOT/swarm/ARCHITECTURE.md" \
   "$REPO_ROOT/swarm/roles" \
-  "$REPO_ROOT/skills"; do
+  "$REPO_ROOT/skills" \
+  "$REPO_ROOT/scripts"; do
   [[ -e "$required" ]] || fail setup "missing source: $required"
 done
 
@@ -126,7 +127,7 @@ source <(awk '
 declare -F overwrite_link >/dev/null || fail setup "could not source overwrite_link from $INSTALL_SCRIPT"
 
 CURRENT_STEP="step 1"
-info "── step 1/4: install jcode binary (simulated) ──"
+info "── step 1/5: install jcode binary (simulated) ──"
 mkdir -p "$INSTALL_DIR"
 cat >"$INSTALL_DIR/jcode" <<'STUB'
 #!/usr/bin/env bash
@@ -136,7 +137,7 @@ chmod +x "$INSTALL_DIR/jcode"
 [[ -x "$INSTALL_DIR/jcode" ]] || fail "$CURRENT_STEP" "simulated jcode binary is not executable"
 
 CURRENT_STEP="step 2"
-info "── step 2/4: overlay + swarm config ──"
+info "── step 2/5: overlay + swarm config ──"
 mkdir -p "$JCODE_HOME" "$JCODE_HOME/roles"
 overwrite_link "$REPO_ROOT/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md" "prompt-overlay.md"
 overwrite_link "$REPO_ROOT/swarm/swarm-prompt.md" "$JCODE_HOME/swarm-prompt.md" "swarm-prompt.md"
@@ -148,7 +149,7 @@ verify_link "$CURRENT_STEP" "$JCODE_HOME/ARCHITECTURE.md" "$REPO_ROOT/swarm/ARCH
 verify_link "$CURRENT_STEP" "$JCODE_HOME/roles" "$REPO_ROOT/swarm/roles"
 
 CURRENT_STEP="step 3"
-info "── step 3/4: skills ──"
+info "── step 3/5: skills ──"
 mkdir -p "$JCODE_HOME/skills"
 skill_count=0
 for skill_dir in "$REPO_ROOT/skills"/*; do
@@ -169,9 +170,24 @@ done
 [[ $linked_skill -eq 1 ]] || fail "$CURRENT_STEP" "no skill symlink found"
 
 CURRENT_STEP="step 4"
-info "── step 4/4: AGENTS.md ──"
+info "── step 4/5: AGENTS.md ──"
 overwrite_link "$REPO_ROOT/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
 verify_link "$CURRENT_STEP" "$JCODE_HOME/AGENTS.md" "$REPO_ROOT/AGENTS.md"
+
+CURRENT_STEP="step 5"
+info "── step 5/5: scripts/ ──"
+# Link scripts/ the same way install.sh does, but skip the configure_path.sh
+# call: the dry-run is in a SIMULATED home, but jcode_configure_path reads
+# $HOME (unexported in this script), which would write to the real caller's
+# rc files. The symlink is the part under test here; PATH wiring is a
+# side-effect we don't want to leak into the test environment.
+overwrite_link "$REPO_ROOT/scripts" "$JCODE_HOME/scripts" "scripts/"
+verify_link "$CURRENT_STEP" "$JCODE_HOME/scripts" "$REPO_ROOT/scripts"
+# Sanity-check: the linked scripts/ should expose a Python script the framework
+# relies on (swarm-state-monitor.py). If the symlink target is wrong, the
+# resolve path below will fail and exit non-zero.
+[[ -e "$JCODE_HOME/scripts/swarm-state-monitor.py" ]] \
+  || fail "$CURRENT_STEP" "swarm-state-monitor.py not reachable through scripts/ symlink"
 
 info "lazible-jcode dry-run complete; cleaning $SIM_HOME"
 DRYRUN_PASSED=1
