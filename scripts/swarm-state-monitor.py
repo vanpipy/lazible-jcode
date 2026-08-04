@@ -404,6 +404,19 @@ def cmd_tick(
         include_stale=include_stale,
     )
 
+    # Three-way output:
+    #   (a) nothing at all           -> "no worker branches found"
+    #   (b) all filtered by --since  -> "(N stale hidden; pass --include-stale)"
+    #   (c) some visible, some hidden-> table + "(N stale hidden; ...)" note
+    # Avoid (b) printing "(no worker branches found)" — that's misleading
+    # when branches actually exist but were filtered out.
+    if not states and hidden_count:
+        print(
+            f"({hidden_count} worker branch(es) hidden by "
+            f"--since={since_hours:g}h filter; pass --include-stale to show all)"
+        )
+        return 0
+
     print(_format_table(states, filter_rationale))
     if hidden_count:
         print(
