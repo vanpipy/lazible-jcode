@@ -250,7 +250,16 @@ class TestStaleArtifactCrossCheck(unittest.TestCase):
         self.assertIn("feat/old_abcdef0", state.rationale)
 
     def test_truly_missing_artifact_is_investigate(self) -> None:
-        """No artifact block at all → investigate (worker may have forgotten)."""
+        """No artifact block at all + commits ahead of main → investigate.
+
+        The cross-check is two-step:
+          1. `artifact.branch` cross-check (handled by collect_state).
+          2. `commits_ahead_of_main > 0` check (handled by classify).
+        Both must fail for the worker to be flagged as genuinely stuck.
+        A branch at main HEAD with no artifact is `observe` (waiting for
+        worker). A branch with worker commits but no artifact is
+        `investigate` (worker forgot).
+        """
         state = monitor.BranchState(
             branch="feat/w_abcdef0",
             has_commits=True,
@@ -259,10 +268,35 @@ class TestStaleArtifactCrossCheck(unittest.TestCase):
             artifact_type=None,
             artifact_branch=None,
             artifact_confidence=None,
+            commits_ahead_of_main=1,  # worker has committed something
         )
         monitor.classify(state, 5)
         self.assertEqual(state.recommended_action, "investigate")
         self.assertNotIn("stale", state.rationale)
+
+    def test_branch_in_main_with_no_artifact_is_observe(self) -> None:
+        """Branch tip == main HEAD with no artifact → observe (not investigate).
+
+        This is the post-rebase fast-forward state: the worker rebased
+        onto the new main HEAD (which itself has no worker artifact
+        because it's root's commit), and has not yet added their own
+        commits. Without this check, the classifier would treat every
+        just-rebased branch as `investigate` — false positive.
+        """
+        state = monitor.BranchState(
+            branch="feat/w_abcdef0",
+            has_commits=True,
+            latest_commit="a" * 40,
+            latest_age_min=2,
+            artifact_type=None,
+            artifact_branch=None,
+            artifact_confidence=None,
+            commits_ahead_of_main=0,  # branch is just at main HEAD
+        )
+        monitor.classify(state, 2)
+        self.assertEqual(state.recommended_action, "observe")
+        self.assertEqual(state.classification, "quiet")
+        self.assertIn("main HEAD", state.rationale)
 
     def test_artifact_branch_field_is_populated(self) -> None:
         """The `artifact_branch` field round-trips through to_dict.
@@ -276,6 +310,53 @@ class TestStaleArtifactCrossCheck(unittest.TestCase):
         )
         d = state.to_dict()
         self.assertEqual(d["artifact_branch"], "feat/old_abcdef0")
+
+    def test_branch_family_strips_short_sha_suffix(self) -> None:
+        """Branch families strip the trailing ``_<7-hex>`` suffix.
+
+        This is what lets the artifact cross-check survive a rebase:
+        the worker may use the new short-sha in the artifact's `branch`
+        field while the local ref still carries the old one. Same
+        family → trusted.
+        """
+        # 7-char hex suffix is stripped.
+        self.assertEqual(
+            monitor._branch_family("feat/foo_50e17e6"),
+            "feat/foo",
+        )
+        # Non-7-char suffix (e.g. 8-char hex) is NOT stripped.
+        self.assertEqual(
+            monitor._branch_family("fix/bar_deadbeef"),
+            "fix/bar_deadbeef",
+        )
+        # No underscore: returned unchanged.
+        self.assertEqual(
+            monitor._branch_family("master"),
+            "master",
+        )
+
+    def test_artifact_branch_same_family_after_rebase_is_trusted(self) -> None:
+        """Same family after rebase (suffix differs) → trusted.
+
+        Simulates: ref is ``feat/foo_16e72f2`` (old base SHA), worker
+        rebased onto ``50e17e6`` and uses the new short-sha in their
+        artifact's `branch` field. Without the family check, the
+        cross-check would treat this as stale and never integrate.
+        """
+        state = monitor.BranchState(
+            branch="feat/foo_16e72f2",
+            has_commits=True,
+            latest_commit="a" * 40,
+            latest_age_min=10,
+            artifact_type="final",
+            artifact_branch="feat/foo_50e17e6",
+            artifact_confidence="high",
+            commits_ahead_of_main=1,
+        )
+        # collect_state would normally re-derive artifact_type from the
+        # cross-check; we simulate the trust path here.
+        monitor.classify(state, 10)
+        self.assertEqual(state.recommended_action, "integrate-now")
 
 
 class TestArtifactParsing(unittest.TestCase):
