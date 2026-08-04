@@ -198,7 +198,12 @@ def main():
     )
     parser.add_argument(
         "--roles-dir",
-        default=os.path.join(os.path.dirname(__file__), "..", "swarm", "roles"),
+        # Resolve symlinks so PATH-installed invocations
+        # (~/.jcode/scripts/check-*.py → <repo>/scripts/check-*.py)
+        # compute the right default, not <symlink-dir>/../swarm/roles.
+        default=os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "..", "swarm", "roles"
+        ),
         help="Path to the roles directory (default: swarm/roles/ relative to script).",
     )
     args = parser.parse_args()

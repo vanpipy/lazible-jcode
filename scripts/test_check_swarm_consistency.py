@@ -300,6 +300,89 @@ Some scope content here.
             f"got {exit_code}.\nstdout: {stdout}",
         )
 
+    def test_default_roles_dir_resolves_symlinks(self):
+        """When invoked via a symlink (e.g. ~/.jcode/scripts/check-*.py
+        PATH-installed), the default --roles-dir must still resolve to
+        the real script location, not the symlink directory.
+
+        Without realpath resolution, __file__ equals the symlink path
+        and the script looks for roles at <symlink-dir>/../swarm/roles
+        instead of <real-dir>/../swarm/roles — failing with
+        'roles directory not found' on every PATH-installed invocation.
+        """
+        contract = """## Output contract (mandatory)
+
+- `findings` — short prose summary.
+- `evidence[]` — citations.
+- `validation` — gate results.
+- `open_questions[]` — gaps.
+- `confidence: low | medium | high` — observation.
+- `what_i_did_not_check[]` — unchecked gates.
+
+## Scope
+"""
+        self._write_role("role_a", f"# Role: role_a\n\n{contract}")
+
+        real_script = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "check-swarm-consistency.py",
+        )
+        # Create a symlink in a different directory — this is what
+        # ~/.jcode/scripts/check-swarm-consistency.py looks like to
+        # the kernel when invoked via PATH.
+        symlink_dir = tempfile.mkdtemp()
+        symlink_script = os.path.join(symlink_dir, "check-swarm-consistency.py")
+        try:
+            os.symlink(real_script, symlink_script)
+            # Run the script through the symlink with NO --roles-dir
+            # flag, so the default-path computation is exercised.
+            result = subprocess.run(
+                [sys.executable, symlink_script, "--roles-dir", self.roles_dir],
+                capture_output=True,
+                text=True,
+            )
+            # With --roles-dir explicit, of course it works — but this
+            # also catches regressions in the arg-parsing path.
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"Expected PASS via symlink, got {result.returncode}.\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}",
+            )
+            self.assertIn("PASS", result.stdout)
+        finally:
+            shutil.rmtree(symlink_dir, ignore_errors=True)
+
+        # Now the real test: invoke with NO --roles-dir, and check that
+        # the default computation finds the repo's real swarm/roles/
+        # even when launched via the symlink.
+        symlink_dir2 = tempfile.mkdtemp()
+        symlink_script2 = os.path.join(symlink_dir2, "check-swarm-consistency.py")
+        try:
+            os.symlink(real_script, symlink_script2)
+            result = subprocess.run(
+                [sys.executable, symlink_script2],
+                capture_output=True,
+                text=True,
+                cwd="/home/leroy/Project/lazible-jcode",
+            )
+            # Should find the real roles/ and report PASS — not the
+            # "roles directory not found" failure that hits when
+            # __file__ is not symlink-resolved.
+            self.assertNotIn(
+                "roles directory not found",
+                result.stdout,
+                f"Symlink invocation must resolve realpath for default "
+                f"--roles-dir. Got: {result.stdout}",
+            )
+            self.assertIn(
+                "PASS",
+                result.stdout,
+                f"Expected PASS in repo's swarm/roles/, got: {result.stdout}",
+            )
+        finally:
+            shutil.rmtree(symlink_dir2, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
