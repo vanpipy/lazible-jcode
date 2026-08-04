@@ -154,9 +154,14 @@ These are **automated safety concerns**, not testable properties of a single wor
 
 ### Root decision flow (run before acting)
 
-Answer these three questions **in order** for every task. Only proceed
+Answer these four questions **in order** for every task. Only proceed
 to action when the answers converge.
 
+0. **Is this coordination work?** Coordination work — writing spawn
+   prompts, integrating worker branches, making scope decisions,
+   replying to user, postman-tick inspection — is the root's primary
+   job. If the task is coordination-shaped, root does it solo. **Do
+   NOT spawn for coordination.**
 1. **Is it independently verifiable?** A worker must be able to run
    gates on its slice (typecheck, lint, test, build) and report a
    typed artifact. If no — single trivial edit, a question, a single
@@ -170,7 +175,7 @@ to action when the answers converge.
    first, then re-spawn. Workers in light-swarm mode must never spawn
    their own children to "fix" this.
 
-If questions 1 and 2 both say "spawn", spawn. Always pass `label`,
+If questions 0 and 1 and 2 all say "spawn", spawn. Always pass `label`,
 `model`, `effort`, worktree path, base SHA, and worker branch on the
 spawn call (see §4 below).
 
@@ -204,14 +209,17 @@ in two real situations: (a) the worker crashed between commit and
 handoff; (b) the worker is in a different swarm than root and the dm
 channel is unreachable. Either way, only the commit survives. Cost: one
 tool call per branch per decision point. **Decision points** are
-defined in `swarm/swarm-prompt.md` §12 root obligation 3 (user message,
-worker handoff, or 5-min mark on an active branch). If the latest
-commit's artifact `type` is `progress` and is older than the
-heartbeat SLA, or the latest commit is `final` but no `complete_node`
-/ `report` arrived, the worker is silently stuck; integrate the partial
-work or spawn a successor. The `last_heartbeat` field in
-`.jcode/worktree-manifest.json` is the worktree-cleanup detector; it
-does not satisfy this obligation.
+moments when root is already awake and processing — user message,
+worker handoff, schedule wake, or root's natural reflection between
+actions. **This is aspirational, not enforceable.** LLM sessions have
+no real-time timer; root cannot force itself to wake on a 5-min
+schedule. Silent dead workers are caught on the next wakeup, not on a
+forced schedule. If the latest commit's artifact `type` is `progress`
+and is older than the heartbeat SLA, or the latest commit is `final`
+but no `complete_node` / `report` arrived, the worker is silently
+stuck; integrate the partial work or spawn a successor. The
+`last_heartbeat` field in `.jcode/worktree-manifest.json` is the
+worktree-cleanup detector; it does not satisfy this obligation.
 
 **Reminder-loop stall (root-side protocol).** If you observe the
 same "N incomplete todos" reminder arriving 3+ times in a row with
@@ -249,7 +257,7 @@ recovery actions:
 | ------------------------------------------ | ------------------------------------------------------ |
 | `{"type":"stuck"}` dm from worker          | Reply with concrete next step within current context (one confirmation). |
 | `follow_up` from worker                    | Same as above — treat as one confirmation.             |
-| Worker branch has `progress` but no `final`, last commit > 5 min | `git log <branch>` + `git show <branch>:<files>` (one inspection). |
+| Worker branch has `progress` but no `final`, no commit since last decision point | `git log <branch>` + `git show <branch>:<files>` (one inspection at next decision point). |
 | `{"type":"abandoned"}` report from worker  | Read abandoned artifact; integrate partial work or spawn successor. |
 | Worker silent on branch for > heartbeat SLA | Passive `git log <branch>` once; if stale, surface to user. |
 
@@ -258,9 +266,9 @@ avoid hindering a worker that is still legitimately working, root
 MUST NOT re-dispatch, reset, or recover a worker based on a single
 observation. The protocol:
 
-1. **First observation** (e.g. progress commit > 5 min, or stuck dm):
-   — root notes the observation, replies or takes passive action.
-   Worker is given benefit of the doubt.
+1. **First observation** (e.g. progress commit stale across the last
+   decision point, or stuck dm): — root notes the observation, replies
+   or takes passive action. Worker is given benefit of the doubt.
 2. **Second observation** (next decision point, after root has done
    intervening work): root checks state again. If still unhealthy,
    increment the confirmation counter.
@@ -315,12 +323,19 @@ default to `quiet ≤ 5min, silent 5-15min, dead > 15min` for
 override via `POSTMAN_QUIET_MIN`, `POSTMAN_SILENT_MIN`,
 `POSTMAN_DEAD_MIN`.
 
-**Tick cadence:**
+**Tick cadence (decision points only, not a timer):**
 
 - User message arrives.
 - Worker handoff arrives (cross-check).
-- 5 minutes elapsed on an active branch with no new commit.
+- Root's natural reflection between actions (i.e. between finishing
+  one integration step and starting the next).
 - Per-task natural break (about to integrate, about to spawn).
+
+Decision points are moments when root is already awake and processing
+— not a forced schedule. **This is aspirational, not enforceable.**
+LLM sessions have no real-time timer; the tick fires on the next
+wakeup, not on a 5-min clock. Silent dead workers are caught on the
+next wakeup, not on a forced schedule.
 
 **Action rules from the table:**
 
