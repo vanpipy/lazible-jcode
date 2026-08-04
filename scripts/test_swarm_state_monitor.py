@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -42,11 +43,21 @@ class TestClassify(unittest.TestCase):
         assert state.classification is not None
         return state.classification
 
-    def test_final_artifact_is_healthy_inside_quiet_window(self) -> None:
-        self.assertEqual(self._classify("final", 5), "healthy")
+    def test_final_artifact_is_healthy_inside_handoff_pending_window(self) -> None:
+        # A `final` commit inside the handoff-pending window (default 1 min)
+        # is still `healthy`: the worker may be in the middle of calling
+        # `complete_node` and we tolerate the gap.
+        self.assertEqual(self._classify("final", 1), "healthy")
 
-    def test_final_artifact_moves_from_quiet_to_silent(self) -> None:
-        cases = ((6, "quiet"), (15, "quiet"), (16, "silent"))
+    def test_final_artifact_moves_from_healthy_to_quiet_to_silent(self) -> None:
+        # Past the handoff-pending window, classification becomes `quiet` and
+        # root must integrate from the commit (action = integrate-now).
+        cases = (
+            (2, "quiet"),
+            (5, "quiet"),
+            (15, "quiet"),
+            (16, "silent"),
+        )
         for age_min, expected in cases:
             with self.subTest(age_min=age_min):
                 self.assertEqual(self._classify("final", age_min), expected)
@@ -69,6 +80,100 @@ class TestClassify(unittest.TestCase):
         monitor.classify(state, None)
         self.assertEqual(state.classification, "dead")
         self.assertEqual(state.rationale, "no commits on branch")
+        self.assertEqual(state.recommended_action, "recover")
+
+
+class TestRecommendedAction(unittest.TestCase):
+    """Regression tests for the silent-stuck failure mode.
+
+    The failure: a worker commits a `final` artifact (which IS the durable
+    half of the handoff) but never calls `complete_node` (or calls
+    `report status: ready` which doesn't wake root). Without the
+    `recommended_action` field, root treated the resulting `healthy`/
+    `quiet` classification as "nothing to do" and missed the integrate
+    window entirely.
+
+    These tests pin the new behavior: any `final` commit past the
+    handoff-pending window MUST surface `recommended_action =
+    "integrate-now"`, regardless of classification. This is the contract
+    root-tick.sh relies on.
+    """
+
+    def _classify(self, artifact_type, age_min):
+        state = monitor.BranchState(
+            branch="feat/x_abcdef0",
+            has_commits=True,
+            artifact_type=artifact_type,
+        )
+        monitor.classify(state, age_min)
+        return state
+
+    def test_final_past_handoff_window_action_is_integrate_now(self) -> None:
+        """The silent-stuck repro: final commit, no handoff, age = 6m.
+
+        Before the fix: classification="quiet", no action field, root had
+        no signal to integrate. Result: branch rotted in the swarm for
+        hours.
+        After the fix: classification="quiet", recommended_action=
+        "integrate-now" — root MUST integrate from the commit even if
+        `complete_node` never arrived.
+        """
+        state = self._classify("final", 6)
+        self.assertEqual(state.classification, "quiet")
+        self.assertEqual(state.recommended_action, "integrate-now")
+        # Rationale must mention the missing handoff so root understands
+        # why integrate-now is required.
+        self.assertIn("no handoff", state.rationale)
+
+    def test_final_inside_handoff_pending_window_action_is_observe(self) -> None:
+        """Within handoff-pending window (default 1 min), tolerate gap."""
+        state = self._classify("final", 0)
+        self.assertEqual(state.classification, "healthy")
+        self.assertEqual(state.recommended_action, "observe")
+
+    def test_final_past_silent_sla_action_still_integrate_now(self) -> None:
+        """Even at silent SLA, action is still integrate-now.
+
+        The commit is durable. If worker died between commit and
+        complete_node, recoverer would be redundant — integrate first,
+        then optionally spawn a recoverer to investigate the missing
+        handoff if other branches show same pattern.
+        """
+        state = self._classify("final", 20)
+        self.assertEqual(state.classification, "silent")
+        self.assertEqual(state.recommended_action, "integrate-now")
+
+    def test_progress_silent_sla_action_is_recover(self) -> None:
+        """progress + past silent SLA = recoverer (worker may be dead)."""
+        state = self._classify("progress", 20)
+        self.assertEqual(state.classification, "silent")
+        self.assertEqual(state.recommended_action, "recover")
+
+    def test_progress_quiet_window_action_is_dm_heartbeat_reminder(self) -> None:
+        """progress + quiet window = cheap ping (worker probably fine)."""
+        state = self._classify("progress", 10)
+        self.assertEqual(state.classification, "quiet")
+        self.assertEqual(state.recommended_action, "dm-heartbeat-reminder")
+
+    def test_no_commits_action_is_recover(self) -> None:
+        """Empty branch = recoverer spawn (or worker never started)."""
+        state = monitor.BranchState(branch="feat/empty_abcdef0")
+        monitor.classify(state, None)
+        self.assertEqual(state.recommended_action, "recover")
+
+    def test_handoff_pending_window_env_override(self) -> None:
+        """HANDOFF_PENDING_MIN env var widens the observe window."""
+        state = self._classify("final", 5)
+        # Default handoff_pending_window=1 → 5m is past it → integrate-now
+        self.assertEqual(state.recommended_action, "integrate-now")
+
+        os.environ["HANDOFF_PENDING_MIN"] = "10"
+        try:
+            # With override, 5m is inside the window → observe
+            state2 = self._classify("final", 5)
+            self.assertEqual(state2.recommended_action, "observe")
+        finally:
+            del os.environ["HANDOFF_PENDING_MIN"]
 
 
 class TestArtifactParsing(unittest.TestCase):
@@ -98,16 +203,24 @@ class TestTickAgeFilter(unittest.TestCase):
         artifact_type: str,
         classification: str,
     ) -> object:
-        return monitor.BranchState(
+        state = monitor.BranchState(
             branch=branch,
             has_commits=True,
             latest_commit="a" * 40,
             latest_age_min=age_min,
             artifact_type=artifact_type,
             artifact_confidence="high",
-            classification=classification,
-            rationale=f"{artifact_type} commit {age_min}m ago",
         )
+        # Run classify() so both classification AND recommended_action are
+        # populated. The tick exit-code now depends on recommended_action,
+        # not just classification.
+        monitor.classify(state, age_min)
+        # Some tests want to override the classification (e.g. assert the
+        # old text-based exit code path); allow it as a final write.
+        if classification is not None:
+            state.classification = classification
+        state.rationale = f"{artifact_type} commit {age_min}m ago"
+        return state
 
     def _run_tick(
         self,
@@ -147,7 +260,11 @@ class TestTickAgeFilter(unittest.TestCase):
 
         exit_code, output = self._run_tick(states, since_hours=1)
 
-        self.assertEqual(exit_code, 0)
+        # The recent branch is at the dead SLA boundary (30m, action=recover),
+        # so exit 2 — the stale ones are filtered, but the visible one still
+        # needs root attention. The point of the test is the *visibility*
+        # filter, not the exit code.
+        self.assertEqual(exit_code, 2)
         self.assertIn("feat/recent_abcdef0", output)
         self.assertNotIn("feat/old-progress_abcdef0", output)
         self.assertNotIn("feat/old-final_abcdef0", output)

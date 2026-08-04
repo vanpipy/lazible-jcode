@@ -25,17 +25,34 @@ Usage:
     python3 scripts/swarm-state-monitor.py classify <branch>   # one branch
     python3 scripts/swarm-state-monitor.py list         # only branch names
 
-Exit codes:
+Exit codes (tick only):
 
-    0 = all branches healthy or progressing
-    1 = at least one quiet (caution)
-    2 = at least one silent or dead (root action required)
+    0 = all branches have recommended_action == "observe" (nothing for root to do)
+    1 = at least one branch needs root action: integrate-now / recover / investigate
+    2 = at least one branch is silent/dead (recoverer spawn required)
+    3 = git missing or not a repo
+
+The `recommended_action` column on the table tells root exactly what to do:
+
+    observe                 → wait briefly, handoff may still be in flight
+    integrate-now           → final commit landed; root MUST integrate from commit
+                              even if `complete_node` never arrived. This catches
+                              the silent-stuck failure mode.
+    dm-heartbeat-reminder   → cheap ping; worker probably fine
+    recover                 → silent/dead; spawn a recoverer worker
+    investigate             → commit without artifact; check what worker is doing
 
 Time deltas use the local timezone. The script reads `git log` via
 subprocess; if git is missing, it exits 3.
 
-This is the MVP. Future versions may add:
+Thresholds (env-overridable):
+    POSTMAN_QUIET_MIN      (default 5)  — progress heartbeat SLA
+    POSTMAN_SILENT_MIN      (default 15) — progress silent SLA
+    POSTMAN_DEAD_MIN        (default 30) — progress dead SLA
+    HANDOFF_PENDING_MIN     (default 1)  — `final` commit handoff-pending window;
+                                           past this window, action = integrate-now
 
+This is the MVP. Future versions may add:
   - Heartbeat-SLA per worker (loaded from .jcode/conflict-config.yaml).
   - Cross-worker dependency detection (parse artifact `open_questions[]`).
   - Auto-emit dm reminder artifacts (opt-in only).
@@ -106,6 +123,20 @@ class BranchState:
     artifact_confidence: Optional[str] = None
     classification: Optional[str] = None  # healthy/progressing/quiet/silent/dead
     rationale: str = ""
+    # Recommended root action — what root should *do* about this branch.
+    # Distinct from `classification` (which describes state). Possible values:
+    #   observe                 — fresh commit, handoff may still be in flight
+    #   integrate-now           — final commit landed; root should integrate
+    #                            from the commit even if no handoff arrived
+    #                            (this catches the silent-stuck failure mode
+    #                            where worker died between commit and
+    #                            complete_node, OR used `report` instead of
+    #                            `complete_node`)
+    #   dm-heartbeat-reminder   — progress commit in quiet window; cheap ping
+    #   recover                 — silent/dead or no commits; spawn recoverer
+    #   investigate             — commit without artifact; check what worker
+    #                            was doing
+    recommended_action: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -119,6 +150,7 @@ class BranchState:
             "artifact_confidence": self.artifact_confidence,
             "classification": self.classification,
             "rationale": self.rationale,
+            "recommended_action": self.recommended_action,
         }
 
 
@@ -222,33 +254,63 @@ def _parse_artifact(body: str) -> dict:
 
 
 def classify(state: BranchState, age_min: Optional[int]) -> None:
-    """Populate state.classification and state.rationale."""
+    """Populate state.classification, state.rationale, and state.recommended_action.
+
+    The recommended_action field encodes what root should *do* about this
+    branch, separately from the state-classification. Specifically: a `final`
+    artifact past the handoff-pending window (default ~1 min) ALWAYS triggers
+    `integrate-now`, even when the classification is `healthy`. This catches
+    the silent-stuck failure mode where a worker commits `final` but never
+    invokes `complete_node` (or uses `report status: ready`, which doesn't
+    wake root). Without the action field, root was treating `healthy` as
+    "nothing to do" and missing the integrate window entirely.
+    """
     if not state.has_commits or age_min is None:
         state.classification = "dead"
         state.rationale = "no commits on branch"
+        state.recommended_action = "recover"
         return
 
     artifact_type = state.artifact_type
     silent_threshold = THRESHOLDS["silent_min"]
     dead_threshold = THRESHOLDS["dead_min"]
     quiet_threshold = THRESHOLDS["quiet_min"]
+    # `handoff_pending_window` is the window in which we tolerate a missing
+    # `complete_node` handoff for a `final` commit. Past this window, the
+    # commit is durable and root should integrate even without handoff.
+    handoff_pending_window = int(
+        __import__("os").environ.get("HANDOFF_PENDING_MIN", "1")
+    )
 
     if artifact_type == "final":
-        if age_min <= quiet_threshold:
+        # Inside the handoff-pending window: handoff may still be in flight.
+        if age_min <= handoff_pending_window:
             state.classification = "healthy"
             state.rationale = (
-                f"final commit {age_min}m ago, within quiet window"
+                f"final commit {age_min}m ago, within handoff-pending window"
             )
+            state.recommended_action = "observe"
+        elif age_min <= quiet_threshold:
+            state.classification = "quiet"
+            state.rationale = (
+                f"final commit {age_min}m ago, no handoff observed; "
+                f"root must integrate from commit (worker may have died "
+                f"between commit and complete_node, or used `report` "
+                f"instead of `complete_node`)"
+            )
+            state.recommended_action = "integrate-now"
         elif age_min <= silent_threshold:
             state.classification = "quiet"
             state.rationale = (
                 f"final commit {age_min}m ago, no handoff observed"
             )
+            state.recommended_action = "integrate-now"
         else:
             state.classification = "silent"
             state.rationale = (
                 f"final commit {age_min}m ago, no handoff, past silent SLA"
             )
+            state.recommended_action = "integrate-now"
         return
 
     if artifact_type == "progress":
@@ -257,21 +319,25 @@ def classify(state: BranchState, age_min: Optional[int]) -> None:
             state.rationale = (
                 f"progress commit {age_min}m ago, past dead SLA"
             )
+            state.recommended_action = "recover"
         elif age_min >= silent_threshold:
             state.classification = "silent"
             state.rationale = (
                 f"progress commit {age_min}m ago, past silent SLA"
             )
+            state.recommended_action = "recover"
         elif age_min >= quiet_threshold:
             state.classification = "quiet"
             state.rationale = (
                 f"progress commit {age_min}m ago, within quiet window"
             )
+            state.recommended_action = "dm-heartbeat-reminder"
         else:
             state.classification = "progressing"
             state.rationale = (
                 f"progress commit {age_min}m ago, within heartbeat SLA"
             )
+            state.recommended_action = "observe"
         return
 
     # No artifact in the commit body.
@@ -280,16 +346,25 @@ def classify(state: BranchState, age_min: Optional[int]) -> None:
         state.rationale = (
             f"commit {age_min}m ago without artifact, past dead SLA"
         )
+        state.recommended_action = "recover"
     elif age_min >= silent_threshold:
         state.classification = "silent"
         state.rationale = (
             f"commit {age_min}m ago without artifact, past silent SLA"
         )
-    else:
+        state.recommended_action = "recover"
+    elif age_min >= quiet_threshold:
         state.classification = "quiet"
         state.rationale = (
             f"commit {age_min}m ago without artifact, within quiet window"
         )
+        state.recommended_action = "investigate"
+    else:
+        state.classification = "quiet"
+        state.rationale = (
+            f"commit {age_min}m ago without artifact, within heartbeat SLA"
+        )
+        state.recommended_action = "investigate"
 
 
 def collect_state(branch: str, cwd: Path) -> BranchState:
@@ -331,7 +406,7 @@ def _format_table(states: list[BranchState], filter_rationale: str = "") -> str:
         return "(no worker branches found)"
     header = (
         f"{'branch':<48}  {'class':<13}  {'age':>5}  "
-        f"{'artifact':<10}  {'conf':<8}  rationale"
+        f"{'artifact':<10}  {'conf':<8}  {'action':<22}  rationale"
     )
     lines = [header, "-" * len(header) * 2]
     for s in sorted(
@@ -345,12 +420,13 @@ def _format_table(states: list[BranchState], filter_rationale: str = "") -> str:
         age = f"{s.latest_age_min}m" if s.latest_age_min is not None else "—"
         artifact = s.artifact_type or "—"
         conf = s.artifact_confidence or "—"
+        action = s.recommended_action or "?"
         rationale = s.rationale
         if filter_rationale:
             rationale = f"{rationale}; {filter_rationale}"
         lines.append(
             f"{branch:<48}  {cls:<13}  {age:>5}  "
-            f"{artifact:<10}  {conf:<8}  {rationale}"
+            f"{artifact:<10}  {conf:<8}  {action:<22}  {rationale}"
         )
     return "\n".join(lines)
 
@@ -434,8 +510,24 @@ def cmd_tick(
         indent=2,
         ensure_ascii=False,
     ))
+    # Exit code: based on worst recommended_action, not worst classification.
+    # This makes the exit code itself a gate that scripts/root-tick.sh can
+    # use to decide whether root should pause and act.
+    #
+    #   0 = observe only — safe to integrate / spawn without further action
+    #   1 = root must DO something (integrate-now / investigate /
+    #       dm-heartbeat-reminder) but no recoverer spawn required
+    #   2 = at least one branch is silent/dead/no-commits — spawn recoverer
+    #   3 = git missing / not a repo (early-exit before this line)
+    action_rank = {
+        "observe": 0,
+        "dm-heartbeat-reminder": 1,
+        "integrate-now": 1,
+        "investigate": 1,
+        "recover": 2,
+    }
     worst = max(
-        (CLASSIFICATION_RANK.get(s.classification or "", 0) for s in states),
+        (action_rank.get(s.recommended_action or "observe", 0) for s in states),
         default=0,
     )
     return worst

@@ -182,6 +182,26 @@ maybe_overwrite_link() {
   overwrite_link "$src" "$dst" "$label"
 }
 
+# ── step 0: pre-flight checks ──────────────────────────────────────────────────
+# Verify all framework scripts that the swarm root agent invokes from any cwd
+# are present + executable. The root agent's mandatory pre-action gate
+# (`scripts/root-tick.sh`, AGENTS.md §"Mandatory root pre-action inspection")
+# is the silent-stuck guard; if it's not +x after install, the gate fails
+# silently and the failure mode the wrapper was designed to catch returns.
+# This check makes that failure mode loud.
+for required_script in \
+    "$repo_root/scripts/install.sh" \
+    "$repo_root/scripts/uninstall.sh" \
+    "$repo_root/scripts/build-jcode-canary.sh" \
+    "$repo_root/scripts/sync-jcode-source.sh" \
+    "$repo_root/scripts/root-tick.sh" \
+    "$repo_root/skills/install-jcode/jcode-install.sh" \
+    "$repo_root/skills/copy-from-jcode/copy-from-jcode.sh"; do
+  if [[ ! -x "$required_script" ]]; then
+    err "required script missing or not executable: $required_script (run 'chmod +x' on it)"
+  fi
+done
+
 # ── step 1: install jcode binary ──────────────────────────────────────────────
 info "── step 1/5: install jcode binary ──"
 mkdir -p "$INSTALL_DIR"
