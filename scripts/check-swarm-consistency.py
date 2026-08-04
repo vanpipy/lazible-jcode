@@ -2,8 +2,24 @@
 """
 check-swarm-consistency.py
 
-Reads all 6 role files under swarm/roles/, extracts the ## Output contract
-(mandatory) section from each, and compares field count, names, and ordering.
+Reads all role files under swarm/roles/, extracts the ## Output contract
+(mandatory) section from each, and verifies that every role carries the
+canonical set of 6 CORE_FIELDS plus any role-specific required extras.
+
+The contract split is by design: most roles share a uniform 6-field
+schema, but the recoverer legitimately extends that schema with
+`classification` and `suggested_action` (its domain-specific output
+contract for handling dead/silent worker branches). This checker
+distinguishes the **core** fields that every role MUST carry from
+**role-specific** extras that only some roles carry, instead of treating
+a count difference as a failure.
+
+Rules per role:
+  1. All 6 CORE_FIELDS must be present (set membership, not order).
+  2. Any extras required for that specific role (e.g. recoverer must
+     carry `classification` and `suggested_action`) must be present.
+  3. Extras beyond the required set are allowed.
+
 Exits 0 on PASS, 1 on FAIL.
 """
 
@@ -14,14 +30,39 @@ import sys
 
 
 SECTION_HEADER = "## Output contract (mandatory)"
-# Pattern: - `field_name` or - `field_name: value` at the start of a line
+
+# Core fields that EVERY role MUST carry. This set is the source of
+# truth for "what does a complete worker artifact look like?" — the
+# fields listed in §5 of swarm-prompt.md and reused in every role's
+# Output contract section. Order is irrelevant; only set membership
+# matters.
+CORE_FIELDS = frozenset({
+    "findings",
+    "evidence[]",
+    "validation",
+    "open_questions[]",
+    "confidence",
+    "what_i_did_not_check[]",
+})
+
+# Role-specific required extras. A role's contract MUST carry every
+# field listed here (in addition to the 6 CORE_FIELDS). Roles not
+# listed here have no required extras beyond CORE_FIELDS.
+ROLE_REQUIRED_EXTRAS = {
+    "recoverer": frozenset({"classification", "suggested_action"}),
+}
+
+# Pattern: top-level (column 0) bullet `- `field`` with NO leading
+# whitespace. This deliberately rejects indented sub-bullets (e.g. the
+# `finishable` / `salvageable` / `dead` enum values inside recoverer's
+# `classification` and `suggested_action` blocks).
 FIELD_PATTERN = re.compile(r"^- `([^`]+)`")
 
 
 def extract_contract(content):
     """Extract the Output contract section from a role file.
 
-    Returns the text between SECTION_HEADER and the next ##  heading (not
+    Returns the text between SECTION_HEADER and the next ## heading (not
     including either boundary), or None if the section is not found.
     """
     lines = content.splitlines()
@@ -44,23 +85,37 @@ def extract_contract(content):
 
 
 def parse_fields(section_text):
-    """Extract ordered list of field names from a contract section.
+    """Extract ordered list of TOP-LEVEL field names from a contract.
 
-    Returns a list of field name strings (the backtick-quoted identifier at
-    the start of each bullet line), preserving order.
+    Returns a list of field name strings (the backtick-quoted identifier
+    at the start of each bullet line), preserving order. Indented
+    sub-bullets are intentionally skipped — they are enum values or
+    explanatory sub-items, not contract fields.
+
+    Trailing `: value` parts (e.g. `field: low | medium | high`) are
+    stripped, so the parsed name is always the bare field identifier.
     """
     if not section_text:
         return []
     fields = []
     for line in section_text.splitlines():
-        stripped = line.strip()
-        m = FIELD_PATTERN.match(stripped)
+        # IMPORTANT: match the line as-is (no strip), so that indented
+        # bullets (`  - ...`) do not match the `^- ` anchor.
+        m = FIELD_PATTERN.match(line)
         if m:
-            # Strip trailing `: value` part if present (e.g. `field: type`)
             raw = m.group(1)
             field_name = raw.split(":")[0].strip()
             fields.append(field_name)
     return fields
+
+
+def required_extras_for(role):
+    """Return the set of role-specific required extras for this role.
+
+    Roles not in ROLE_REQUIRED_EXTRAS have no required extras beyond
+    CORE_FIELDS.
+    """
+    return ROLE_REQUIRED_EXTRAS.get(role, frozenset())
 
 
 def check_consistency(roles_dir):
@@ -87,7 +142,9 @@ def check_consistency(roles_dir):
 
         section = extract_contract(content)
         if section is None:
-            return 1, f"FAIL: {role}: '## Output contract (mandatory)' section not found"
+            return 1, (
+                f"FAIL: {role}: '## Output contract (mandatory)' section not found"
+            )
 
         fields = parse_fields(section)
         if not fields:
@@ -95,40 +152,44 @@ def check_consistency(roles_dir):
 
         contracts[role] = fields
 
-    # Use the first role as the canonical reference
+    # Validate each role against CORE_FIELDS + role-specific required extras.
     role_names = sorted(contracts.keys())
-    reference_role = role_names[0]
-    reference_fields = contracts[reference_role]
-
-    for role in role_names[1:]:
-        role_fields = contracts[role]
-
-        # Check field count
-        if len(role_fields) != len(reference_fields):
+    for role in role_names:
+        role_fields = set(contracts[role])
+        missing_core = CORE_FIELDS - role_fields
+        if missing_core:
+            missing_list = ", ".join(sorted(missing_core))
             return 1, (
-                f"FAIL: {role}: field count mismatch "
-                f"(has {len(role_fields)}, expected {len(reference_fields)}): "
-                f"{role_fields}"
+                f"FAIL: {role}: missing core field(s): {missing_list}. "
+                f"All roles MUST carry these 6 core fields: "
+                f"{sorted(CORE_FIELDS)}"
             )
 
-        # Check field names and ordering
-        if role_fields != reference_fields:
-            # Find first differing index for a helpful message
-            for i, (ref_f, cur_f) in enumerate(zip(reference_fields, role_fields)):
-                if ref_f != cur_f:
-                    return 1, (
-                        f"FAIL: {role}: field ordering mismatch at position {i} "
-                        f"(has '{cur_f}', expected '{ref_f}')"
-                    )
-            # If we get here, counts differ (already handled above) but
-            # technically different sets
+        required_extras = required_extras_for(role)
+        missing_extras = required_extras - role_fields
+        if missing_extras:
+            missing_list = ", ".join(sorted(missing_extras))
             return 1, (
-                f"FAIL: {role}: field names mismatch "
-                f"(has {role_fields}, expected {reference_fields})"
+                f"FAIL: {role}: missing role-specific required field(s): "
+                f"{missing_list}. The {role} contract MUST carry these extras: "
+                f"{sorted(required_extras)}"
             )
 
     n = len(role_names)
-    return 0, f"PASS: all {n} roles carry identical Output contract"
+    # Note: do not name role-specific extras in PASS message — they vary
+    # by role and listing them in a per-role table would be busywork.
+    # The FAIL messages above already name them precisely.
+    extras_summary = ", ".join(
+        f"{role}={len(ROLE_REQUIRED_EXTRAS.get(role, []))} extra(s)"
+        for role in role_names
+        if ROLE_REQUIRED_EXTRAS.get(role)
+    )
+    if extras_summary:
+        return 0, (
+            f"PASS: all {n} roles carry the 6 core Output-contract fields "
+            f"(role-specific extras allowed: {extras_summary})"
+        )
+    return 0, f"PASS: all {n} roles carry the 6 core Output-contract fields"
 
 
 def main():
