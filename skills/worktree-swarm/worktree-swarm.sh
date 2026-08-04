@@ -92,6 +92,22 @@ do_alloc() {
   for t in "${VALID_TYPES[@]}"; do [[ "$type" == "$t" ]] && ok=1; done
   [[ $ok -eq 1 ]] || die "alloc: invalid type '$type' (use: ${VALID_TYPES[*]})"
 
+  # Pre-flight --base validation. Two failure modes to detect:
+  # (a) malformed hex (not all [0-9a-f] chars in the right length)
+  # (b) well-formed but not a commit in this repo
+  if [[ -n "$base_sha" ]]; then
+    # Accept 7+ hex chars (git short-SHA) or 40 hex chars (full SHA).
+    if ! [[ "$base_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
+      die "alloc: --base '$base_sha' is not a valid SHA (must be 7-40 hex chars)"
+    fi
+    local _type
+    _type=$(git -C "$REPO_ROOT" cat-file -t "$base_sha" 2>/dev/null) || \
+      die "alloc: --base '$base_sha' is not a known commit in this repo"
+    if [[ "$_type" != "commit" ]]; then
+      die "alloc: --base '$base_sha' is a $_type, not a commit"
+    fi
+  fi
+
   [[ -z "$base_sha" ]] && base_sha=$(short_sha HEAD)
   [[ ${#base_sha} -gt 7 ]] && base_sha="${base_sha:0:7}"
 
