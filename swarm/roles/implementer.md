@@ -74,8 +74,19 @@ each field should read.
     to prove zero references remain.
   - This is an acceptance gate, not an extra optional check.
 
-9. Single scope, single commit onto `<worker_branch>`. No bundling.
-10. Report via `complete_node` with all gate outputs.
+9. **Worker artifact (`worker.json`) handoff.** At the moment of
+   `complete_node`, run `scripts/worker-finish.sh` (canonical writer — sets
+   env vars from your local context). Required: `WORKER_BRANCH`,
+   `WORKER_COMMIT`, `WORKER_SUMMARY`, `WORKER_FILES_CHANGED`
+   (space-separated), `WORKER_TEST_MODULE`, `WORKER_CONFIDENCE`. Optional:
+   `WORKER_OUTPUT` (default `./worker.json`), `WORKER_BLOCKERS` (JSON
+   array, default `[]`). The script validates inputs and writes
+   atomically (write to `.tmp`, then `mv`). Failure mode to avoid:
+   committing the `worker.json` in the implementation commit diff. Add it
+   via `git commit --amend --no-edit` ONLY if you forgot; in any case,
+   never let it appear in `git diff main..<branch>`.
+10. Single scope, single commit onto `<worker_branch>`. No bundling.
+11. Report via `complete_node` with all gate outputs.
 
 ## Output schema
 
