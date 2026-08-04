@@ -409,6 +409,13 @@ window. This is **not a failure mode** — it is the contract working.
    without helping root notice workers any faster than the worker's
    own handoff. There is no `schedule(target=resume, wake_in_minutes=N)`
    on the spawn path.
+
+   **Exception (cross-swarm contexts).** If root is known to be in a
+   cross-swarm state — i.e., any active worker has `blockers[]`
+   containing `cross-swarm: dm channel unreachable` — root may use
+   `schedule(target=ambient, ...)` if the runtime supports it. The
+   5-min forced-tick is NOT available otherwise; root relies on the
+   next natural wakeup to surface silent dead workers.
 3. **Mandatory passive inspection at every decision point.** Workers
    emit two signals on completion: a durable commit (with embedded
    artifact) and a live handoff (`complete_node` / `report`). The two
@@ -422,11 +429,18 @@ window. This is **not a failure mode** — it is the contract working.
    - **a worker handoff arrives** — to cross-check the handoff against
      the commit's artifact (artifact SHA must equal `HEAD` of branch;
      `type` must be `final`, not `progress`);
-   - **5 minutes elapsed on an active branch** with no commit newer
-     than that mark — `git log --since=<5min-ago>` must show at least
-     one progress commit per active worker; otherwise the worker is
-     silently stuck even without a `stuck` dm (see Turn 5 in
+   - **root's natural reflection between actions** — between finishing
+     one integration step and starting the next — `git log <branch>`
+     must show at least one progress commit per active worker since
+     the previous decision point; otherwise the worker is silently
+     stuck even without a `stuck` dm (see Turn 5 in
      `docs/LIVENESS_VALIDATION.md`).
+
+   Decision points are moments when root is already awake and
+   processing — not a forced schedule. **This is aspirational, not
+   enforceable.** LLM sessions have no real-time timer; root cannot
+   force itself to wake on a fixed cadence. Silent dead workers are
+   caught on the next wakeup, not on a 5-min clock.
    This is not a poll — it is a passive read. Cost: one tool call per
    branch per decision point. The `last_heartbeat` field in
    `.jcode/worktree-manifest.json` is the worktree-cleanup detector;
@@ -586,13 +600,17 @@ The tick is **not** on a fixed timer. Root runs it at decision points:
 
 - **User message arrives** — before composing the next action.
 - **Worker handoff arrives** — to cross-check.
-- **5 minutes elapsed on an active branch** with no commit since.
+- **Root's natural reflection between actions** — between finishing
+  one integration step and starting the next.
 - **Per-task natural break** — when root is about to integrate or
   spawn something new.
 
-The "5-minute mark" is the soft tick rate. Idling for hours on a
+Decision points are moments when root is already awake and
+processing — not a forced schedule. **This is aspirational, not
+enforceable.** LLM sessions have no real-time timer; the tick fires
+on the next wakeup, not on a 5-min clock. Idling for hours on a
 known-silent worker is no longer acceptable; the postman tick forces
-periodic re-classification.
+periodic re-classification whenever root is awake and processing.
 
 ### Tick output
 
