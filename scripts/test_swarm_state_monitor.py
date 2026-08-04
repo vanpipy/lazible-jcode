@@ -151,10 +151,13 @@ class TestTickAgeFilter(unittest.TestCase):
         self.assertIn("feat/recent_abcdef0", output)
         self.assertNotIn("feat/old-progress_abcdef0", output)
         self.assertNotIn("feat/old-final_abcdef0", output)
+        # Case (c): some visible + some hidden — unified wording with case (b).
         self.assertIn(
-            "(2 stale branches hidden; pass --include-stale to show all)",
+            "(2 worker branch(es) hidden; pass --include-stale to show all)",
             output,
         )
+        # The old "stale branches hidden" wording is no longer used.
+        self.assertNotIn("stale branches hidden", output)
         self.assertIn("within --since=1h filter", output)
 
     def test_include_stale_bypasses_age_filter(self) -> None:
