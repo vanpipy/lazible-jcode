@@ -30,7 +30,10 @@ import uuid
 from pathlib import Path
 
 REPO_ROOT = Path("/home/leroy/Project/lazible-jcode").resolve()
-SCRIPT = Path("/home/leroy/.jcode/skills/worktree-swarm/worktree-swarm.sh")
+SCRIPT = Path(os.environ.get(
+    "WORKTREE_SWARM_SCRIPT",
+    "/home/leroy/.jcode/skills/worktree-swarm/worktree-swarm.sh",
+))
 MANIFEST = REPO_ROOT / ".jcode" / "worktree-manifest.json"
 
 
@@ -291,6 +294,99 @@ class TestWorktreeSwarmE2E(unittest.TestCase):
         # Cleanup
         for label in labels:
             run_script("teardown", label)
+
+    # ── R4b ─────────────────────────────────────────────────────────────────
+    def test_r4b_status_existing_label_returns_tsv(self):
+        """Round 4b: `status <label>` on an existing manifest entry returns
+        a single tab-separated line: <worktree_path>\t<branch>\t<base_commit>\t<created_at_epoch>\t<age_hours>."""
+        sha = short_sha()
+        label = f"feat-r4b-{sha}"
+
+        rc, out, _ = run_script("alloc", "r4b", "--type", "feat")
+        self.assertEqual(rc, 0, f"alloc failed")
+
+        # Build expected created_at from manifest (frozen at alloc time)
+        manifest_workers = [w for w in json.loads(MANIFEST.read_text())["workers"] if w["label"] == label]
+        self.assertEqual(len(manifest_workers), 1, f"expected one manifest entry for {label}")
+        expected_created_at = manifest_workers[0]["created_at"]
+
+        rc, out, err = run_script("status", label)
+        self.assertEqual(rc, 0, f"status failed: rc={rc} stderr={err!r}")
+        self.assertEqual(err, "", f"status must not write to stderr on success: {err!r}")
+
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1, f"status output must be exactly one line: {out!r}")
+        fields = lines[0].split("\t")
+        self.assertEqual(len(fields), 5, f"status output must have 5 tab-separated fields: {lines[0]!r}")
+
+        wt_path, branch, base_commit, created_at_str, age_h_str = fields
+        self.assertTrue(wt_path.startswith("/") and len(wt_path) > 1,
+                        f"worktree_path looks invalid: {wt_path!r}")
+        self.assertTrue(branch.startswith("feat/r4b_"),
+                        f"branch looks invalid: {branch!r}")
+        self.assertEqual(base_commit, sha,
+                         f"base_commit must equal short HEAD: got {base_commit!r} expected {sha!r}")
+        self.assertEqual(int(created_at_str), expected_created_at,
+                         f"created_at_epoch must match manifest: got {created_at_str} expected {expected_created_at}")
+        # age_hours must parse as a non-negative float
+        self.assertGreaterEqual(float(age_h_str), 0.0,
+                                f"age_hours must be non-negative: {age_h_str!r}")
+        # Sanity: age_hours should be small (test runs in seconds, well under 1h)
+        self.assertLess(float(age_h_str), 1.0,
+                        f"age_hours should be < 1h for a fresh alloc: {age_h_str!r}")
+
+        # Cleanup
+        run_script("teardown", label)
+
+    # ── R4c ─────────────────────────────────────────────────────────────────
+    def test_r4c_status_missing_label_errors(self):
+        """Round 4c: `status <label>` on a label absent from a non-empty
+        manifest exits non-zero with stderr matching
+        `error: status: no manifest entry for '<label>'`."""
+        sha = short_sha()
+        present_label = f"feat-r4c-{sha}"
+        missing_label = f"feat-nonexistent-doesnotexist-{sha}"
+
+        # Allocate a worker so the manifest is non-empty (manifest must exist
+        # for the script to reach the "label not found" branch).
+        rc, _, _ = run_script("alloc", "r4c", "--type", "feat")
+        self.assertEqual(rc, 0, "alloc for R4c setup must succeed")
+
+        # Sanity: the present_label is now in the manifest
+        self.assertTrue(any(
+            w["label"] == present_label
+            for w in manifest_workers()
+        ), "R4c setup: manifest must contain present_label")
+
+        rc, out, err = run_script("status", missing_label)
+        self.assertNotEqual(rc, 0, f"status on missing label must exit non-zero: rc={rc}")
+        expected = f"error: status: no manifest entry for '{missing_label}'"
+        self.assertEqual(err.strip(), expected,
+                         f"stderr mismatch: got {err.strip()!r} expected {expected!r}")
+        self.assertEqual(out, "", f"status must not write to stdout on error: {out!r}")
+
+        # Cleanup the R4c setup worker
+        run_script("teardown", present_label)
+
+    # ── R4d ─────────────────────────────────────────────────────────────────
+    def test_r4d_status_no_manifest_errors(self):
+        """Round 4d: `status <label>` when the manifest file does not
+        exist exits non-zero with a clear error message."""
+        # Ensure manifest is absent by removing it directly (setUp also
+        # calls force_cleanup_all which may have already torn down workers).
+        if MANIFEST.exists():
+            MANIFEST.unlink()
+        self.assertFalse(MANIFEST.exists(), "manifest must not exist before test")
+
+        rc, out, err = run_script("status", "anylabel-anything")
+        self.assertNotEqual(rc, 0, f"status with no manifest must exit non-zero: rc={rc}")
+        # Error must mention "status" and indicate no manifest. Specific wording
+        # is implementation choice; we assert on key fragments only.
+        self.assertIn("status", err.lower(),
+                      f"stderr must mention 'status': {err!r}")
+        self.assertIn("manifest", err.lower(),
+                      f"stderr must mention 'manifest': {err!r}")
+        self.assertEqual(out, "", f"status must not write to stdout on error: {out!r}")
 
     # ── R5 ──────────────────────────────────────────────────────────────────
     def test_r5_double_alloc_refused(self):
