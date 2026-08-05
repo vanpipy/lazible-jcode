@@ -63,6 +63,7 @@ Wire format is JSON-RPC 2.0 over stdio, one object per line.
 | --- | --- |
 | `JCODE_TICK_SOCKET` | Override the jcode unix socket path (test escape hatch). |
 | `JCODE_TICK_STATE_DIR` | Override the parent of `jobs.jsonl`. Default: `$XDG_STATE_HOME/jcode/tick/` or `~/.local/state/jcode/tick/`. |
+| `JCODE_TICK_REPO_PATH` | Absolute path to the repo whose swarm JSON holds the coordinator fallback. Override `git rev-parse --show-toplevel`. Use this when the daemon is launched outside the repo's working directory (e.g. as a jcode MCP subprocess). |
 | `JCODE_SOCKET` | jcode's own socket override (read by tick too). |
 | `JCODE_RUNTIME_DIR` | jcode runtime dir (read by tick too). |
 | `XDG_RUNTIME_DIR` | Linux runtime dir (read by tick too). |
