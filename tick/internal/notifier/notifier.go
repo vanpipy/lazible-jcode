@@ -32,6 +32,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -114,8 +115,28 @@ type wireResponse struct {
 // from jcode, OR on transport error, retry once via the swarm
 // coordinator (if repoPath was configured at construction).
 //
+// Self-wake detection: if repoPath is configured and the target session
+// matches the swarm coordinator's session id, NotifySession refuses
+// with ErrSelfWake and performs no socket I/O. The jcode runtime
+// silently swallows NotifySession calls targeted at the coordinator
+// when the coordinator is in "waiting for user input" state — the daemon
+// would otherwise ack the request, remove the job from store, and the
+// message would never be delivered. See docs/TICK_SELF_WAKE_GAP.md.
+//
+// Detection is fail-safe: if coordinator.Lookup errors (missing swarm
+// JSON, read error, etc.) the check is skipped and normal flow proceeds.
+//
 // Returns the final outcome. ctx may be used for cancellation.
 func (n *Notifier) NotifySession(ctx context.Context, sessionID, message string) error {
+	if n.repoPath != "" {
+		if coordID, cerr := coordLookup(n.repoPath); cerr == nil && coordID == sessionID {
+			if _, already := selfWakeLogged.LoadOrStore(sessionID, struct{}{}); !already {
+				fmt.Fprintf(os.Stderr, "tick: self-wake refused for session=%s; job will remain in store as warning\n", sessionID)
+			}
+			return ErrSelfWake
+		}
+	}
+
 	if err := n.send(ctx, sessionID, message); err != nil {
 		if n.repoPath == "" {
 			return err
@@ -141,6 +162,22 @@ var dialContext = func(ctx context.Context, network, addr string) (net.Conn, err
 	var d net.Dialer
 	return d.DialContext(ctx, network, addr)
 }
+
+// coordLookup is a package-level seam for tests to substitute the
+// coordinator session ID lookup. Production code uses coordinator.Lookup.
+var coordLookup = coordinator.Lookup
+
+// ErrSelfWake is returned when NotifySession is called with a
+// wake_session_id that matches the swarm coordinator. Self-wake is
+// silently swallowed by the jcode runtime in "waiting for user input"
+// sessions; the daemon refuses the job to make the failure visible.
+// See docs/TICK_SELF_WAKE_GAP.md for the empirical reproduction
+// (2026-08-05).
+var ErrSelfWake = errors.New("tick: self-wake refused; NotifySession on the coordinator session is silently swallowed by the jcode runtime; use a different scheduler or target another session")
+
+// selfWakeLogged deduplicates the stderr warning per session ID so a
+// burst of self-wakes does not flood the daemon log.
+var selfWakeLogged sync.Map // map[string]struct{}
 
 // send is the single-attempt helper. Returns nil on success, an error
 // otherwise. The error is meant for the caller to log / fallback on.
