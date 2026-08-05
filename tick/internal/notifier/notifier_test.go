@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -42,6 +43,19 @@ func withDial(t *testing.T, fn dialFunc) {
 	orig := dialContext
 	dialContext = fn
 	t.Cleanup(func() { dialContext = orig })
+}
+
+// coordLookupFunc replaces coordinator.Lookup for tests.
+type coordLookupFunc func(repoPath string) (string, error)
+
+// withCoordLookup saves and restores the coordLookup package var. Use
+// this to inject fakes that simulate self-wake, missing swarm state, or
+// different coordinator identities without touching the on-disk JSON.
+func withCoordLookup(t *testing.T, fn coordLookupFunc) {
+	t.Helper()
+	orig := coordLookup
+	coordLookup = fn
+	t.Cleanup(func() { coordLookup = orig })
 }
 
 // TestNotifier_WireShape asserts the exact JSON wire format the daemon
@@ -128,5 +142,118 @@ func TestNotifier_DialFailureReturnsError(t *testing.T) {
 	err := n.NotifySession(context.Background(), "session_x", "hi")
 	if err == nil {
 		t.Fatal("expected error when dial fails, got nil")
+	}
+}
+
+// TestNotifier_DetectsSelfWake asserts that NotifySession short-circuits
+// with ErrSelfWake when the wake target matches the swarm coordinator's
+// session id. The dial must NOT be invoked — this is the entire point of
+// the check: refuse the job upfront so the daemon never sends a request
+// that the jcode runtime will silently swallow.
+//
+// See docs/TICK_SELF_WAKE_GAP.md for the empirical reproduction.
+func TestNotifier_DetectsSelfWake(t *testing.T) {
+	const target = "session_fox_42"
+
+	withCoordLookup(t, func(repoPath string) (string, error) {
+		return target, nil // coordinator IS the target → self-wake
+	})
+
+	var dialCount int
+	withDial(t, func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialCount++
+		t.Fatalf("dial must NOT be invoked on self-wake (call #%d)", dialCount)
+		return nil, errors.New("unreachable: dial was called")
+	})
+
+	n := New("/tmp/fake-jcode.sock", "any-repo")
+	err := n.NotifySession(context.Background(), target, "wake up")
+	if !errors.Is(err, ErrSelfWake) {
+		t.Fatalf("expected ErrSelfWake, got: %v", err)
+	}
+	if dialCount != 0 {
+		t.Errorf("dial must not be invoked on self-wake, was called %d times", dialCount)
+	}
+}
+
+// TestNotifier_SelfWake_BypassesFallback asserts that the typed sentinel
+// ErrSelfWake is returned even if the dial would have succeeded. The
+// fallback retry path that runs after a primary failure must NOT mask
+// the self-wake error — the daemon needs to see ErrSelfWake specifically
+// so it can keep the job in store as a post-mortem record.
+func TestNotifier_SelfWake_BypassesFallback(t *testing.T) {
+	const target = "session_fox_42"
+
+	withCoordLookup(t, func(repoPath string) (string, error) {
+		return target, nil
+	})
+
+	// Even if dial succeeds (jcode would ack the self-wake), we must
+	// refuse upfront. The dial mock returning success is the dangerous
+	// case the daemon fix is meant to intercept.
+	withDial(t, func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return &fakeConn{readBuf: strings.NewReader(`{"type":"done","id":1}` + "\n")}, nil
+	})
+
+	n := New("/tmp/fake-jcode.sock", "any-repo")
+	err := n.NotifySession(context.Background(), target, "wake up")
+	if err == nil {
+		t.Fatal("expected ErrSelfWake, got nil")
+	}
+	if !errors.Is(err, ErrSelfWake) {
+		t.Fatalf("expected ErrSelfWake sentinel, got: %v", err)
+	}
+}
+
+// TestNotifier_NoSelfWake_WhenCoordinatorDifferent asserts that the
+// self-wake check does NOT fire when the coordinator is a different
+// session than the wake target. This is the normal path — most wake
+// jobs target non-coordinator sessions.
+func TestNotifier_NoSelfWake_WhenCoordinatorDifferent(t *testing.T) {
+	const target = "session_fox_42"
+	const coord = "session_other"
+
+	withCoordLookup(t, func(repoPath string) (string, error) {
+		return coord, nil
+	})
+
+	resp := []byte(`{"type":"done","id":1}` + "\n")
+	conn := &fakeConn{readBuf: strings.NewReader(string(resp))}
+	withDial(t, func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return conn, nil
+	})
+
+	n := New("/tmp/fake-jcode.sock", "any-repo")
+	if err := n.NotifySession(context.Background(), target, "wake up"); err != nil {
+		t.Fatalf("expected nil error when coordinator differs, got: %v", err)
+	}
+
+	// Wire payload must still be sent (existing behavior preserved).
+	if conn.written.Len() == 0 {
+		t.Fatal("expected wire payload to be written, got empty buffer")
+	}
+}
+
+// TestNotifier_CoordinatorLookupError_DoesNotFalsePositive asserts that
+// when coordinator.Lookup fails (no swarm JSON, read error, etc.), the
+// self-wake check is skipped and normal flow proceeds. The daemon must
+// never refuse a wake job just because it couldn't read its own state
+// file — that would be a self-inflicted outage on every machine that
+// runs the daemon outside an active swarm.
+func TestNotifier_CoordinatorLookupError_DoesNotFalsePositive(t *testing.T) {
+	withCoordLookup(t, func(repoPath string) (string, error) {
+		return "", errors.New("no swarm state")
+	})
+
+	resp := []byte(`{"type":"done","id":1}` + "\n")
+	conn := &fakeConn{readBuf: strings.NewReader(string(resp))}
+	withDial(t, func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return conn, nil
+	})
+
+	n := New("/tmp/fake-jcode.sock", "any-repo")
+	err := n.NotifySession(context.Background(), "session_fox_42", "wake up")
+	if err != nil {
+		t.Fatalf("expected nil error when coordinator lookup fails (fail-safe), got: %v", err)
 	}
 }

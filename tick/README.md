@@ -81,6 +81,7 @@ are dropped (the daemon was down too long for them to be meaningful).
   a server error or the socket is unreachable, the daemon retries once
   with the swarm coordinator (read from `~/.jcode/state/swarm/*.json`),
   prefixing the message with `[tick-fallback] target=X dead`.
+- **Self-wake detection**: when `notify_session` targets the swarm coordinator's own session_id, the daemon refuses with `ErrSelfWake` (see `docs/TICK_SELF_WAKE_GAP.md`). Prevents silent loss when agents try to self-remind via tick; jobs are kept in store as a permanent warning record. Detection compares the wake target against `coordinator.Lookup(repoPath)`; if the coordinator JSON is missing or unreadable, detection is skipped (fail-safe).
 - **Transport errors**: logged to stderr; the job is not retried by the
   daemon (caller is responsible for re-submitting if critical).
 
