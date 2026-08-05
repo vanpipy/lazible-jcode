@@ -111,7 +111,7 @@ class TestExecBits(unittest.TestCase):
         # that drops the description gets caught here, not in review.
         # The help text uses numbered bullets ("  1.", "  2.", ...) rather
         # than "Step N" — match the actual output, not the AGENTS.md prose.
-        self.assertIn("Runs 5 steps", result.stdout, "--help output should advertise the linear step structure")
+        self.assertIn("Runs 6 steps", result.stdout, "--help output should advertise the linear step structure")
         for step_label in (
             "  1.",  # Install jcode binary
             "  2.",  # Symlink swarm/...
