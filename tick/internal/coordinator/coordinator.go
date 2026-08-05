@@ -129,9 +129,25 @@ func stateDir() (string, error) {
 }
 
 // RepoPathFromCwd returns the absolute repo path (without trailing
-// .git) for the current working directory, via `git rev-parse
-// --show-toplevel`. If the cwd is not inside a git repo, returns "".
+// .git) to use as the swarm coordinator fallback target.
+//
+// Resolution order:
+//  1. $JCODE_TICK_REPO_PATH (explicit override; set this in the MCP
+//     config `env` block when the daemon is launched outside the
+//     repo's working directory — common with jcode's MCP subprocess)
+//  2. `git rev-parse --show-toplevel` from the current working directory
+//  3. "" (empty) — caller treats as "no repo / no fallback target"
+//
+// The override exists so that MCP-launched daemon processes, which
+// inherit CWD != repo path, can still locate the swarm JSON for
+// coordinator fallback (and therefore enable the self-wake detection
+// gate added in 719e16b). Without it, the notifier's fail-safe guard
+// `if n.repoPath != ""` keeps detection off in the very environment
+// the fix was designed for.
 func RepoPathFromCwd() string {
+	if p := os.Getenv("JCODE_TICK_REPO_PATH"); p != "" {
+		return p
+	}
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.Output()
