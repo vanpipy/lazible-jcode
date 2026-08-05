@@ -95,4 +95,18 @@ grep -Fqx 'DRYRUN: PASS' "$output_file" || {
 }
 [[ ! -e "$sim_home" && ! -L "$sim_home" ]] || fail "simulated home was not removed after exit"
 
+# ── mcp.json / tick registration contract ─────────────────────────────────────
+# install.sh step 6 (build tick + merge mcpServers.tick into ~/.jcode/mcp.json)
+# was added on top of the dryrun scaffolding, but install-dryrun.sh only
+# mirrors the 5 symlink steps + jcode binary stub. The dryrun's --help text
+# itself, however, is owned by the real install.sh and must reflect the new
+# mcp.json behavior so anyone reading the help sees the tick registration
+# contract. Assert that here so a future refactor that drops the mention
+# is caught in CI.
+install_sh_help="$(HOME="$sim_home" bash "$repo_root/scripts/install.sh" --help)"
+echo "$install_sh_help" | grep -qi 'mcp\.json' \
+  || fail "install.sh --help output should mention mcp.json (step 6 tick registration)"
+echo "$install_sh_help" | grep -qi 'tick entry\|jcode-swarm-tick' \
+  || fail "install.sh --help output should mention tick entry / jcode-swarm-tick"
+
 printf 'test_install_dryrun: PASS\n'
