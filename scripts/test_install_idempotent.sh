@@ -306,6 +306,101 @@ ORIG_BYTES="$(wc -c < "$MCP_JSON")"
 grep -q 'mcpServers' "$MCP_JSON" \
   && fail "Mode E4: install must not inject mcpServers into a malformed file"
 
+# Sub-scenario E5: valid mcp.json with NO tick entry + other MCP servers.
+# Install must merge tick into the existing structure WITHOUT clobbering the
+# other entries. This is the regression test for the mv-then-FileNotFoundError
+# bug where install.sh step 6 mv'd the original mcp.json to .bak.<ts> before
+# running the write heredoc that tried to `open(mcp_json)` — guaranteed
+# FileNotFoundError because the file was already moved away. After the fix
+# (cp instead of mv), the heredoc reads the original in place, then the
+# atomic os.replace swaps in the merged content.
+info "Mode E5: valid mcp.json with other entries, no tick → preserve + merge"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME" "$JCODE_HOME"
+MCP_JSON="$JCODE_HOME/mcp.json"
+OTHER_CMD="$FAKE_BIN_DIR/other-mcp-server"
+# Pre-create a valid mcp.json with another MCP server, no tick entry.
+cat > "$MCP_JSON" <<JSON
+{
+  "mcpServers": {
+    "other": {
+      "command": "$OTHER_CMD",
+      "args": ["serve"],
+      "env": {"TOKEN": "fake"},
+      "shared": false
+    }
+  }
+}
+JSON
+PRE_HASH="$(sha256sum "$MCP_JSON" | awk '{print $1}')"
+HOME="$FAKE_HOME" PATH="$FAKE_PATH" bash "$FAKE_REPO/scripts/install.sh" >"$TMP/mode_e5.log" 2>"$TMP/mode_e5.err"
+mode_e5_status=$?
+[[ $mode_e5_status -eq 0 ]] || fail "Mode E5: install must exit 0 on valid mcp.json with other entries (got $mode_e5_status, stderr: $(cat "$TMP/mode_e5.err"))"
+# The other entry must be preserved AND tick must be merged.
+python3 -c '
+import json, sys
+with open(sys.argv[1]) as f: d = json.load(f)
+assert "mcpServers" in d, "missing mcpServers key after merge"
+assert "other" in d["mcpServers"], "other entry must be preserved"
+assert "tick" in d["mcpServers"], "tick entry must be added"
+o = d["mcpServers"]["other"]
+assert o.get("command", "").endswith("other-mcp-server"), "other.command must be preserved"
+assert o.get("args") == ["serve"], "other.args must be preserved"
+assert o.get("env", {}).get("TOKEN") == "fake", "other.env.TOKEN must be preserved"
+assert o.get("shared") is False, "other.shared must be preserved (False, not coerced to True)"
+t = d["mcpServers"]["tick"]
+assert t.get("shared") is True, "tick entry must have shared=true"
+assert t.get("args") == ["mcp"], "tick entry args must include mcp subcommand"
+print("OK")
+' "$MCP_JSON" || fail "Mode E5: mcp.json content malformed (other entry not preserved or tick not merged)"
+
+# Original content must be backed up to .bak.<ts> AND the .bak must match the
+# pre-install sha (proves cp-not-mv semantics: backup is the pre-merge state).
+BAK_FILE="$(ls -t "$MCP_JSON".bak.* 2>/dev/null | head -n1 || true)"
+[[ -n "$BAK_FILE" ]] || fail "Mode E5: must back up the original mcp.json before merging"
+POST_BAK_HASH="$(sha256sum "$BAK_FILE" | awk '{print $1}')"
+[[ "$POST_BAK_HASH" == "$PRE_HASH" ]] \
+  || fail "Mode E5: backup must hold the pre-merge content (pre=$PRE_HASH bak=$POST_BAK_HASH)"
+
+# Sub-scenario E6: recovery from a prior crashed install — mcp.json missing,
+# .bak.<ts> present. Install must restore from .bak before merging, so the
+# user's original mcpServers config survives. This is the safety net for the
+# pre-fix install runs that mv'd the file away.
+info "Mode E6: mcp.json missing but .bak.<ts> exists → restore + merge"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME" "$JCODE_HOME"
+MCP_JSON="$JCODE_HOME/mcp.json"
+# Stage the broken state: original moved aside by a pre-fix install.
+ORIG_DIR="$JCODE_HOME"
+ORIG_BACKUP="$ORIG_DIR/mcp.json.bak.1785937000"
+cat > "$ORIG_BACKUP" <<JSON
+{
+  "mcpServers": {
+    "recovered": {
+      "command": "$FAKE_BIN_DIR/recovered-server",
+      "args": ["run"],
+      "shared": true
+    }
+  }
+}
+JSON
+# mcp.json itself is absent — simulate the post-crash state.
+[[ ! -e "$MCP_JSON" ]] || fail "Mode E6: precondition — mcp.json must be absent"
+HOME="$FAKE_HOME" PATH="$FAKE_PATH" bash "$FAKE_REPO/scripts/install.sh" >"$TMP/mode_e6.log" 2>"$TMP/mode_e6.err"
+mode_e6_status=$?
+[[ $mode_e6_status -eq 0 ]] || fail "Mode E6: install must exit 0 on recovered state (got $mode_e6_status, stderr: $(cat "$TMP/mode_e6.err"))"
+grep -q 'restoring original' "$TMP/mode_e6.err" \
+  || fail "Mode E6: must log 'restoring original' on recovery (stderr: $(cat "$TMP/mode_e6.err"))"
+# Both the recovered entry AND the new tick entry must be present.
+python3 -c '
+import json, sys
+with open(sys.argv[1]) as f: d = json.load(f)
+assert "mcpServers" in d, "missing mcpServers key after recovery"
+assert "recovered" in d["mcpServers"], "recovered entry must be present after recovery"
+assert "tick" in d["mcpServers"], "tick entry must be merged after recovery"
+print("OK")
+' "$MCP_JSON" || fail "Mode E6: recovered mcp.json missing recovered or tick entry"
+
 # ── final report ─────────────────────────────────────────────────────────────
 info "ALL CHECKS PASSED"
 info "  Mode A (overwrite):  $BAKS_A1 → $BAKS_A2 .bak files (rerun backed up + re-linked)"
@@ -316,3 +411,5 @@ info "  Mode E1: missing mcp.json created with mcpServers.tick (shared=true)"
 info "  Mode E2: rerun with tick present → no .bak, content unchanged (IDEMPOTENT unset)"
 info "  Mode E3: IDEMPOTENT=1 rerun → no .bak, content unchanged"
 info "  Mode E4: malformed mcp.json → warn + skip, install exits 0"
+info "  Mode E5: valid mcp.json with other entries → preserve + merge (no mv-crash)"
+info "  Mode E6: mcp.json missing + .bak.<ts> present → restore from .bak + merge"

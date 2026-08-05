@@ -343,6 +343,20 @@ else
     local existing=""
     local has_existing_tick=0
 
+    # Recovery from a prior interrupted install: if mcp.json is missing but a
+    # .bak.<ts> exists (the pre-fix bug moved the original aside before the
+    # write heredoc crashed — leaving mcp.json absent until the next install),
+    # restore the most-recent backup. This makes the installer idempotent
+    # across the broken state without forcing the user to manually recover
+    # their mcpServers config. The recovery is a no-op once the file exists.
+    if [[ ! -e "$mcp_json" ]]; then
+      latest_bak="$(ls -t "$mcp_json".bak.* 2>/dev/null | head -n1 || true)"
+      if [[ -n "$latest_bak" && -e "$latest_bak" ]]; then
+        warn "mcp.json missing but $latest_bak exists — restoring original"
+        cp "$latest_bak" "$mcp_json"
+      fi
+    fi
+
     if [[ -f "$mcp_json" ]]; then
       # JSON safety: bail before rewriting if the file is unparseable.
       if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$mcp_json" 2>/dev/null; then
@@ -370,8 +384,14 @@ PY
     fi
 
     # Back up only when the file actually exists and is about to be rewritten.
+    # Use cp (not mv) so the heredoc below can still open mcp_json to read the
+    # existing content. mv would rename the file away and the write heredoc
+    # would crash with FileNotFoundError on `open(mcp_json)` — the regression
+    # Mode E5 reproduces. cp leaves mcp_json in place so the heredoc reads the
+    # original, then atomic-replaces it with the merged content; the .bak.<ts>
+    # snapshot still holds the pre-merge state.
     if [[ -n "$existing" ]]; then
-      mv "$mcp_json" "$mcp_json.bak.$TIMESTAMP"
+      cp "$mcp_json" "$mcp_json.bak.$TIMESTAMP"
       warn "backed up $mcp_json → $mcp_json.bak.$TIMESTAMP"
     fi
 
