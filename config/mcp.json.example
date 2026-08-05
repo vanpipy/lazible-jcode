@@ -6,13 +6,29 @@
     "entries are recognized and skipped with a log line.",
     "On first run, jcode imports MCP servers from ~/.claude.json (falling",
     "back to ~/.claude/mcp.json) and ~/.codex/config.toml if this file does",
-    "not exist yet."
+    "not exist yet.",
+    "",
+    "The tick entry below is the canonical reference shape, but install.sh",
+    "step 6 is responsible for merging it into the live ~/.jcode/mcp.json",
+    "(see scripts/install.sh, the 'merge_tick_mcp_entry' block inside step 6).",
+    "The merge is idempotent: re-runs of install.sh skip when the tick entry",
+    "is already present (no rewrite, no .bak). On a fresh install with no",
+    "mcp.json, step 6 creates the file from scratch. If the existing",
+    "mcp.json is malformed JSON, the install warns and skips the merge so",
+    "the rest of the install still succeeds."
   ],
   "mcpServers": {
     "filesystem": {
       "_comment": "Example stdio MCP server. Replace the path with a real binary.",
       "command": "/path/to/mcp-filesystem-server",
       "args": ["--root", "/workspace"],
+      "env": {},
+      "shared": true
+    },
+    "tick": {
+      "_comment": "jcode-swarm-tick daemon. install.sh step 6 registers this; the example below shows the shape but the path is rewritten by the installer to the resolved $INSTALL_DIR/jcode-swarm-tick binary location.",
+      "command": "/home/leroy/.local/bin/jcode-swarm-tick",
+      "args": ["mcp"],
       "env": {},
       "shared": true
     }

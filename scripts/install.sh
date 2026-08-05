@@ -74,8 +74,11 @@ overwrites the destination unconditionally:
      so swarm-state-monitor.py, conflict-detect.py, check-*.py are reachable
      from any cwd
   6. Build the tick/ Go daemon (cd tick && go build) and copy the binary to
-     ~/.local/bin/jcode-swarm-tick. jcode spawns this as an MCP subprocess on
-     first use. Skipped silently if Go is not installed or tick/ is missing.
+     ~/.local/bin/jcode-swarm-tick. After the copy, merge a tick entry into
+     ~/.jcode/mcp.json (idempotent: skips silently when the entry is already
+     present, warns + skips on malformed JSON). jcode then spawns tick as
+     an MCP subprocess on first use. Skipped silently if Go is not installed
+     or tick/ is missing.
 
 Existing files at any destination are backed up to <dst>.bak.<timestamp> before
 being replaced, so rerunning is safe.
@@ -294,9 +297,10 @@ else
 fi
 
 # ── step 6: build + install tick daemon ───────────────────────────────────────
-# Build the tick/ Go daemon and copy the binary to ~/.local/bin/jcode-swarm-tick.
-# jcode spawns this as an MCP subprocess on first use; the agent then has
-# submit_job / cancel_job / list_jobs tools available (see swarm/roles/tick-user.md).
+# Build the tick/ Go daemon and copy the binary to ~/.local/bin/jcode-swarm-tick,
+# then merge a tick entry into ~/.jcode/mcp.json so jcode spawns the daemon as
+# an MCP subprocess on first use. The agent then has submit_job / cancel_job /
+# list_jobs tools available (see swarm/roles/tick-user.md).
 #
 # Skipped silently if Go is not installed or tick/ is missing — the rest of
 # the install still succeeds; jcode will just lack the tick MCP server.
@@ -324,6 +328,92 @@ else
   cp "$tick_bin" "$tick_dst"
   chmod 0755 "$tick_dst"
   info "installed $tick_dst (built from $repo_root/tick/)"
+
+  # Register the daemon with jcode by merging an entry into ~/.jcode/mcp.json.
+  # Idempotent: skips silently when the entry already exists under either
+  # mcpServers (canonical) or servers (legacy) — no rewrite, no .bak. If the
+  # file is missing, creates one with only mcpServers.tick. If the file exists
+  # but is malformed JSON, warns and skips (the install otherwise succeeds).
+  # Matches the `maybe_overwrite_*` discipline: backup ONLY when content
+  # actually changes; honor IDEMPOTENT implicitly (a skip when entry present
+  # is the same outcome in both modes).
+  merge_tick_mcp_entry() {
+    local mcp_json="$JCODE_HOME/mcp.json"
+    local tick_bin_path="$tick_dst"
+    local existing=""
+    local has_existing_tick=0
+
+    if [[ -f "$mcp_json" ]]; then
+      # JSON safety: bail before rewriting if the file is unparseable.
+      if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$mcp_json" 2>/dev/null; then
+        warn "mcp.json is malformed JSON — skipping tick merge (leave $mcp_json untouched)"
+        return 0
+      fi
+      # Probe both canonical + legacy keys for an existing tick entry.
+      has_existing_tick=$(MCP_JSON_PATH="$mcp_json" python3 - <<'PY'
+import json, os
+try:
+    with open(os.environ["MCP_JSON_PATH"]) as f: d = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    print(0); raise SystemExit
+for key in ("mcpServers", "servers"):
+    if isinstance(d.get(key), dict) and "tick" in d[key]:
+        print(1); raise SystemExit
+print(0)
+PY
+)
+      if [[ "$has_existing_tick" == "1" ]]; then
+        info "skipping: mcp.json already has tick entry (canonical or legacy key)"
+        return 0
+      fi
+      existing=1
+    fi
+
+    # Back up only when the file actually exists and is about to be rewritten.
+    if [[ -n "$existing" ]]; then
+      mv "$mcp_json" "$mcp_json.bak.$TIMESTAMP"
+      warn "backed up $mcp_json → $mcp_json.bak.$TIMESTAMP"
+    fi
+
+    # Atomic write: stage to <mcp_json>.new, then mv into place. Preserves
+    # the file if Python raises mid-write.
+    MCP_JSON_PATH="$mcp_json" TICK_BIN_PATH="$tick_bin_path" \
+    HAS_EXISTING="$existing" python3 - <<'PY'
+import json, os, sys
+mcp_json = os.environ["MCP_JSON_PATH"]
+tick_bin = os.environ["TICK_BIN_PATH"]
+has_existing = os.environ["HAS_EXISTING"] == "1"
+
+tick_entry = {
+    "command": tick_bin,
+    "args": ["mcp"],
+    "env": {},
+    "shared": True,
+}
+
+if has_existing:
+    with open(mcp_json) as f:
+        d = json.load(f)
+else:
+    d = {}
+
+# Always add under the canonical mcpServers key.
+d.setdefault("mcpServers", {})
+d["mcpServers"]["tick"] = tick_entry
+# If the legacy 'servers' key exists, mirror the entry there too — jcode
+# reads whichever key it finds first, so a legacy file picks up tick without
+# the user having to migrate.
+if isinstance(d.get("servers"), dict):
+    d["servers"]["tick"] = tick_entry
+
+stage = mcp_json + ".new"
+with open(stage, "w") as f:
+    json.dump(d, f, indent=2)
+os.replace(stage, mcp_json)
+PY
+    info "merged tick entry into $mcp_json"
+  }
+  merge_tick_mcp_entry
 fi
 
 # ── summary ────────────────────────────────────────────────────────────────────
@@ -336,6 +426,7 @@ info "   architecture:   $JCODE_HOME/ARCHITECTURE.md → $repo_root/swarm/ARCHIT
 info "   AGENTS.md:      $JCODE_HOME/AGENTS.md → $repo_root/AGENTS.md"
 info "   scripts:        $JCODE_HOME/scripts → $repo_root/scripts (added to PATH)"
 info "   tick binary:    $INSTALL_DIR/jcode-swarm-tick (built from $repo_root/tick/)"
+info "   tick MCP entry: $JCODE_HOME/mcp.json (merged mcpServers.tick; idempotent)"
 info ""
 info "Tip: re-running with IDEMPOTENT=1 skips symlinks that already point at"
 info "     the right target — no backups, no rewrites. See --help for details."

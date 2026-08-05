@@ -43,8 +43,11 @@ Output: a single static-ish binary at `./tick`.
 
 ## MCP tool contract
 
-jcode spawns `tick` as an MCP subprocess on first use and registers its
-tools. The tool surface is exactly three calls:
+tick is registered with jcode via `~/.jcode/mcp.json` — install.sh step 6
+is responsible for merging the `mcpServers.tick` entry into that file
+(idempotent: skipped silently when the entry is already present). Once
+registered, jcode spawns tick as an MCP subprocess on first use and
+exposes its tools. The tool surface is exactly three calls:
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
