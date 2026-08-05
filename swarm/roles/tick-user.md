@@ -11,6 +11,20 @@ You use the **tick** MCP server to schedule delayed wake-ups — either to yours
 
 ## When to NOT use submit_job
 
+- **Self-reminders (your own session as `wake_session_id`).**
+  Empirically confirmed 2026-08-05: `submit_job` with
+  `wake_session_id == your_session_id` is silently swallowed by the
+  jcode runtime. The daemon fires the job (removes it from
+  `jobs.jsonl`), but the payload never reaches your input stream.
+  Two reproductions in `docs/TICK_SELF_WAKE_GAP.md`. **Use**
+  cross-session tick (parent → worker) **instead**, write the
+  reminder into a git-commit or working-directory file, or run
+  `python3 scripts/swarm-state-monitor.py tick` inline at your next
+  decision point. As of branch `fix/tick-self-wake-detect_ffa4e25`,
+  the daemon detects self-wake and refuses with `ErrSelfWake`; if
+  you must register the intent, expect the daemon to keep it visible
+  in `list_jobs()` rather than delivering.
+
 - Already on a fast loop (every turn / every minute) → no need for tick; you'll see state yourself.
 - Time-critical reminders under 30s → just keep it in your context; tick has 100ms resolution but fire latency includes the daemon tick + jcode session processing + scheduling jitter.
 - Anything you'd describe as "fire if X". Tick does not evaluate state. **You** evaluate after the message arrives — and the message should always be a nudge that you, on receipt, choose how to act on.
