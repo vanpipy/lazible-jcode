@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/install.sh — lazible-jcode installer.
 #
-# Linear, unconditional, overwrite-by-default. Runs 5 steps every time:
+# Linear, unconditional, overwrite-by-default. Runs 6 steps every time:
 #   1. Install jcode binary to ~/.local/bin/jcode
 #        - If jcode-patches/*.patch exists, build a canary from those patches
 #          and replace ~/.local/bin/jcode (backup the old one as jcode.bak.<ts>)
@@ -13,6 +13,9 @@
 #   5. Symlink scripts/ into ~/.jcode/scripts/ and add ~/.jcode/scripts/ to PATH
 #      so swarm-state-monitor.py + check-*.py + conflict-detect.py are reachable
 #      from any cwd (not just the lazible-jcode checkout).
+#   6. Build the tick/ Go daemon and copy it to ~/.local/bin/jcode-swarm-tick.
+#      The daemon is the worker's self-reminder substrate; jcode spawns it as
+#      an MCP subprocess on first use.
 #
 # No flags control which step runs or whether to overwrite. Overwriting is the
 # point. Existing files at the destination are always backed up to <dst>.bak.<ts>
@@ -20,7 +23,7 @@
 #
 # Opt-in: set IDEMPOTENT=1 to skip the symlink steps (2/3/4/5) when their target
 # is already a symlink pointing at the right source. Step 1 (the jcode binary)
-# always runs. See --help for details.
+# and step 6 (the tick binary) always run. See --help for details.
 #
 # Usage:
 #   ./scripts/install.sh                          # run all 5 steps with defaults
@@ -57,7 +60,7 @@ print_help() {
   cat <<EOF
 Usage: $0 [options]
 
-Linear install of jcode + lazible-jcode overlay. Runs 5 steps every time and
+Linear install of jcode + lazible-jcode overlay. Runs 6 steps every time and
 overwrites the destination unconditionally:
 
   1. Install jcode binary to ~/.local/bin/jcode
@@ -70,6 +73,9 @@ overwrites the destination unconditionally:
   5. Symlink scripts/ into ~/.jcode/scripts/ and add ~/.jcode/scripts/ to PATH
      so swarm-state-monitor.py, conflict-detect.py, check-*.py are reachable
      from any cwd
+  6. Build the tick/ Go daemon (cd tick && go build) and copy the binary to
+     ~/.local/bin/jcode-swarm-tick. jcode spawns this as an MCP subprocess on
+     first use. Skipped silently if Go is not installed or tick/ is missing.
 
 Existing files at any destination are backed up to <dst>.bak.<timestamp> before
 being replaced, so rerunning is safe.
@@ -78,11 +84,11 @@ Environment variables:
   IDEMPOTENT=1           Opt into skip-if-unchanged mode for the symlink steps
                          (2/3/4/5). When set, already-correct symlinks are left
                          in place and 'skipping: <reason>' is printed instead
-                         of backing them up + re-linking. Step 1 (the jcode
-                         binary install) still runs every time — its own
-                         mtime/version-pin logic lives in the upstream
-                         installer / canary builder. Default: unset (always
-                         overwrite, original behavior).
+                         of backing them up + re-linking. Steps 1 (jcode binary)
+                         and 6 (tick daemon build) always run — their own
+                         version-pin / build logic lives in the upstream
+                         installer and `go build`, respectively. Default: unset
+                         (always overwrite, original behavior).
 
 Options:
   --canary-version <v>   Pin the jcode tag the canary is built from. Default: latest.
@@ -203,7 +209,7 @@ for required_script in \
 done
 
 # ── step 1: install jcode binary ──────────────────────────────────────────────
-info "── step 1/5: install jcode binary ──"
+info "── step 1/6: install jcode binary ──"
 mkdir -p "$INSTALL_DIR"
 
 # Detect canary mode by the presence of jcode-patches/*.patch. If any exist,
@@ -231,7 +237,7 @@ else
 fi
 
 # ── step 2: overlay + swarm config ─────────────────────────────────────────────
-info "── step 2/5: overlay + swarm config ──"
+info "── step 2/6: overlay + swarm config ──"
 mkdir -p "$JCODE_HOME" "$JCODE_HOME/roles"
 maybe_overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md" "prompt-overlay.md"
 maybe_overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"   "swarm-prompt.md"
@@ -245,7 +251,7 @@ if [[ -f "$repo_root/docs/HEARTBEAT.md" ]]; then
 fi
 
 # ── step 3: skills ────────────────────────────────────────────────────────────
-info "── step 3/5: skills ──"
+info "── step 3/6: skills ──"
 mkdir -p "$JCODE_HOME/skills"
 skill_count=0
 for skill_dir in "$repo_root/skills"/*; do
@@ -258,7 +264,7 @@ done
 info "linked $skill_count skill(s)"
 
 # ── step 4: AGENTS.md ─────────────────────────────────────────────────────────
-info "── step 4/5: AGENTS.md ──"
+info "── step 4/6: AGENTS.md ──"
 maybe_overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
 
 # ── step 5: scripts/ ──────────────────────────────────────────────────────────
@@ -267,7 +273,7 @@ maybe_overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
 # so they are reachable on the production path — not just from this checkout's cwd.
 # This is what lets the swarm root session call `swarm-state-monitor.py tick` (or
 # `python3 ~/.jcode/scripts/swarm-state-monitor.py tick`) from any directory.
-info "── step 5/5: scripts/ ──"
+info "── step 5/6: scripts/ ──"
 maybe_overwrite_link "$repo_root/scripts" "$JCODE_HOME/scripts" "scripts/"
 
 # After linking, add ~/.jcode/scripts/ to PATH so users can call the scripts by
@@ -287,6 +293,39 @@ else
   warn "configure_path.sh missing at $configure_path_lib — skipping PATH edit"
 fi
 
+# ── step 6: build + install tick daemon ───────────────────────────────────────
+# Build the tick/ Go daemon and copy the binary to ~/.local/bin/jcode-swarm-tick.
+# jcode spawns this as an MCP subprocess on first use; the agent then has
+# submit_job / cancel_job / list_jobs tools available (see swarm/roles/tick-user.md).
+#
+# Skipped silently if Go is not installed or tick/ is missing — the rest of
+# the install still succeeds; jcode will just lack the tick MCP server.
+info "── step 6/6: tick daemon ──"
+tick_dir="$repo_root/tick"
+if [[ ! -d "$tick_dir" ]]; then
+  warn "tick/ directory missing at $tick_dir — skipping step 6 (jcode-swarm-tick unavailable)"
+elif ! command -v go >/dev/null 2>&1; then
+  warn "go not on PATH — skipping step 6 (jcode-swarm-tick unavailable)"
+else
+  tick_bin="$tick_dir/tick"
+  # Build into tick/ first so a build failure doesn't leave a stale binary on
+  # $INSTALL_DIR. -trimpath strips local paths from the binary (reproducible builds).
+  if ! (cd "$tick_dir" && go build -trimpath -o tick .); then
+    err "go build failed in $tick_dir — fix and re-run; jcode-swarm-tick NOT installed"
+  fi
+
+  tick_dst="$INSTALL_DIR/jcode-swarm-tick"
+  if [[ -e "$tick_dst" || -L "$tick_dst" ]]; then
+    mv "$tick_dst" "$tick_dst.bak.$TIMESTAMP"
+    warn "backed up $tick_dst → $tick_dst.bak.$TIMESTAMP"
+  fi
+  # Copy (not symlink) — $INSTALL_DIR survives a `git clean` in the repo,
+  # and the binary is rebuilt on every install anyway.
+  cp "$tick_bin" "$tick_dst"
+  chmod 0755 "$tick_dst"
+  info "installed $tick_dst (built from $repo_root/tick/)"
+fi
+
 # ── summary ────────────────────────────────────────────────────────────────────
 info "✅ lazible-jcode install complete."
 info "   mode:           $([[ "$IDEMPOTENT" == "1" ]] && echo "idempotent (IDEMPOTENT=1)" || echo "overwrite (IDEMPOTENT unset)")"
@@ -296,6 +335,7 @@ info "   overlay:        $JCODE_HOME/prompt-overlay.md → $repo_root/swarm/prom
 info "   architecture:   $JCODE_HOME/ARCHITECTURE.md → $repo_root/swarm/ARCHITECTURE.md"
 info "   AGENTS.md:      $JCODE_HOME/AGENTS.md → $repo_root/AGENTS.md"
 info "   scripts:        $JCODE_HOME/scripts → $repo_root/scripts (added to PATH)"
+info "   tick binary:    $INSTALL_DIR/jcode-swarm-tick (built from $repo_root/tick/)"
 info ""
 info "Tip: re-running with IDEMPOTENT=1 skips symlinks that already point at"
 info "     the right target — no backups, no rewrites. See --help for details."
