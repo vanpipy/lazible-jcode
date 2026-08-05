@@ -208,7 +208,7 @@ var toolCancelJob = toolDef{
 
 var toolListJobs = toolDef{
 	Name:        "list_jobs",
-	Description: "List all pending jobs in the daemon's heap.",
+	Description: "List all pending jobs from the persistent store. The store is the durable source of truth: the scheduler's in-memory heap drops a job as soon as Tick fires notify (tick/internal/scheduler/scheduler.go:142), so the heap cannot show jobs whose notify was refused (e.g. self-wake) or otherwise dropped. Reading from the store guarantees refused self-wakes and other retained jobs remain visible.",
 	InputSchema: map[string]any{
 		"type":       "object",
 		"properties": map[string]any{},
@@ -362,7 +362,16 @@ func (s *Server) toolListJobs(ctx context.Context, id json.RawMessage, args json
 	var a listArgs
 	_ = json.Unmarshal(args, &a) // empty schema; ignore errors
 
-	all := s.sched.List()
+	// Source of truth is the persistent store, not the scheduler's
+	// in-memory heap. Tick removes a job from byID before invoking
+	// notify (tick/internal/scheduler/scheduler.go:142); the heap
+	// therefore cannot show jobs whose notify was refused (e.g.
+	// self-wake — tick/internal/notifier/notifier.go:130) and would
+	// silently vanish refused self-wakes from this tool's view.
+	all, err := s.store.LoadAll()
+	if err != nil {
+		return toolError(id, "store load failed: "+err.Error())
+	}
 	entries := make([]listEntry, 0, len(all))
 	for _, j := range all {
 		preview := j.Message
