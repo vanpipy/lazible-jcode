@@ -51,6 +51,16 @@ type Notifier struct {
 // repoPath is the absolute path of the repo whose swarm JSON holds the
 // coordinator fallback. Pass "" to disable fallback (NotifySession will
 // return any error it gets without retrying).
+//
+// repoPath is also sent as the Subscribe handshake's working_dir.
+// jcode requires Subscribe with an absolute working_dir before any
+// stateful request on a new connection; without it, notify_session is
+// rejected with "Client must Subscribe with a working_dir before
+// sending stateful requests" (see jcode's
+// crates/jcode-app-core/src/server/client_lifecycle.rs:463-477).
+// When repoPath is empty, the handshake is skipped and notify_session
+// is sent directly; jcode will reject it. Callers that need a working
+// notify_session MUST set repoPath to an absolute path.
 func New(socketPath, repoPath string) *Notifier {
 	return &Notifier{socketPath: socketPath, repoPath: repoPath}
 }
@@ -100,6 +110,24 @@ type wireMessage struct {
 	ID        uint64 `json:"id"`
 	SessionID string `json:"session_id"`
 	Message   string `json:"message"`
+}
+
+// subscribeWire is the JSON for the Subscribe handshake message.
+// Wire reference (rust, jcode-protocol/src/wire.rs:115):
+//   #[serde(rename = "subscribe")]
+//   Subscribe { id: u64, working_dir: Option<String>, ... }
+//
+// jcode's client_lifecycle.rs:463-477 requires every stateful request
+// from a new connection to be preceded by a Subscribe with an absolute
+// working_dir. jcode rejects notify_session with:
+//   "Client must Subscribe with a working_dir before sending
+//    stateful requests"
+// See docs/TICK_DAEMON_FAILURE_2026-08-05.md for the empirical
+// reproduction that exposed this gap.
+type subscribeWire struct {
+	Type       string `json:"type"`
+	ID         uint64 `json:"id"`
+	WorkingDir string `json:"working_dir"`
 }
 
 // wireResponse is the subset of Response we parse. jcode's full
@@ -179,22 +207,25 @@ var ErrSelfWake = errors.New("tick: self-wake refused; NotifySession on the coor
 // burst of self-wakes does not flood the daemon log.
 var selfWakeLogged sync.Map // map[string]struct{}
 
-// send is the single-attempt helper. Returns nil on success, an error
+// send is the single-attempt helper. Opens one connection to jcode's
+// unix socket, sends Subscribe first (when repoPath is configured),
+// then sends notify_session. Both requests and both responses flow
+// over the same connection. Returns nil on success, an error
 // otherwise. The error is meant for the caller to log / fallback on.
+//
+// The Subscribe handshake is mandatory. Skipping it causes jcode to
+// reject notify_session with "Client must Subscribe..." and the
+// scheduler silently swallows the error (scheduler.go:151: `_ =
+// notify(j)`), producing the "jobs pile up, nothing fires" failure
+// mode documented in docs/TICK_DAEMON_FAILURE_2026-08-05.md.
+//
+// A single *bufio.Reader is created on top of the connection and
+// reused across both requests. The bufio buffer absorbs excess bytes
+// from the underlying conn on each ReadBytes call, which is required
+// for the second read to see the second response — creating a fresh
+// bufio.Reader per request would buffer ahead past the first response
+// boundary on the first request and starve the second read.
 func (n *Notifier) send(ctx context.Context, sessionID, message string) error {
-	id := n.nextID.Add(1)
-	payload := wireMessage{
-		Type:      "notify_session",
-		ID:        id,
-		SessionID: sessionID,
-		Message:   message,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	body = append(body, '\n')
-
 	conn, err := dialContext(ctx, "unix", n.socketPath)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", n.socketPath, err)
@@ -209,13 +240,44 @@ func (n *Notifier) send(ctx context.Context, sessionID, message string) error {
 		conn.SetDeadline(time.Now().Add(2 * time.Second))
 	}
 
-	if _, err := conn.Write(body); err != nil {
+	br := bufio.NewReader(conn)
+
+	if n.repoPath != "" {
+		if err := writeRequest(conn, br, subscribeWire{
+			Type:       "subscribe",
+			ID:         n.nextID.Add(1),
+			WorkingDir: n.repoPath,
+		}); err != nil {
+			return fmt.Errorf("subscribe handshake: %w", err)
+		}
+	}
+
+	return writeRequest(conn, br, wireMessage{
+		Type:      "notify_session",
+		ID:        n.nextID.Add(1),
+		SessionID: sessionID,
+		Message:   message,
+	})
+}
+
+// writeRequest marshals payload to JSON, writes it with a trailing
+// newline to w, reads exactly one response line from br, and returns
+// nil on success or an error if the response is "error" or any
+// transport/parse step fails. payload must serialize with a `type`
+// field that jcode can route on. br MUST be a *bufio.Reader that
+// wraps the same conn w writes to; the bufio buffer absorbs excess
+// bytes between successive writeRequest calls on the same conn.
+func writeRequest(w io.Writer, br *bufio.Reader, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	body = append(body, '\n')
+	if _, err := w.Write(body); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
 
-	// Read exactly one response line.
-	r := bufio.NewReader(conn)
-	line, err := r.ReadBytes('\n')
+	line, err := br.ReadBytes('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read response: %w", err)
 	}
