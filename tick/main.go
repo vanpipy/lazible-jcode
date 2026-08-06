@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -34,6 +35,50 @@ import (
 	"github.com/1jehuang/lazible-jcode/tick/internal/scheduler"
 	"github.com/1jehuang/lazible-jcode/tick/internal/store"
 )
+
+// daemonSignals lists the OS signals the MCP-mode daemon responds to.
+// SIGINT and SIGTERM are the conventional shutdown signals. SIGHUP is
+// added so a terminal disconnect (or `kill -SIGHUP` from a user /
+// process-group tear-down) does NOT kill the daemon — well-behaved
+// Unix daemons ignore SIGHUP, treating it as a config-reload hook or
+// no-op. Before this, SIGHUP triggered Go's default os.Exit, taking
+// the daemon down and producing the "jobs pile up, nothing fires"
+// failure mode documented in
+// docs/TICK_DAEMON_FAILURE_2026-08-05.md §"Other findings" #1.
+//
+// Test-only seam: package main is the only place this list is
+// referenced (signal.NotifyContext), but main_test.go needs the var
+// to assert SIGHUP is present without spawning a real process.
+var daemonSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP}
+
+// commitSHA and buildTime are injected at build time via
+//
+//	go build -ldflags "-X main.commitSHA=$(git rev-parse HEAD) \
+//	                    -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//
+// They appear in the startup banner so an operator tailing daemon
+// stderr can tell whether the running binary is post-fix (has
+// Subscribe handshake + ErrSelfWake) or pre-fix (silent self-wake
+// loss). The defaults are non-empty so `go run` and `go test` produce
+// a valid banner without the linker flags.
+var (
+	commitSHA = "unknown"
+	buildTime = "unknown"
+)
+
+// printStartupBanner writes a single-line identity record to w. The
+// line is the only persistent fingerprint of which binary is
+// running, so it MUST include the commit SHA, build timestamp, and
+// PID. Format is intentionally greppable:
+//
+//	tick: pid=12345 commit=abc1234 built=2026-08-06T16:00:00Z
+//
+// The w parameter is an io.Writer seam so tests can capture the
+// output without touching os.Stderr (which is captured but not
+// inspectable from inside the test process).
+func printStartupBanner(w io.Writer, pid int) {
+	fmt.Fprintf(w, "tick: pid=%d commit=%s built=%s\n", pid, commitSHA, buildTime)
+}
 
 const usage = `tick — jcode-swarm-tick daemon.
 
@@ -85,8 +130,13 @@ func main() {
 // --- MCP server entrypoint ---
 
 func runMCP() int {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(context.Background(), daemonSignals...)
 	defer cancel()
+
+	// Banner identifies which binary is running so an operator tailing
+	// stderr can detect a stale pre-fix binary (commit < 2e2f700)
+	// without rebuilding.
+	printStartupBanner(os.Stderr, os.Getpid())
 
 	// Build the dependency stack: store + scheduler + notifier + MCP server.
 	storePath := store.DefaultPath()
