@@ -6,15 +6,16 @@ config/*
 # But NEVER let a real mcp.json with tokens slip in
 config/mcp.json
 
-# per-skill local overrides (never committed)
-skills/*/SKILL.md.local
-
-# swarm runtime state — worker spawn manifests + scope files. These contain
-# machine-specific paths (worktree locations, branch SHAs) and must never
-# reach git. The example conflict-config.yaml.example is the only file
-# under .jcode/ that should ever be committed.
+# swarm runtime state — worker spawn manifests + scope files. These
+# contain machine-specific paths (worktree locations, branch SHAs) and
+# must never reach git.
 .jcode/*
 !.jcode/*.example
+
+# jcode scratch dirs the harness creates at runtime. Safe to drop.
+.git-commit-msg/
+.git-spawn-scope/
+.git-tmp/
 
 # macOS
 .DS_Store
@@ -25,16 +26,12 @@ skills/*/SKILL.md.local
 *.swp
 *.swo
 
-# python bytecode (generated when running scripts/test_*.py)
+# python bytecode
 __pycache__/
 *.pyc
 
-# build artifacts (none here, but be safe)
+# build artifacts
 target/
 build/
 dist/
 *.log
-
-# shell installer scratch
-*.download
-installer.tmp
