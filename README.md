@@ -60,8 +60,11 @@ lazible-jcode/
 git clone https://github.com/vanpipy/lazible-jcode.git
 cd lazible-jcode
 
-# 2. Install jcode + overlay + swarm config + AGENTS.md (3 steps, overwrite-by-default)
+# 2. Install jcode + overlay + swarm config + AGENTS.md + .jcode/mcp.json (4 steps, overwrite-by-default; step 4 idempotent)
 ./scripts/install.sh
+
+# 2b. Or, set up the bundle for a different project (installs bundle + inits that project's .jcode/mcp.json)
+./scripts/install.sh --project=/path/to/your/project
 
 # 3. Verify
 command -v jcode
@@ -69,7 +72,7 @@ jcode --version
 jcode run "say hello"
 ```
 
-The installer is **always idempotent and unconditional**: it runs 3
+The installer is **always idempotent and unconditional**: it runs 4
 steps every time, overwrites every destination, and backs up any
 pre-existing file at the destination to `<dst>.bak.<timestamp>` first.
 Fast path: when a destination is already a symlink to the source
@@ -78,11 +81,12 @@ runs do not accumulate `.bak.<ts>` files.
 
 ### Install flags
 
-There are no optional flags. The only accepted flags are:
+The accepted flags are:
 
 | Flag | Effect |
 |---|---|
 | `-h`, `--help` | Show usage |
+| `--project=PATH` | Init `.jcode/mcp.json` for PATH (default: the bundle's own checkout). Use when setting up the bundle for another project.
 
 See `docs/INSTALL.md` for full install / uninstall / troubleshooting
 detail, including the `--purge`, `--yes`, and `--keep-binary` flags on

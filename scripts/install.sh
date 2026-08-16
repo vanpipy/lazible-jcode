@@ -1,25 +1,34 @@
 #!/usr/bin/env bash
 # scripts/install.sh — lazible-jcode installer.
 #
-# Linear, unconditional, overwrite-by-default. Runs 3 steps every time:
+# Linear, unconditional, overwrite-by-default. Runs 4 steps every time:
 #   1. Install jcode binary to ~/.local/bin/jcode via the upstream installer.
 #   2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md,
 #      swarm/ARCHITECTURE.md, and swarm/roles/*.md into ~/.jcode/.
 #   3. Symlink AGENTS.md to ~/.jcode/AGENTS.md.
+#   4. Auto-init <project>/.jcode/mcp.json from the bundle's template,
+#      substituting the actual project root for /workspace. Idempotent:
+#      skips with a message if the file already exists.
 #
-# No flags control which step runs or whether to overwrite. Overwriting is
-# the point. Existing files at the destination are backed up to
-# <dst>.bak.<ts> before being replaced, so rerunning this script is safe.
-# Fast path: a destination that is already a symlink to the source target
-# is left unchanged (no backup, no recreate) — repeated runs do not
-# accumulate .bak.<ts> files.
+# No flags control which step runs or whether to overwrite (except for
+# --project; see below). Overwriting is the point for steps 1-3 — existing
+# files at the destination are backed up to <dst>.bak.<ts> before being
+# replaced, so rerunning this script is safe. Fast path: a destination that
+# is already a symlink to the source target is left unchanged (no backup,
+# no recreate) — repeated runs do not accumulate .bak.<ts> files.
 #
 # Usage:
-#   ./scripts/install.sh             # run all 3 steps with defaults
-#   ./scripts/install.sh --help      # show usage
+#   ./scripts/install.sh                       # install bundle + init
+#                                              # .jcode/mcp.json in bundle's
+#                                              # own checkout (default project)
+#   ./scripts/install.sh --project=PATH        # also init .jcode/mcp.json in
+#                                              # PATH (for using the bundle
+#                                              # in another project)
+#   ./scripts/install.sh --help                # show usage
 #
-# Every run does all 3 steps and overwrites every destination (backed up as
-# <dst>.bak.<ts> first, except for the fast-path case above).
+# Every run does all 4 steps and overwrites steps 1-3 destinations (backed up
+# as <dst>.bak.<ts> first, except for the fast-path case above). Step 4 is
+# idempotent (skip if .jcode/mcp.json already exists).
 
 set -euo pipefail
 
@@ -29,8 +38,9 @@ print_help() {
   cat <<EOF
 Usage: $0 [options]
 
-Linear install of jcode + lazible-jcode overlay. Runs 3 steps every time and
-overwrites the destination unconditionally:
+Linear install of jcode + lazible-jcode overlay. Runs 4 steps every time and
+overwrites the destination unconditionally (step 4 is idempotent, never
+overwrites an existing file):
 
   1. Install jcode binary to ~/.local/bin/jcode via the upstream installer.
      Also symlinks the swarm-sweep helper to ~/.local/bin/swarm-sweep
@@ -38,25 +48,43 @@ overwrites the destination unconditionally:
   2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md,
      swarm/ARCHITECTURE.md, and swarm/roles/*.md into ~/.jcode/.
   3. Symlink AGENTS.md to ~/.jcode/AGENTS.md.
+  4. Auto-init <project>/.jcode/mcp.json from the bundle's template
+     (config/mcp.json.example), substituting the actual project root for
+     the /workspace placeholder. Skips with a message if the file already
+     exists — never overwrites.
 
-Existing files at any destination are backed up to <dst>.bak.<timestamp>
-before being replaced. A destination that is already a symlink to the
-source target is left unchanged (no backup, no recreate).
+Existing files at any destination (steps 1-3) are backed up to <dst>.bak.<ts>
+before being replaced. A destination that is already a symlink to the source
+target is left unchanged (no backup, no recreate).
 
 Options:
-  -h, --help   Show this help.
+  -h, --help          Show this help.
+  --project=PATH       Init .jcode/mcp.json for PATH (default: the bundle's
+                       own checkout at $repo_root). Use this when setting
+                       up the bundle for a target project other than the
+                       bundle itself — the bundle install still goes to
+                       ~/.jcode/, but the MCP template lands in
+                       <PATH>/.jcode/mcp.json.
 
 Examples:
-  # Default install.
+  # Default: install bundle + init .jcode/mcp.json for the bundle's own repo.
   $0
+
+  # Install bundle AND init MCP for another project (e.g. your app).
+  $0 --project=/path/to/your/project
 EOF
 }
 
+# Default project for step 4 = the bundle's own checkout. --project=PATH
+# overrides this for users setting up the bundle in a different repo.
+TARGET_PROJECT="$repo_root"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) print_help; exit 0 ;;
+    --project=*) TARGET_PROJECT="${1#*=}" ;;
     *) echo "error: unknown flag: $1" >&2; print_help >&2; exit 1 ;;
   esac
+  shift
 done
 
 # ── sanity ────────────────────────────────────────────────────────────────────
@@ -197,7 +225,7 @@ overwrite_link() {
 }
 
 # ── step 1: install jcode binary + swarm-sweep helper ──────────────────────
-info "step 1/3: installing jcode binary"
+info "step 1/4: installing jcode binary"
 if command -v jcode >/dev/null 2>&1; then
   info "jcode already on PATH: $(command -v jcode)"
 else
@@ -221,7 +249,7 @@ mkdir -p "$LCL_BIN"
 overwrite_link "$repo_root/scripts/swarm-sweep.sh" "$LCL_BIN/swarm-sweep" "swarm-sweep"
 
 # ── step 2: symlink swarm/* into ~/.jcode/ ───────────────────────────────────
-info "step 2/3: linking swarm/ into $JCODE_HOME"
+info "step 2/4: linking swarm/ into $JCODE_HOME"
 overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md"           "prompt-overlay.md"
 overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"             "swarm-prompt.md"
 overwrite_link "$repo_root/swarm/ARCHITECTURE.md"   "$JCODE_HOME/ARCHITECTURE.md"             "ARCHITECTURE.md"
@@ -234,7 +262,18 @@ for role_file in "$repo_root/swarm/roles/"*.md; do
 done
 
 # ── step 3: symlink AGENTS.md ────────────────────────────────────────────────
-info "step 3/3: linking AGENTS.md"
+info "step 3/4: linking AGENTS.md"
 overwrite_link "$repo_root/AGENTS.md" "$JCODE_HOME/AGENTS.md" "AGENTS.md"
 
-info "done — jcode + lazible-jcode overlay installed"
+# ── step 4: auto-init <project>/.jcode/mcp.json ──────────────────────────────
+# .jcode/mcp.json is gitignored (the bundle keeps the template in
+# config/mcp.json.example and lets each clone create its own). Without this
+# step, a fresh clone has no MCP servers and jcode's session start fails
+# silently. We delegate to `extension.sh mcp init` which handles the template
+# copy, path substitution, and idempotent skip-when-present logic. Default
+# project is the bundle's own checkout; --project=PATH overrides for users
+# setting up the bundle in a different repo.
+info "step 4/4: initializing .jcode/mcp.json for $TARGET_PROJECT"
+bash "$repo_root/scripts/extension.sh" mcp init "--project=$TARGET_PROJECT"
+
+info "done — jcode + lazible-jcode overlay + .jcode/mcp.json installed"

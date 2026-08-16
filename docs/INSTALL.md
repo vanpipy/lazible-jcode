@@ -47,14 +47,36 @@ reviewable.
 
 ## Flags
 
-`scripts/install.sh` is intentionally minimal — no flags are required:
+`scripts/install.sh` accepts two flags:
 
 | Flag | Effect |
 |---|---|
 | `-h`, `--help` | Show usage |
+| `--project=PATH` | Init `.jcode/mcp.json` for PATH (default: the bundle's own checkout). Use this when setting up the bundle for a target project other than the bundle itself — the bundle install still goes to `~/.jcode/`, but the MCP template lands in `<PATH>/.jcode/mcp.json`. |
 
-There are no optional flags. Every run does all 3 steps and
-overwrites every destination (with `.bak.<ts>` backup first).
+The installer runs **4 steps** every time and overwrites every step 1-3 destination (with `.bak.<ts>` backup first). Step 4 is idempotent — skips with a message if `.jcode/mcp.json` already exists, never overwrites.
+
+## Step 4: auto-init `.jcode/mcp.json`
+
+`.jcode/mcp.json` is gitignored, so a fresh clone of any project (including
+this one) doesn't ship one. Without step 4, jcode's session start would
+have no MCP servers and silently lose filesystem/git/serena tooling.
+
+Step 4 calls `scripts/extension.sh mcp init --project=PATH`, which:
+
+1. Skips if `<PATH>/.jcode/mcp.json` already exists (idempotent, exit 0)
+2. Otherwise, copies `config/mcp.json.example` (the bundle-shipped template) to `<PATH>/.jcode/mcp.json`, substituting the `/workspace` placeholder with the actual project root
+
+So after `install.sh`, both the bundle (in `~/.jcode/`) and the target
+project's MCP config are set up. For using the bundle in another project:
+
+```bash
+# Default: install bundle + init .jcode/mcp.json in the bundle's own checkout
+./scripts/install.sh
+
+# Install bundle AND init MCP for your app
+./scripts/install.sh --project=/path/to/your/app
+```
 
 ## Verification
 
