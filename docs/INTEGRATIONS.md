@@ -14,7 +14,7 @@ Copy it to `~/.jcode/mcp.json` (global) or `<repo>/.jcode/mcp.json`
 | ------------ | ------------------------------------------------ | --------------------------------------------------- |
 | `filesystem` | Scoped file I/O, safer than unrestricted bash   | `npx -y @modelcontextprotocol/server-filesystem`    |
 | `git`        | Structured local git ops (log/blame/diff/branch) | `npx -y @cyanheads/git-mcp-server`                  |
-| `serena`     | Code intelligence (symbols, refs, rename)         | `uvx serena-agent start-mcp-server --project <path>` |
+| `serena`     | Code intelligence (symbols, refs, rename) — see worktree caveat below | `uvx serena-agent start-mcp-server --project <path>` |
 
 `puppeteer` (browser automation, local Chromium) is an optional add-on
 when you need e2e coverage. Drop it from the stack if you do not.
@@ -77,6 +77,48 @@ A serena usage skill lives at `~/.jcode/skills/serena/SKILL.md` (optional,
 per-user). It encodes the when-to-use rules and the boundary with
 jcode-native `read`/`grep`/`edit`.
 
+### Serena and worktrees
+
+jcode spawns workers into per-project worktrees
+(`$TMPDIR/jcode/<repo>-<short-sha>/wt-<label>/`) but **inherits the
+project's MCP config** (extension point A4) into those workers — serena
+starts with the same `--project <main-repo>` path it had in the main
+session. After a worker edits files in the worktree, serena's
+tree-sitter index is **anchored to the main repo HEAD**, not the
+worker's branch. `find_symbol` / `find_referencing_symbols` /
+`rename_symbol` will return results from main, silently missing the
+worker's edits.
+
+Worker pattern:
+
+- **Before editing**: serena is fine for code-intelligence exploration
+  of the main repo (reading the call graph you're about to modify,
+  finding all references pre-rename).
+- **After editing**: do **not** trust serena's symbol index for files
+  you have just modified. Use jcode-native `read <file>` +
+  `agentgrep <pattern>` against the worktree path.
+- **Verification of intent**: when you need to confirm "did my edit land
+  the way I expect?", re-read the file via `read` or grep via
+  `agentgrep <worktree-absolute-path>/<file>`. Do not ask serena.
+
+The bundle ships `scripts/extension.sh mcp worktree-hint <wt-path>` to
+make the staleness check mechanical. Workers should run it at spawn
+start:
+
+```bash
+# Inside the worker worktree, or from root before drafting the spawn:
+scripts/extension.sh mcp worktree-hint "$WORKTREE_PATH"
+# Output is line-oriented; grep for the status line:
+#   serena: live (project=...)                          ← editing in main repo
+#   serena: stale (sees <main-repo> only; worktree edits invisible)
+#   serena: not-configured                              ← no serena in MCP config
+# Exit 0 always (informational, not a gate).
+```
+
+This subcommand does NOT fix the underlying engine limitation
+(per-spawn MCP project rebind); it gives the worker a deterministic
+detection path and a recommended verification fallback.
+
 ## When **not** to use any of these
 
 - **External API needs** (GitHub, GitLab, hosted DBs, hosted search).
@@ -99,7 +141,8 @@ Default to jcode-native when the operation is small or one-off:
 | Read a single file                   | `read` (jcode-native)                         |
 | Read 50+ files or a directory tree   | `filesystem` MCP                              |
 | Find a literal string across files   | `agentgrep` (jcode-native)                    |
-| Find a symbol and its references     | `serena` MCP                                  |
+| Find a symbol and its references     | `serena` MCP (main repo only — see worktree caveat) |
+| Verify worktree edits match expectations | `read` + `agentgrep` (NOT serena — see worktree caveat) |
 | Run a one-off `git log`              | `bash` (jcode-native)                         |
 | Run a structured batch of git ops    | `git` MCP                                     |
 | Edit a few lines in one file         | `edit` / `apply_patch` (jcode-native)         |
