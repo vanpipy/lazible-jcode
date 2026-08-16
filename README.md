@@ -49,6 +49,7 @@ lazible-jcode/
 └── docs/
     ├── INSTALL.md                     # Detailed install / uninstall / troubleshooting
     ├── EXTENSIONS.md                  # Per-project extension points (10 axes)
+    ├── ARCHITECTURE.md                # Three-layer view: jcode native + extensions + MCP
     └── INTEGRATIONS.md                # Recommended local MCP server stack
 ```
 
@@ -115,6 +116,16 @@ prompt + persona content jcode reads.
 Worker-only concerns (worktree paths, output schema, per-role
 workflow) belong in `swarm-prompt.md` and `roles/*.md`, not in the
 main overlay.
+
+### Where the three layers fit
+
+jcode ships a base tool set, prompt layering, lifecycle hooks, and
+swarm coordination out of the box. The bundle layers
+**per-project extension points** on top (A1-A10 in
+`docs/EXTENSIONS.md`) and ships a canonical **local MCP stack**
+(filesystem + git + serena; `docs/INTEGRATIONS.md`) that the A4 axis
+auto-loads. For the layered view — what is jcode-native, what is
+bundle convention, what is MCP — see `docs/ARCHITECTURE.md`.
 
 ### Coordination rules at a glance
 

@@ -21,6 +21,7 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `README.md` | Project overview, quick start, repo table | yes |
 | `docs/INSTALL.md` | Detailed install / uninstall / troubleshooting | yes |
 | `docs/EXTENSIONS.md` | Per-project extension points (10 axes) | yes |
+| `docs/ARCHITECTURE.md` | Three-layer view: jcode native + lazible-jcode extension mechanism + MCP | yes |
 | `docs/INTEGRATIONS.md` | Recommended local MCP server stack (filesystem + git + serena; sqlite not currently shipping a working MCP server, see INTEGRATIONS.md) | yes |
 | `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/`, and `swarm-sweep` into `~/.local/bin/` | yes |
 | `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
