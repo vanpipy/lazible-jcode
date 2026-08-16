@@ -160,6 +160,13 @@ Optional for plain `spawn`:
   default; deep mode reads its cap from your `config.toml`
   (`agents.swarm_max_concurrent_agents`; `0` means unbounded).
   Tune via `fill_slots` / `run_plan` `concurrency_limit`.
+- `required_skills[]` — names of jcode skills the worker should
+  load before starting (e.g. `["/rn-dev", "/pi-agent-rust"]`).
+  Default: read the role template's `## Skills to load` section and
+  use those. Override here when the spawn needs a specific skill
+  set that differs from the role's default. The convention is:
+  root injects the corresponding `skill_manage load <name>` calls
+  into the spawn prompt so the worker does not have to remember.
 
 #### Ordered dispatch — use `task_graph` when ≥2 workers have dependencies
 
