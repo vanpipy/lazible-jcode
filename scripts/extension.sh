@@ -472,20 +472,22 @@ cmd_preflight() {
     fi
   fi
 
-  # 6. Model auth probe (cheap default candidate)
-  #    We pick MiniMax-M3 as the default since it's the only one with
-  #    confirmed credentials in this environment. The user can override
-  #    by passing a different model and running `models probe <name>`
-  #    separately.
+  # 6. Model auth probe (use jcode's auto-default).
+  #    Do NOT hardcode any model name in the bundle — that would leak
+  #    machine-specific routing into a generic script. Probe with no
+  #    --model flag; jcode picks its auto-default based on the user's
+  #    config + provider auth. If the probe fails, the user knows to
+  #    either fix their auth or run `extension.sh models probe <name>`
+  #    to find a specific working model.
   if command -v jcode >/dev/null 2>&1; then
     set +e
-    jcode run --model MiniMax-M3 "ok" >/dev/null 2>&1
+    jcode run "ok" >/dev/null 2>&1
     local rc=$?
     set -e
     if [[ $rc -eq 0 ]]; then
-      check "model auth (MiniMax-M3 default)" "ok" "MiniMax-M3 responds"
+      check "model auth (jcode auto-default)" "ok" "responds"
     else
-      check "model auth (MiniMax-M3 default)" "warn" "MiniMax-M3 unreachable (exit $rc); run 'extension.sh models probe <name>' to find a working model"
+      check "model auth (jcode auto-default)" "warn" "exit $rc; fix auth or run 'extension.sh models probe <name>' to find a working model"
     fi
   fi
 
