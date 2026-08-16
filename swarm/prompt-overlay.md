@@ -478,7 +478,76 @@ prior sessions can otherwise leak into the final merge.
 
 ---
 
-## 5. Honesty
+## 5. Integration discipline
+
+The root session integrates worker branches into the main tree.
+Integration is not just `git merge` — it is a 4-step sequence with
+gates between steps. Skipping gates is the most common cause of
+"the worker said it works but main is broken."
+
+### 5.1 Integration sequence (4 steps)
+
+For each worker branch that completes with `status: completed` (or
+`partial` accepted), root performs:
+
+1. **Read** the artifact (`findings`, `evidence`, `validation`,
+   `open_questions`, `confidence`, `what_i_did_not_check`). Cross-
+   check `evidence[].commits` against `git log <base>..<branch>`.
+2. **Inspect** the diff: `git diff <base>..<branch> -- <files_touched>`.
+   Confirm only the `files_touched[]` files changed. If other files
+   moved, the worker expanded scope — reject or amend.
+3. **Cross-gate** the full integration base, not just the worker's
+   slice. See §5.2 for the gate list.
+4. **Merge + cleanup**: `git merge --no-ff <branch>`, then
+   `git worktree remove` per the lifecycle table in §4.3.
+
+For `partial` and `needs-info`, integration is gated on root's
+explicit decision (re-spawn, accept partial, arbitrate, re-scope).
+See §3 "Root's action per status."
+
+### 5.2 Cross-worker gates (run at integration time)
+
+The worker runs its own per-slice gates (typecheck, lint, unit test
+on the touched files). The root runs cross-cutting gates before
+merging any worker branch:
+
+| Gate | Default command | Purpose |
+|---|---|---|
+| Full typecheck | `<project> typecheck` | Catches cross-file type breakage |
+| Full lint | `<project> lint --all` | Catches style violations the per-slice lint missed |
+| Full unit suite | `<project> test` | Catches regressions in untested paths |
+| Integration / e2e | `<project> test:e2e` if defined | Catches cross-module breakage |
+| Worktree hygiene | `git diff <base>..<branch> --stat` matches `files_touched[]` | Catches scope expansion |
+| Evidence cross-check | `git log <base>..<branch>` matches `evidence[].commits` | Catches uncommitted work |
+
+If any gate fails, do not merge. Either:
+
+- Reject the branch (cleanup per §4.3), spawn a new worker with the
+  same scope + the gate failure in the prompt.
+- Or amend the worker's branch (root-side fixup commit) and re-run
+  the gates before merging.
+
+### 5.3 Push policy
+
+Root owns `git push`. By default root does NOT push to origin —
+pushes happen only after the user explicitly requests it. Default
+behavior:
+
+- Local commits, merges, branch creation: root does these freely.
+- `git push origin <feature-branch>`: only after explicit user OK,
+  or when the user said "and push to origin/X" in the original
+  request.
+- `git push origin main`: NEVER without explicit user decision.
+  The repo's `AGENTS.md` may have additional project-specific
+  rules (e.g., force-push prohibitions); defer to that.
+- Tags and releases: never created without explicit user request.
+
+When in doubt: leave the commits local. The user can `git push` from
+their shell, or tell you to push. Local commits do not expire.
+
+---
+
+## 6. Honesty
 
 A fake `confidence: high` is far worse than an honest `confidence: low`.
 `low` confidence routes follow-up work automatically; `high` based on
@@ -491,7 +560,7 @@ drill.
 
 ---
 
-## 6. Where the full rules live (pointers)
+## 7. Where the full rules live (pointers)
 
 This overlay is the **main-agent-side summary**. The full set lives in:
 
