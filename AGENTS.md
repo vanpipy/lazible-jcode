@@ -118,10 +118,43 @@ Discovery helpers for jcode-native points:
 - `extension.sh scratch-dir clean [--yes]` — remove the per-project scratch dir (dry-run by default)
 - `extension.sh artifact validate <path>` — validate a typed-artifact JSON against the 8-field contract
 
+Pre-spawn gate (run before drafting a worker spawn prompt):
+- `extension.sh preflight [--worktree P] [--project P]` — verify jcode on PATH, daemon reachable, bundle installed, paths writable, default model auth OK. Exit 0 = green, 3 = hard fail, 1 = warnings.
+
+Model selection helpers:
+- `extension.sh models list` — list jcode-known model names
+- `extension.sh models probe <name>` — 1-token auth probe (`jcode run --model X ok`); exit 0 = OK, 4 = auth fail, 3 = unknown. Use BEFORE spawning to avoid wasted spawns on unauth'd models.
+
 All ten live in `<repo>/.jcode/` (except the scratch dir which is
 in `$TMPDIR` by design). Absence of any of them is not a failure;
 root proceeds with the default behavior. Full 10×10 boundary-behavior
 walkthrough lives in `docs/EXTENSIONS.md`.
+
+## Spawn workflow (gotchas to avoid)
+
+Before drafting a worker spawn prompt, run `extension.sh preflight`.
+It catches the three failure modes below BEFORE a worker is spawned
+(rather than after a wasted spawn prompt).
+
+| # | Failure | Detection | Avoidance |
+|---|---|---|---|
+| P1 | Model auth fail — worker spawns, immediately errors on first API call, dies. Wastes ~30s + a worktree. | `extension.sh models probe <name>` does a 1-token call; exit 4 = bad credentials. | Run probe before drafting. If 4, try a different model (per swarm-prompt, fallback = inherit from root). |
+| P2 | Scope ambiguity — worker `dm`s you with "what did you mean?", stalls waiting. | Pre-spawn checklist in §1 of overlay. | Write scope prompt tightly: enumerate `files_touched[]`, paste base SHA, state the gates explicitly. Worker emits `status: needs-info` if still ambiguous. |
+| P3 | Path confusion — worker writes into `$TMPDIR/jcode/.../wt-<label>/`, root thinks it'll land in `<repo>` directly. | `extension.sh preflight --worktree <path>` validates writable parent. | The bundle's `$TMPDIR/jcode/<repo>-<short-sha>/` is the worker scratch; integration root copies into `<repo>` after artifact acceptance. |
+
+### Quick spawn checklist
+
+1. `extension.sh preflight` (exit 0).
+2. `extension.sh models probe <model>` (exit 0) — if your chosen model is non-default.
+3. `extension.sh scratch-dir` to print the canonical WT path.
+4. Write spawn prompt with: `label`, `model`, `effort`, `worktree_path`,
+   `base_commit`, `worker_branch`, `files_touched[]`, `scope_body`,
+   `termination_template`, `required_skills[]`.
+5. After worker emits artifact: read `findings` + `evidence[]` +
+   `validation` + `open_questions[]` before integrating.
+
+Skipping steps 1-2 is how you burn 5 minutes on a model that 401s on
+the first call.
 
 ## Commit conventions
 
