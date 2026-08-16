@@ -23,6 +23,7 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/`, and `swarm-sweep` into `~/.local/bin/` | yes |
 | `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
 | `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `~/.local/bin/swarm-sweep` by install.sh | yes |
+| `scripts/extension.sh` | Single entry point for per-project extension conventions (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn` subcommands) | yes |
 | `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
 | `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
 | `swarm/ARCHITECTURE.md` | Human-readable star topology + contracts overview | yes |
@@ -91,59 +92,28 @@ the three — point at the canonical location.
 
 ### Per-project customization (extension mechanisms)
 
-The bundle ships a **global** overlay + verification script that
-applies to every project you work in. Most users want project-specific
-behavior on top — for example, a repo may want to disable a worker
-role, add a domain-specific skill, or enforce a project-only invariant.
-**Five extension points** cover this without forking the bundle:
+The bundle exposes five per-project extension points — files at
+`<repo>/.jcode/<name>.{sh,md}` that root invokes via
+`scripts/extension.sh` (the single entry point):
 
-- **Per-project overlay** — `<repo>/.jcode/prompt-overlay.md`. jcode
-  reads it with precedence over the global `~/.jcode/prompt-overlay.md`
-  (the precedence is already in jcode's overlay loader; the bundle
-  just lets you use it). Use this to add project-level coordination
-  rules, disable a role for that repo, or prepend a project-specific
-  preamble. The file does not need to be a full overlay — short
-  additive instructions work best ("in this repo, never spawn a
-  test-writer because the test harness is custom; always route
-  test requests to the implementer").
-- **Per-project worker policy** — `<repo>/.jcode/swarm-prompt.md`.
-  jcode loads this with the same precedence as the overlay (project
-  → global → built-in default). Lets the project override worker-side
-  model routing, spawn hygiene, and anti-patterns. Documented in
-  jcode's `crates/jcode-base/src/prompt.rs::load_swarm_prompt`.
-- **Per-project role override** — `<repo>/.jcode/roles/<name>.md`.
-  Bundle convention (NOT jcode-native): when root fills a spawn
-  prompt, it reads `<cwd>/.jcode/roles/<name>.md` first and falls
-  back to `~/.jcode/roles/<name>.md`. Use this to specialize a role
-  for the project (e.g. a security-focused reviewer for a security
-  project). File name MUST be one of the 6 existing roles — adding
-  a 7th is a red line. Empty files fall back to global with a warning.
-- **Per-project verify hook** — `<repo>/.jcode/verify.sh`. The
-  bundle's verification command checks for it (see "Verification
-  before push" below) and runs it after the schema check passes.
-  Use this to enforce project-only invariants the bundle cannot
-  know about (e.g. "no `console.log` in `src/`", "all public APIs
-  must have JSDoc", "TODO comments need a linked issue"). The
-  script must exit non-zero to fail the verification.
-- **Per-project pre-merge hook** — `<repo>/.jcode/pre-merge.sh`.
-  Bundle convention: root runs `./<repo>/.jcode/pre-merge.sh <branch>
-  <base_commit> <role>` before merging any worker branch into the
-  main worktree. Exit 0 to proceed; non-zero blocks the merge and
-  surfaces stderr to the user. Use this for cross-worker integration
-  gates the bundle's per-slice gates miss (e.g. "after all workers
-  merge, run the full e2e suite once"). Hook timeout: 5 minutes;
-  hook may NOT modify tracked files (worktree is read-only at
-  integration time). Absence of the file is not a failure.
+| Convention | File | Subcommand | Purpose |
+|---|---|---|---|
+| Overlay (jcode-native) | `prompt-overlay.md` | (jcode loads directly) | Project coordination rules, role disables, preamble |
+| Worker policy (jcode-native) | `swarm-prompt.md` | (jcode loads directly) | Override model routing / spawn hygiene / anti-patterns |
+| Role override | `roles/<name>.md` | `extension.sh role <name>` | Specialize a role for the project (e.g. security reviewer) |
+| Verify hook | `verify.sh` | `extension.sh verify` | Project-specific invariants (lint, JSDoc, no console.log) |
+| Pre-merge hook | `pre-merge.sh` | `extension.sh pre-merge <branch> <base> <role>` | Cross-worker integration gate before merging |
 
-All five live in `<repo>/.jcode/` — committed with the project,
-not the bundle. They have no effect on other projects. The bundle
-intentionally ships no defaults for the hooks: they are opt-in
-extensions the project author sets up if needed. A full scenario
-walkthrough (8 axes × 7 sub-cases) lives in `docs/EXTENSIONS.md`.
+Two are jcode-native (overlay, worker policy) — jcode's loader
+already honors per-project precedence. Three are bundle conventions
+(role override, verify, pre-merge) — root calls `scripts/extension.sh`
+to invoke them with the correct fallback semantics (per-project
+wins, global fallback, missing-hook-is-not-failure).
 
-The bundle does **not** install or symlink either file. install.sh
-runs from the bundle checkout, not from the project cwd, so it
-cannot know which project's `<cwd>/.jcode/` to read.
+All five live in `<repo>/.jcode/` — committed with the project, not
+the bundle. Absence of any of them is not a failure; root proceeds
+with the default behavior. Full 8×7 boundary-behavior walkthrough
+lives in `docs/EXTENSIONS.md`.
 
 ## Commit conventions
 
@@ -245,11 +215,9 @@ bash scripts/install.sh                          # idempotent rerun (should prin
 find ~/.jcode -maxdepth 1 -name '*.bak.*' | wc -l   # should be 0
 
 # 6. Per-project verify hook (opt-in, only runs if present). See
-#    "Per-project customization" above. Bundle does NOT install this;
-#    if the project author put one at ./.jcode/verify.sh, run it.
-if [[ -x ./.jcode/verify.sh ]]; then
-  ./.jcode/verify.sh
-fi
+#    "Per-project customization" above. Bundle's single entry point
+#    for extension conventions is scripts/extension.sh.
+scripts/extension.sh verify
 ```
 
 All six must pass before any commit touching the installer or
