@@ -960,6 +960,12 @@ PY
         local serena_git="$serena_project/.git"
         if [[ -n "$wt_common" && "$wt_common" == "$serena_git" ]]; then
           serena_status="stale (sees $serena_project only; worktree edits invisible)"
+        elif [[ -z "$wt_common" ]]; then
+          # Could not resolve worktree's git-common-dir (path doesn't
+          # exist yet, or git is unavailable). Don't claim "different
+          # repo entirely" — that misleads workers calling this pre-`git
+          # worktree add`. Treat as unknown but conservatively stale.
+          serena_status="unknown (could not resolve worktree git dir; treat serena as stale until verified)"
         else
           serena_status="stale (configured for $serena_project; this worktree $wt_path is a different repo entirely)"
         fi
