@@ -256,6 +256,85 @@ cmd_skills() {
   esac
 }
 
+# ---------- subcommand: artifact ----------
+# Validate a typed-artifact JSON file against the 8-field contract
+# (status, findings, evidence, edge_cases_considered, validation,
+# open_questions, confidence, what_i_did_not_check).
+#
+# Usage:
+#   extension.sh artifact validate <path>
+#     Exit 0 if all 8 fields present and well-typed.
+#     Exit 1 if any field missing or wrong type.
+#     Exit 2 on usage error.
+#
+# Why this exists: A8.9 sub-case — notify.sh may receive an artifact
+# with missing fields. Bundle provides a validator so root can check
+# the artifact before acting on it. The 8-field contract is the same
+# one roles/swarm/roles/*.md output schemas use.
+cmd_artifact() {
+  local action="${1:-}"
+  shift || true
+  case "$action" in
+    validate)
+      local path="${1:-}"
+      if [[ -z "$path" ]]; then
+        echo "usage: extension.sh artifact validate <path>" >&2
+        return 2
+      fi
+      if [[ ! -f "$path" ]]; then
+        echo "artifact: no file at $path" >&2
+        return 2
+      fi
+      python3 - "$path" <<'PY'
+import json, sys
+path = sys.argv[1]
+required = {
+    "status": str,
+    "findings": list,
+    "evidence": list,
+    "edge_cases_considered": list,
+    "validation": str,
+    "open_questions": list,
+    "confidence": str,
+    "what_i_did_not_check": list,
+}
+try:
+    obj = json.load(open(path))
+except json.JSONDecodeError as e:
+    print(f"artifact: JSON parse error: {e}", file=sys.stderr)
+    sys.exit(1)
+if not isinstance(obj, dict):
+    print(f"artifact: top-level is {type(obj).__name__}, expected object", file=sys.stderr)
+    sys.exit(1)
+missing = []
+wrong_type = []
+for k, t in required.items():
+    if k not in obj:
+        missing.append(k)
+    elif not isinstance(obj[k], t):
+        wrong_type.append(f"{k} (got {type(obj[k]).__name__}, want {t.__name__})")
+if missing or wrong_type:
+    if missing:
+        print(f"artifact: missing fields: {', '.join(missing)}", file=sys.stderr)
+    if wrong_type:
+        print(f"artifact: wrong-type fields: {', '.join(wrong_type)}", file=sys.stderr)
+    sys.exit(1)
+status = obj.get("status", "?")
+confidence = obj.get("confidence", "?")
+n_findings = len(obj["findings"])
+n_evidence = len(obj["evidence"])
+n_open = len(obj["open_questions"])
+print(f"artifact OK: status={status} confidence={confidence} "
+          f"findings={n_findings} evidence={n_evidence} open_questions={n_open}")
+PY
+      ;;
+    *)
+      echo "usage: extension.sh artifact validate <path>" >&2
+      return 2
+      ;;
+  esac
+}
+
 # ---------- subcommand: scratch-dir ----------
 # Print the canonical per-project scratch root under $TMPDIR.
 # Layout: $TMPDIR/jcode/<repo-name>-<short-sha>/
@@ -444,12 +523,15 @@ cmd_doctor() {
     fi
     printf '%-30s %-50s %s\n' "$axis" "$file" "$s"
   done
+  # A10 scratch dir (derived path, not a file)
+  printf '%-30s %-50s %s\n' "A10 scratch dir" "$(cmd_scratch_dir root 2>/dev/null || echo '?')" "(derived from cwd)"
   echo ""
   echo "Run 'extension.sh help' for invocation details on each axis."
 }
 
 # ---------- dispatch ----------
 case "$cmd" in
+  artifact)     cmd_artifact "$@" ;;
   role)        cmd_role "$@" ;;
   pre-merge)   cmd_pre_merge "$@" ;;
   verify)      cmd_verify "$@" ;;
@@ -473,13 +555,14 @@ Subcommands:
   skills list                          Enumerate per-project skills (jcode-native)
   mcp info                             Show per-project MCP config status (jcode-native)
   scratch-dir [root|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
+  artifact validate <path>                Validate a typed-artifact JSON file (8-field contract)
   doctor                               Single-shot enumeration of all 10 extension axes
 
 Per-project hooks live at <repo>/.jcode/{pre-merge,verify,notify,pre-spawn}.sh
 Per-project role overrides live at <repo>/.jcode/roles/<name>.md
 Per-project skills live at <repo>/.jcode/skills/<name>/SKILL.md (jcode-native)
 Per-project MCP servers live at <repo>/.jcode/mcp.json (jcode-native)
-See docs/EXTENSIONS.md for the full 9×7 boundary-behavior walkthrough.
+See docs/EXTENSIONS.md for the full 10×10 boundary-behavior walkthrough.
 EOF
     ;;
   *)
