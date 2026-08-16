@@ -134,6 +134,18 @@ their own skills on top.
 | `config/mcp.json` | ❌ | Contains live MCP server tokens — **must remain local** |
 | `~/.jcode/builds/`, `cache/`, `logs/`, `sessions/`, `memory/`, telemetry files | ❌ | Runtime state; rebuilt on each session |
 
+## Note on AGENTS.md
+
+`AGENTS.md` is committed as-is from a prior iteration of this repo and
+was intentionally **not** rewritten as part of the cleanup. It still
+references files and directories that no longer exist in this bundle
+(`skills/`, `jcode-patches/`, tick-era scripts, etc.). Treat it as a
+historical structure reference, not as the source of truth for the
+current layout. The current layout is documented above and in
+`docs/INSTALL.md`. If you want a project-level instruction file that
+matches the current repo, copy the relevant sections from this README
+into a fresh `AGENTS.md` of your own.
+
 ## License
 
 MIT, same as upstream jcode. See upstream for full license text.
