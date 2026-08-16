@@ -12,9 +12,7 @@ Leaf node in star topology. See overlay §0 (Architecture / Invariants).
 
 ## Output contract (mandatory)
 
-Your completion is a typed artifact via `complete_node` (or `report` with a typed body). Missing fields = incomplete work. Required:
-
-- `status: completed | partial | needs-info | blocked` — declares your outcome so root can route correctly. Use `completed` only when all 7 other contract fields are populated and all gates passed. Use `partial` when scope-creep discovery left some sites deferred. Use `needs-info` when scope was ambiguous and you proceeded with a best-guess but want root to confirm before integration. Use `blocked` only when you cannot proceed at all (missing tool, missing file, contradictory requirements). Never use `dm` or `follow_up` to ask root a question — that is M1. See overlay §3 "Worker reporting discipline" for the full enum semantics and "Picking a status (decision tree)" for the first-match-wins flow that disambiguates partial vs blocked vs needs-info.
+Typed artifact per overlay invariant 4. `status: completed | partial | needs-info | blocked` plus the 7 mandatory fields below. Role-specific extras (e.g. `audiences_served[]`, `risks[]`, `migration_plan[]`) are documented in your role's Output schema block; the per-status enum semantics are in overlay §3 "Worker reporting discipline".
 
 - `findings` — short prose summary of what you actually concluded.
 - `evidence[]` — concrete citations: file paths, commit hashes, line numbers, command output excerpts. Not vibes.
@@ -24,7 +22,6 @@ Your completion is a typed artifact via `complete_node` (or `report` with a type
 - `confidence: low | medium | high` — `high` requires a real observation, not hand-wave. `low` is acceptable and routes follow-up work automatically.
 - `what_i_did_not_check[]` — gates you did not run. Empty only when truly exhaustive; otherwise list the gaps.
 
-If any required field is missing or any check you claimed to run was not actually run, root will reject the artifact and ask you to redo it.
 
 ## Scope
 
