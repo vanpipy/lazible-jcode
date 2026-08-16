@@ -150,15 +150,31 @@ bash scripts/uninstall.sh --help
 
 # 4. Role-schema contract (all 6 files have all 7+1 mandated fields)
 python3 -c "
-import re, json, sys
+import json, sys
 required = {'findings', 'evidence', 'edge_cases_considered', 'validation', 'open_questions', 'confidence', 'what_i_did_not_check', 'status'}
 ok = True
 for role in ['reviewer', 'implementer', 'investigator', 'migrator', 'test-writer', 'doc-writer']:
-    text = open(f'swarm/roles/{role}.md').read()
-    m = re.search(r'## Output schema.*?\`\`\`json\s*(\{.*?\})\s*\`\`\`', text, re.DOTALL)
-    if not m:
-        print(f'{role}: NO schema'); ok = False; continue
-    obj = json.loads(m.group(1))
+    path = f'swarm/roles/{role}.md'
+    text = open(path).read()
+    # Find ## Output schema heading, then extract the FIRST ```json ... ```
+    # fence block that follows it. Robust against role-specific fields
+    # (nested braces, extra keys) because we don't regex the JSON itself.
+    idx = text.find('## Output schema')
+    if idx < 0:
+        print(f'{role}: NO schema heading'); ok = False; continue
+    rest = text[idx:]
+    fence_start = rest.find('\`\`\`json')
+    if fence_start < 0:
+        print(f'{role}: NO json fence'); ok = False; continue
+    body_start = fence_start + len('\`\`\`json')
+    fence_end = rest.find('\`\`\`', body_start)
+    if fence_end < 0:
+        print(f'{role}: NO closing fence'); ok = False; continue
+    json_block = rest[body_start:fence_end].strip()
+    try:
+        obj = json.loads(json_block)
+    except json.JSONDecodeError as e:
+        print(f'{role}: JSON parse error {e}'); ok = False; continue
     missing = required - set(obj)
     if missing:
         print(f'{role}: missing {missing}'); ok = False
