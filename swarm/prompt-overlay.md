@@ -128,9 +128,35 @@ action when the answers converge.
    first, then re-spawn. Workers must never spawn their own children
    to "fix" this.
 
-If questions 0, 1, and 2 all say "spawn", spawn. Always pass `label`,
-`model`, `effort`, worktree path, base SHA, and worker branch on the
-spawn call.
+If questions 0, 1, and 2 all say "spawn", spawn. The spawn call MUST
+include all of these fields:
+
+- `label` — short, shown in swarm UI (e.g., `auth reviewer`).
+- `model` + `effort` — explicit (or omit to inherit from root).
+- `worktree_path` — absolute path the worker enters as cwd.
+- `base_commit` — SHA the worktree was cut from (anchor for diff).
+- `worker_branch` — branch name the worker commits to (e.g.,
+  `feat/<name>_<short-sha>`).
+- `files_touched[]` — exhaustive allow-list of paths the worker MAY
+  modify. This is the contract for invariant 3 ("Scope owns files");
+  workers MUST NOT commit any file outside this list. New files
+  discovered mid-task go to `open_questions[]` with `status: partial`
+  or `needs-info` — never silently expand scope.
+- `scope_body` — what to do, what not to do, what gates to run.
+- `termination_template` — the 7-field typed-artifact JSON shape.
+
+Optional but recommended:
+
+- `depends_on: <branch or SHA>` — root queues this worker's spawn
+  until the named branch is merged into the integration base. Lets
+  root avoid serializing all workers when only some need ordering.
+  Workers themselves do NOT spawn their own children to satisfy
+  this — they emit `status: needs-info` if a dependency they
+  expected is missing, and root handles it.
+- `concurrency_limit` — the swarm tool's max-live-workers knob.
+  Default 4. Exceeding it risks git index contention and root
+  attention overflow. Use the swarm's `fill_slots` /
+  `run_plan` `concurrency_limit` to raise or lower it.
 
 ### Code implementation routing rule (hard)
 
@@ -397,6 +423,8 @@ Swarms above ~2 concurrent workers collide on shared working trees
 (silent `git add` loss, `git status` cross-contamination, half-baked
 mixed reads). The fix: each worker gets a dedicated git worktree.
 
+### 4.1 Worktree discipline
+
 Your responsibility as root:
 
 - Build the worktree + branch + dep symlinks **before** handing off the
@@ -404,12 +432,49 @@ Your responsibility as root:
 - **Never enter a worker worktree** yourself. Cross-worker reading
   happens via `git show <branch>:<file>` or
   `git diff main..<branch>`.
-- After a worker reports `ready`: `git worktree remove` +
-  `git branch -D` if integration succeeded.
 - Workers **never run package managers** (pnpm/yarn/cocoapods may be
   missing in their environment). Symlink heavy in-repo deps from
   main; rely on user-level caches for the rest. New dep needed: worker
   reports via `open_questions[]`, you install in main, worker re-links.
+
+### 4.2 Spawn prompt contract (mandatory fields)
+
+The full required field list lives in §1; this subsection restates
+the load-bearing pieces from root's workspace perspective:
+
+- `files_touched[]` — the **scope boundary**. If you forget to
+  enumerate it, the worker has no scope boundary, and you cannot
+  blame the worker for expanding scope when you did not give one.
+  Always include this list; never let the worker infer it.
+- `base_commit` — the SHA the worktree was cut from. The worker uses
+  this as the diff anchor when emitting `evidence[].commits`.
+  Without it, artifact↔branch correlation is impossible.
+- `worktree_path` — absolute path. Worker enters this as `cwd`.
+- `worker_branch` — branch the worker commits to. Convention:
+  `feat/<name>_<short-sha>` or `fix/<name>_<short-sha>`.
+
+### 4.3 Worktree and branch lifecycle per status
+
+The root session owns worktree and branch lifecycle. After a worker
+emits its typed artifact, root acts on the worktree and branch
+according to the table below. Do NOT delete a worktree or branch
+until the artifact's outcome has been acted on.
+
+| Worker status + root decision | Worktree | Branch | Why |
+|---|---|---|---|
+| `completed`, accepted, merged | `git worktree remove` | keep (records history) | Work landed on main |
+| `completed`, accepted, branch kept open | keep | keep | User wants branch for follow-up |
+| `completed`, rejected (reviewer `blocker`) | `git worktree remove` | `git branch -D` | Code rejected, no useful artifact |
+| `partial`, root re-spawn chosen | KEEP | KEEP | Re-spawned worker reuses worktree, appends commits |
+| `partial`, root accepts the slice | `git worktree remove` | keep | Merged partial slice |
+| `needs-info`, awaiting arbitration | keep | keep | Root may amend the worker's commit |
+| `blocked`, zero useful work | `git worktree remove` | `git branch -D` | Nothing to preserve |
+| `blocked`, partial-then-blocked | `git worktree remove` | keep for record | Partial work may still be salvageable; root decides |
+
+A re-spawn on a kept worktree (the `partial` + re-spawn row) MUST
+rebase onto the current integration base before resuming:
+`git rebase <new_base>` inside the worktree. Stale commits from
+prior sessions can otherwise leak into the final merge.
 
 ---
 
