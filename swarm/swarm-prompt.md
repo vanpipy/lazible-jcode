@@ -113,9 +113,9 @@ missing capability, and the root decides.
 Use these primitives in this order of preference:
 
 1. **`complete_node` with typed artifact** — primary handoff. Forces
-   the worker to produce `findings`, `evidence[]`,
-   `edge_cases_considered[]`, `validation`, `open_questions[]`,
-   `confidence`, and `what_i_did_not_check[]`.
+   the worker to produce `findings`, `evidence[]`, `validation`,
+   `open_questions[]`, `confidence`, and `what_i_did_not_check[]`
+   (matching the overlay's invariant 4).
 2. **`dm` to a specific worker** — for follow-up questions or to
    assign more work to an existing agent.
 3. **`broadcast` to your spawned subtree** — rare, only for genuine

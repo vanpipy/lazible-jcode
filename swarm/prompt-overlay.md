@@ -195,9 +195,9 @@ artifact?" If yes, spawn.
 Use these primitives in this order of preference:
 
 1. **`complete_node` with typed artifact** — primary handoff. Forces
-   the worker to produce `findings`, `evidence[]`,
-   `edge_cases_considered[]`, `validation`, `open_questions[]`,
-   `confidence`, `what_i_did_not_check[]`.
+   the worker to produce `findings`, `evidence[]`, `validation`,
+   `open_questions[]`, `confidence`, `what_i_did_not_check[]`
+   (matching invariant 4 above).
 2. **`dm` to a specific worker** — for follow-up questions or to
    assign more work to an existing agent.
 3. **`broadcast` to your spawned subtree** — rare, only for genuine

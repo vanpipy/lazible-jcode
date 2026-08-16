@@ -45,6 +45,7 @@ If any required field is missing or any check you claimed to run was not actuall
   "findings": [
     {"severity": "blocker|major|minor|nit", "summary": "...", "evidence": ["file:line"]}
   ],
+  "evidence": ["file:line — aggregate refs not folded into a single finding"],
   "risks": [{"summary": "...", "mitigation": "..."}],
   "validation": "ran <command>, observed <result>",
   "open_questions": ["..."],
@@ -52,6 +53,11 @@ If any required field is missing or any check you claimed to run was not actuall
   "what_i_did_not_check": ["..."]
 }
 ```
+
+`evidence[]` appears at the top level per the overlay's typed-artifact
+contract AND nested inside each `findings[]` entry for granular
+per-finding pointers. Keep both: the top-level field is required by
+the contract; the per-finding nesting is the reviewer's local detail.
 
 ## Skills to load
 
