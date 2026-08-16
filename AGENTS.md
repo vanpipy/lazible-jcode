@@ -89,37 +89,57 @@ file-purpose table). `docs/INSTALL.md` is the deeper reference
 is the agent-facing operating manual. Do not duplicate content across
 the three — point at the canonical location.
 
-### Per-project customization (overlay + verify hook)
+### Per-project customization (extension mechanisms)
 
 The bundle ships a **global** overlay + verification script that
 applies to every project you work in. Most users want project-specific
 behavior on top — for example, a repo may want to disable a worker
 role, add a domain-specific skill, or enforce a project-only invariant.
-Two extension points cover this without forking the bundle:
+**Five extension points** cover this without forking the bundle:
 
-- **Per-project overlay**: drop a `prompt-overlay.md` into
-  `<repo>/.jcode/prompt-overlay.md`. jcode reads it with precedence
-  over the global `~/.jcode/prompt-overlay.md` (the precedence is
-  already in jcode's overlay loader; the bundle just lets you use
-  it). Use this to add project-level coordination rules, disable
-  a role for that repo, or prepend a project-specific preamble.
-  The file does not need to be a full overlay — short additive
-  instructions work best ("in this repo, never spawn a test-writer
-  because the test harness is custom; always route test requests
-  to the implementer").
-- **Per-project verify hook**: drop an executable
-  `<repo>/.jcode/verify.sh`. The bundle's verification command
-  checks for it (see "Verification before push" below) and runs it
-  after the schema check passes. Use this to enforce project-only
-  invariants the bundle cannot know about (e.g. "no `console.log`
-  in `src/`", "all public APIs must have JSDoc", "TODO comments
-  need a linked issue"). The script must exit non-zero to fail the
-  verification.
+- **Per-project overlay** — `<repo>/.jcode/prompt-overlay.md`. jcode
+  reads it with precedence over the global `~/.jcode/prompt-overlay.md`
+  (the precedence is already in jcode's overlay loader; the bundle
+  just lets you use it). Use this to add project-level coordination
+  rules, disable a role for that repo, or prepend a project-specific
+  preamble. The file does not need to be a full overlay — short
+  additive instructions work best ("in this repo, never spawn a
+  test-writer because the test harness is custom; always route
+  test requests to the implementer").
+- **Per-project worker policy** — `<repo>/.jcode/swarm-prompt.md`.
+  jcode loads this with the same precedence as the overlay (project
+  → global → built-in default). Lets the project override worker-side
+  model routing, spawn hygiene, and anti-patterns. Documented in
+  jcode's `crates/jcode-base/src/prompt.rs::load_swarm_prompt`.
+- **Per-project role override** — `<repo>/.jcode/roles/<name>.md`.
+  Bundle convention (NOT jcode-native): when root fills a spawn
+  prompt, it reads `<cwd>/.jcode/roles/<name>.md` first and falls
+  back to `~/.jcode/roles/<name>.md`. Use this to specialize a role
+  for the project (e.g. a security-focused reviewer for a security
+  project). File name MUST be one of the 6 existing roles — adding
+  a 7th is a red line. Empty files fall back to global with a warning.
+- **Per-project verify hook** — `<repo>/.jcode/verify.sh`. The
+  bundle's verification command checks for it (see "Verification
+  before push" below) and runs it after the schema check passes.
+  Use this to enforce project-only invariants the bundle cannot
+  know about (e.g. "no `console.log` in `src/`", "all public APIs
+  must have JSDoc", "TODO comments need a linked issue"). The
+  script must exit non-zero to fail the verification.
+- **Per-project pre-merge hook** — `<repo>/.jcode/pre-merge.sh`.
+  Bundle convention: root runs `./<repo>/.jcode/pre-merge.sh <branch>
+  <base_commit> <role>` before merging any worker branch into the
+  main worktree. Exit 0 to proceed; non-zero blocks the merge and
+  surfaces stderr to the user. Use this for cross-worker integration
+  gates the bundle's per-slice gates miss (e.g. "after all workers
+  merge, run the full e2e suite once"). Hook timeout: 5 minutes;
+  hook may NOT modify tracked files (worktree is read-only at
+  integration time). Absence of the file is not a failure.
 
-Both files live in `<repo>/.jcode/` — committed with the project,
+All five live in `<repo>/.jcode/` — committed with the project,
 not the bundle. They have no effect on other projects. The bundle
-intentionally ships no defaults for either: they are opt-in hooks
-that the project author sets up if needed.
+intentionally ships no defaults for the hooks: they are opt-in
+extensions the project author sets up if needed. A full scenario
+walkthrough (8 axes × 7 sub-cases) lives in `docs/EXTENSIONS.md`.
 
 The bundle does **not** install or symlink either file. install.sh
 runs from the bundle checkout, not from the project cwd, so it
