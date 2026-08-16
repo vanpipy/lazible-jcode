@@ -46,15 +46,39 @@
 #   Anything else on stdout is silently dropped.
 #   stderr is passed through unchanged.
 #
+#   scripts/extension.sh mcp info
+#     Print a summary of the per-project MCP config (file path +
+#     server count). Detects python3/jq availability and degrades
+#     gracefully if neither is present (prints "unavailable" instead
+#     of false-positive "invalid JSON syntax"). Exit 3 only if the
+#     file is genuinely malformed JSON.
+#
+#   scripts/extension.sh mcp init [--project=PATH]
+#     One-time per-project bootstrap: copy the bundle-shipped
+#     config/mcp.json.example into <project>/.jcode/mcp.json,
+#     substituting the /workspace placeholder with the actual
+#     project root. Idempotent — never overwrites an existing file
+#     (prints skip message + rm hint, exit 0). Used by users/agents
+#     entering a new project that hasn't set up MCP yet.
+#
 # Conventions (which is the bundle, which is the project):
 #   - The script itself is bundle-owned (lives in scripts/).
 #   - The per-project files it looks for are project-owned
 #     (<repo>/.jcode/<name>.*) and committed with the project.
-#   - The bundle never creates or modifies per-project files.
+#   - The bundle never creates or modifies per-project files, EXCEPT
+#     mcp init (the only one-shot bootstrap subcommand; everything
+#     else is read-only w.r.t. project state).
 #   - Absence of a per-project file is never a failure — root just
 #     proceeds with the default behavior.
 
 set -euo pipefail
+
+# Resolve the bundle root from this script's path. Used by subcommands
+# that need to read bundle-shipped files (templates, schemas, etc.)
+# without hardcoding the path. The script lives at <bundle>/scripts/
+# so going up one level gives the bundle root.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Walk up from a directory until we find a `.jcode/` dir. Echoes the
 # path to that `.jcode/` dir, or empty string if none found.
@@ -674,6 +698,7 @@ cmd_scratch_dir() {
 # ones (see `crates/jcode-base/src/mcp/protocol.rs::load_project_locals`).
 cmd_mcp() {
   local action="${1:-info}"
+  shift 2>/dev/null || true
   case "$action" in
     info)
       if [[ -z "$PROJ_DIR" ]]; then
@@ -709,8 +734,61 @@ cmd_mcp() {
       fi
       echo "  servers: $count"
       ;;
+    init)
+      # One-time per-project bootstrap: copy the bundle's mcp.json
+      # template into <project>/.jcode/mcp.json, substituting the
+      # placeholder path with the actual project root. Idempotent —
+      # never overwrites an existing file.
+      #
+      # Usage: extension.sh mcp init [--project=PATH]
+      local project="${PWD}"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project=*) project="${1#*=}" ;;
+          *) echo "extension.sh mcp init: unknown option: $1" >&2; return 2 ;;
+        esac
+        shift
+      done
+
+      if [[ ! -d "$project" ]]; then
+        echo "extension.sh mcp init: $project does not exist" >&2
+        return 2
+      fi
+      if [[ ! -d "$project/.git" ]]; then
+        echo "extension.sh mcp init: $project is not a git repository" >&2
+        return 2
+      fi
+
+      local proj_jcode="$project/.jcode"
+      local proj_mcp="$proj_jcode/mcp.json"
+      local template="$BUNDLE_ROOT/config/mcp.json.example"
+
+      if [[ -e "$proj_mcp" ]]; then
+        echo "extension.sh mcp init: $proj_mcp already exists — not overwriting"
+        echo "  to re-bootstrap: rm $proj_mcp && extension.sh mcp init"
+        return 0
+      fi
+      if [[ ! -e "$template" ]]; then
+        echo "extension.sh mcp init: template not found at $template" >&2
+        echo "  bundle may be incomplete; expected: <bundle>/config/mcp.json.example" >&2
+        return 3
+      fi
+
+      mkdir -p "$proj_jcode"
+      # Substitute the /workspace placeholder with the actual project
+      # path. The template ships with /workspace so the bundle stays
+      # generic; each project substitutes its own root.
+      sed "s|/workspace|$project|g" "$template" > "$proj_mcp"
+
+      echo "extension.sh mcp init: installed"
+      echo "  template: $template"
+      echo "  target:   $proj_mcp"
+      echo "  project:  $project (substituted for /workspace)"
+      echo ""
+      echo "next: review $proj_mcp, then start a jcode session — servers register automatically"
+      ;;
     *)
-      echo "usage: extension.sh mcp info" >&2
+      echo "usage: extension.sh mcp {info|init [--project=PATH]}" >&2
       return 2
       ;;
   esac
