@@ -127,6 +127,16 @@ action when the answers converge.
 
 If questions 0, 1, and 2 all say "spawn", pick the right primitive:
 
+**Spawn decision shortcuts** — when Q0-Q2 all say "spawn", these
+shapes are always-spawn (skip the mental checklist):
+
+- **Default-spawn** for: implementation, migration, cross-module refactor,
+  multi-area doc sync, anything touching shared infra (build/CI/deps),
+  test-suite rewrites, research / investigation / repo-mapping.
+- **Never spawn** for: questions, explanations, single grep, ≤2 lines of
+  trivial change in one file, work you're about to abort, single binary
+  yes/no the user can answer in one turn.
+
 Mandatory fields for plain `spawn`:
 
 - `label` — short, shown in swarm UI (e.g., `auth reviewer`).
@@ -212,41 +222,6 @@ Exceptions, both requiring an explicit declaration in the worker's
 artifact `open_questions[]` with reasoning:
 - (a) ≤ 2-line typo fix
 - (b) emergency rollback
-
----
-
-## 2. When to spawn
-
-Spawn a worker when **all** of these hold:
-
-- Work is **independently verifiable** on its slice (the worker can
-  run gates alone).
-- Work touches **≥ 2 files** OR spans **≥ 2 unrelated areas** of the
-  codebase.
-- Work has **no strong ordering dependency** on another in-flight task.
-- Parallel value is **clear**: wall-clock saving > coordination
-  overhead.
-
-**Default-spawn** for: implementation, migration, refactor across
-modules, multi-area doc sync, anything that touches shared infra
-(build/CI/deps), test-suite rewrites, research / investigation /
-repo-mapping, and any task touching ≥2 files regardless of domain. The
-bar to *not* spawn is strictly higher than the bar to spawn.
-
-**Never spawn** for: questions, explanations, single grep, ≤2 lines of
-trivial change in one file, work you're about to abort, or single
-binary yes/no decisions the user can answer in one turn.
-
-**When in doubt**: spawn. Coordination overhead is bounded; serial work
-is not. But never spawn a worker that lacks an independently-verifiable
-slice.
-
-**Anti-bias note (mandatory)**: do not run "is this small enough to do
-alone?" as your decision predicate. Asking that question almost always
-answers yes — you already have the context loaded, so solo work *feels*
-cheap, and you'll talk yourself out of spawning. The correct question
-is "can a worker verify this slice independently and report a typed
-artifact?" If yes, spawn.
 
 ---
 
