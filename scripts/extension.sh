@@ -448,6 +448,79 @@ cmd_mcp() {
   esac
 }
 
+# ---------- subcommand: models ----------
+# List models that jcode currently knows about, plus a probe helper for
+# auth status. Root uses this BEFORE spawning workers to avoid
+# wasting a spawn on an unauth'd model.
+#
+# Why this exists: P1 in NOTES — multiple recommended models had no
+# credentials in this environment. Root should probe auth state before
+# drafting a worker spawn prompt.
+#
+# Usage:
+#   extension.sh models list         # list model names from jcode
+#   extension.sh models probe <name>  # try a no-op tool call; report auth
+cmd_models() {
+  local action="${1:-list}"
+  shift || true
+  case "$action" in
+    list)
+      if ! command -v jcode >/dev/null 2>&1; then
+        echo "extension.sh: jcode not on PATH" >&2
+        return 2
+      fi
+      echo "jcode-known models (auth status NOT shown here — use 'probe'):"
+      jcode model list 2>/dev/null | sed 's/^/  /'
+      echo ""
+      echo "To check auth for a specific model, run:"
+      echo "  extension.sh models probe <model-name>"
+      echo ""
+      echo "To inspect availability status from the swarm layer:"
+      echo "  spawn a temp session and call 'swarm list_models'"
+      ;;
+    probe)
+      local model="${1:-}"
+      if [[ -z "$model" ]]; then
+        echo "usage: extension.sh models probe <model-name>" >&2
+        return 2
+      fi
+      if ! command -v jcode >/dev/null 2>&1; then
+        echo "extension.sh: jcode not on PATH" >&2
+        return 2
+      fi
+      local out
+      out="$(jcode model list 2>&1 | grep -F "$model" || true)"
+      if [[ -z "$out" ]]; then
+        echo "extension.sh: model '$model' not in jcode-known list" >&2
+        echo "  run 'extension.sh models list' to see available names" >&2
+        return 3
+      fi
+      # Run the probe and capture exit code BEFORE the if (otherwise
+      # the if-expression resets $? to 0 on the success branch).
+      # `jcode run` returns 0 on success, non-zero on auth failure or
+      # any other error. We send a 1-token prompt to keep cost ~0.
+      # Temporarily disable `set -e` (set in line 1 of this script)
+      # so the jcode failure doesn't kill the script before we can
+      # report exit 4.
+      set +e
+      jcode run --model "$model" "ok" >/dev/null 2>&1
+      local rc=$?
+      set -e
+      if [[ $rc -eq 0 ]]; then
+        echo "auth: OK ($model)"
+        return 0
+      fi
+      echo "auth: FAILED ($model, exit $rc)" >&2
+      echo "  recommended: try a different model, or re-authenticate" >&2
+      return 4
+      ;;
+    *)
+      echo "usage: extension.sh models [list|probe <name>]" >&2
+      return 2
+      ;;
+  esac
+}
+
 # ---------- subcommand: doctor ----------
 # Single-shot enumeration of all 10 per-project extension axes.
 # Tells root what's wired up vs. what's relying on defaults. Designed
@@ -539,6 +612,7 @@ case "$cmd" in
   pre-spawn)   cmd_pre_spawn "$@" ;;
   skills)      cmd_skills "$@" ;;
   mcp)         cmd_mcp "$@" ;;
+  models)      cmd_models "$@" ;;
   scratch-dir) cmd_scratch_dir "$@" ;;
   doctor)      cmd_doctor "$@" ;;
   help|--help|-h|"")
@@ -554,6 +628,7 @@ Subcommands:
      [--exports FILE]                  Emit KEY=VALUE exports to FILE for caller to source
   skills list                          Enumerate per-project skills (jcode-native)
   mcp info                             Show per-project MCP config status (jcode-native)
+  models [list|probe <name>]           List jcode-known models; probe auth for one
   scratch-dir [root|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
   artifact validate <path>                Validate a typed-artifact JSON file (8-field contract)
   doctor                               Single-shot enumeration of all 10 extension axes
