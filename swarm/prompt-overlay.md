@@ -153,9 +153,13 @@ Mandatory fields for plain `spawn`:
 Optional for plain `spawn`:
 
 - `concurrency_limit` — the swarm tool's max-live-workers knob.
-  Default 4. Exceeding it risks git index contention and root
-  attention overflow. Use the swarm's `fill_slots` /
-  `run_plan` `concurrency_limit` to raise or lower it.
+  Set a value your machine and your task can sustain. Below it the
+  tool refuses new spawns; above it contention grows non-linearly
+  (git index collisions, root attention overflow, file-system
+  pressure). Defaults differ by mode: light mode has a small fixed
+  default; deep mode reads its cap from your `config.toml`
+  (`agents.swarm_max_concurrent_agents`; `0` means unbounded).
+  Tune via `fill_slots` / `run_plan` `concurrency_limit`.
 
 #### Ordered dispatch — use `task_graph` when ≥2 workers have dependencies
 
