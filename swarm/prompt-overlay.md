@@ -165,11 +165,10 @@ Optional for plain `spawn`:
   Tune via `fill_slots` / `run_plan` `concurrency_limit`.
 - `required_skills[]` — names of jcode skills the worker should
   load before starting (e.g. `["/rn-dev", "/pi-agent-rust"]`).
-  Default: read the role template's `## Skills to load` section and
-  use those. Override here when the spawn needs a specific skill
-  set that differs from the role's default. The convention is:
-  root injects the corresponding `skill_manage load <name>` calls
-  into the spawn prompt so the worker does not have to remember.
+  Defaults to `[]` if omitted. Root injects the corresponding
+  `skill_manage load <name>` calls into the spawn prompt so the
+  worker does not have to remember. Per-project skills (A3) are
+  auto-loaded and do NOT belong in this list.
 
 #### Ordered dispatch — use `task_graph` when ≥2 workers have dependencies
 

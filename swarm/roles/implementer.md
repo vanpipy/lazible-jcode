@@ -75,12 +75,6 @@ For any `fold` / `replace` / `rename` / `move` / `delete`:
 
 **`dependencies` field (optional).** When your work needs another worker's commit before you can complete, declare it as a list of `{branch, commit, why}` objects. Root will merge the named branch first, rebase your worktree onto the merged result, and resume you. Most commits have no deps; leave the field out when your work is independent.
 
-## Skills to load
-
-```
-skill_manage load <project-skill>     # e.g. /rn-dev, /pi-agent-rust
-```
-
 ## Anti-patterns
 
 - Don't "while I'm here, fix X too" — out-of-scope edits are not your call.

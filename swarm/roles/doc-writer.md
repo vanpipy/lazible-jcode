@@ -59,12 +59,6 @@ If any required field is missing or any check you claimed to run was not actuall
 }
 ```
 
-## Skills to load
-
-```
-skill_manage load <project-skill>
-```
-
 ## Anti-patterns
 
 - Don't copy code comments as docs (comments are for maintainers, docs are for readers).

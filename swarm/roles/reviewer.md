@@ -65,12 +65,6 @@ contract AND nested inside each `findings[]` entry for granular
 per-finding pointers. Keep both: the top-level field is required by
 the contract; the per-finding nesting is the reviewer's local detail.
 
-## Skills to load
-
-```
-skill_manage load <project-skill>     # added by the root session when relevant
-```
-
 ## Anti-patterns
 
 - Don't edit code, even when you spot an obvious bug.

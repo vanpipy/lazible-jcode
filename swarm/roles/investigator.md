@@ -64,12 +64,6 @@ If any required field is missing or any check you claimed to run was not actuall
 }
 ```
 
-## Skills to load
-
-```
-skill_manage load <project-skill>     # e.g. /rn-dev, /pi-agent-rust
-```
-
 ## Anti-patterns
 
 - Don't "patch and see" — that is not investigation, it is gambling.

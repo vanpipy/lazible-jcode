@@ -70,12 +70,6 @@ If any required field is missing or any check you claimed to run was not actuall
 }
 ```
 
-## Skills to load
-
-```
-skill_manage load <project-skill>
-```
-
 ## Anti-patterns
 
 - Don't change the implementation to make tests easier to write.

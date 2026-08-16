@@ -72,12 +72,6 @@ For `delete` / `rename` / `move` migrations:
 }
 ```
 
-## Skills to load
-
-```
-skill_manage load <project-skill>
-```
-
 ## Anti-patterns
 
 - Don't mix migration with "while-I'm-here cleanup" in one commit.
