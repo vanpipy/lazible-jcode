@@ -44,7 +44,8 @@ lazible-jcode/
 │       └── doc-writer.md
 ├── scripts/
 │   ├── install.sh                     # Linear, unconditional, overwrite-by-default installer (3 steps)
-│   └── uninstall.sh                   # Inverse: removes symlinks + optionally the binary
+│   ├── uninstall.sh                   # Inverse: removes symlinks + optionally the binary
+│   └── swarm-sweep.sh                 # Manual cleanup for stale swarm worktrees (→ ~/.local/bin/swarm-sweep)
 └── docs/
     └── INSTALL.md                     # Detailed install / uninstall / troubleshooting
 ```
@@ -112,6 +113,36 @@ prompt + persona content jcode reads.
 Worker-only concerns (worktree paths, output schema, per-role
 workflow) belong in `swarm-prompt.md` and `roles/*.md`, not in the
 main overlay.
+
+### Coordination rules at a glance
+
+The overlay enforces a star topology and a typed-artifact contract
+across every spawned worker. The headline rules:
+
+- **One root per session**, exactly one coordinator. Workers never
+  talk to each other; all handoffs are worker → root → worker.
+- **8-field typed artifact** per completion: `status`, `findings`,
+  `evidence[]`, `edge_cases_considered[]`, `validation`,
+  `open_questions[]`, `confidence`, `what_i_did_not_check[]`. Status
+  is one of `completed | partial | needs-info | blocked`. Root reads
+  the artifact mechanically; prose-only summaries are rejected.
+- **Scope owns files**: workers stage only the files the spawn
+  prompt lists. Anything outside goes to `open_questions[]`, never to
+  a commit.
+- **M3 (silent worker disappearance) is a known limitation**. Two
+  layers of cleanup cover the residue at different scopes: a
+  session-level reaper (engine-side, automatic) for spawned workers
+  that reported back and sat idle, and `swarm-sweep` (manual) for
+  the git worktree + branch residue they leave behind. See
+  `AGENTS.md` "Cleanup: stale swarm worktrees".
+- **Push to `main` requires a verbatim "yes"** in chat, no matter
+  what the original task said. Local commits and feature-branch
+  pushes are free; the user can `git push` themselves.
+
+For the full rule set, see `swarm/prompt-overlay.md` (main-agent
+view) and `swarm/swarm-prompt.md` (worker-policy view). For
+the visual map of the topology and contracts, see
+`swarm/ARCHITECTURE.md`.
 
 ## What's not in this repo
 
