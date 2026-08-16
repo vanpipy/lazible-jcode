@@ -335,6 +335,173 @@ PY
   esac
 }
 
+# ---------- subcommand: preflight ----------
+# Pre-spawn environment gate. Run BEFORE drafting a worker spawn prompt.
+# Prints a checklist of env conditions and exits 0 if all green.
+#
+# Why this exists: P1-P3 in NOTES.md — root wasted spawns on auth failure,
+# scope ambiguity, and unexpected tempdir-vs-final-path layout. Catching
+# these upfront saves minutes per spawn.
+#
+# Checks:
+#   1. jcode binary present + on PATH
+#   2. jcode --version runs (daemon reachable)
+#   3. Bundle install: ~/.jcode/prompt-overlay.md symlink resolves
+#   4. A model that works: probe a default candidate, report status
+#   5. Worktree path writable: if --worktree <path> given, check writable
+#   6. Project root: if --project <path> given, check exists + .git (optional)
+#
+# Exit codes:
+#   0 = all checks pass
+#   1 = a soft warning (degraded but not blocking)
+#   2 = usage error
+#   3 = hard failure (cannot spawn)
+cmd_preflight() {
+  # Note: dispatcher already shifted off the subcommand name, so $@ here
+  # contains the user's flags (e.g. "--worktree /tmp/jcode/foo"). Don't
+  # shift again — that would drop --worktree.
+  local worktree=""
+  local project=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --worktree) worktree="${2:-}"; shift 2 ;;
+      --project)  project="${2:-}"; shift 2 ;;
+      --help|-h)
+        echo "usage: extension.sh preflight [--worktree <path>] [--project <path>]" >&2
+        return 2
+        ;;
+      *) echo "extension.sh: unknown preflight flag '$1'" >&2; return 2 ;;
+    esac
+  done
+
+  local fails=0
+  local warns=0
+
+  check() {
+    local name="$1" result="$2" detail="$3"
+    if [[ "$result" == "ok" ]]; then
+      printf '  [OK]   %-32s %s\n' "$name" "$detail"
+    elif [[ "$result" == "warn" ]]; then
+      printf '  [WARN] %-32s %s\n' "$name" "$detail"
+      warns=$((warns + 1))
+    else
+      printf '  [FAIL] %-32s %s\n' "$name" "$detail"
+      fails=$((fails + 1))
+    fi
+  }
+
+  echo "preflight checks:"
+  # 1. jcode on PATH
+  if command -v jcode >/dev/null 2>&1; then
+    local jc
+    jc="$(command -v jcode)"
+    check "jcode binary" "ok" "$jc"
+  else
+    check "jcode binary" "fail" "not on PATH"
+  fi
+
+  # 2. jcode --version works (proves daemon / spawn substrate is alive)
+  if command -v jcode >/dev/null 2>&1; then
+    set +e
+    local ver
+    ver="$(jcode --version 2>&1 | head -1)"
+    local rc=$?
+    set -e
+    if [[ $rc -eq 0 && -n "$ver" ]]; then
+      check "jcode --version" "ok" "$ver"
+    else
+      check "jcode --version" "fail" "exit $rc"
+    fi
+  else
+    check "jcode --version" "fail" "skipped (no jcode)"
+  fi
+
+  # 3. Bundle install (overlay symlink)
+  local overlay="$HOME/.jcode/prompt-overlay.md"
+  if [[ -L "$overlay" ]]; then
+    local target
+    target="$(readlink "$overlay")"
+    if [[ -e "$target" ]]; then
+      check "bundle install (overlay)" "ok" "$overlay -> $target"
+    else
+      check "bundle install (overlay)" "fail" "symlink dangles: $target"
+    fi
+  elif [[ -e "$overlay" ]]; then
+    check "bundle install (overlay)" "warn" "$overlay exists but is NOT a symlink (manual install?)"
+  else
+    check "bundle install (overlay)" "fail" "$overlay missing; run scripts/install.sh"
+  fi
+
+  # 4. Worktree path writable (if given)
+  if [[ -n "$worktree" ]]; then
+    if [[ -e "$worktree" ]]; then
+      if [[ -d "$worktree" && -w "$worktree" ]]; then
+        check "worktree path writable" "ok" "$worktree"
+      else
+        check "worktree path writable" "fail" "$worktree exists but not writable dir"
+      fi
+    else
+      # Try parent dir
+      local parent
+      parent="$(dirname "$worktree")"
+      if [[ -d "$parent" && -w "$parent" ]]; then
+        check "worktree path writable" "ok" "$worktree (parent $parent is writable, will be created)"
+      else
+        check "worktree path writable" "fail" "$parent not writable"
+      fi
+    fi
+  else
+    # No worktree given; print the canonical layout
+    local root
+    root="$(cmd_scratch_dir root 2>/dev/null || echo '?')"
+    check "worktree path" "ok" "(not specified; default would be $root/wt-<label>)"
+  fi
+
+  # 5. Project root (if given)
+  if [[ -n "$project" ]]; then
+    if [[ ! -e "$project" ]]; then
+      check "project root" "fail" "$project does not exist"
+    elif [[ -d "$project" ]]; then
+      if [[ -d "$project/.git" ]]; then
+        check "project root" "ok" "$project (git repo)"
+      else
+        check "project root" "warn" "$project exists but no .git (new repo — worker will git init)"
+      fi
+    else
+      check "project root" "fail" "$project is not a directory"
+    fi
+  fi
+
+  # 6. Model auth probe (cheap default candidate)
+  #    We pick MiniMax-M3 as the default since it's the only one with
+  #    confirmed credentials in this environment. The user can override
+  #    by passing a different model and running `models probe <name>`
+  #    separately.
+  if command -v jcode >/dev/null 2>&1; then
+    set +e
+    jcode run --model MiniMax-M3 "ok" >/dev/null 2>&1
+    local rc=$?
+    set -e
+    if [[ $rc -eq 0 ]]; then
+      check "model auth (MiniMax-M3 default)" "ok" "MiniMax-M3 responds"
+    else
+      check "model auth (MiniMax-M3 default)" "warn" "MiniMax-M3 unreachable (exit $rc); run 'extension.sh models probe <name>' to find a working model"
+    fi
+  fi
+
+  echo ""
+  if [[ $fails -gt 0 ]]; then
+    echo "RESULT: $fails failure(s), $warns warning(s) — DO NOT spawn until fixed"
+    return 3
+  fi
+  if [[ $warns -gt 0 ]]; then
+    echo "RESULT: 0 failures, $warns warning(s) — safe to spawn but review warnings"
+    return 1
+  fi
+  echo "RESULT: all green — safe to spawn"
+  return 0
+}
+
 # ---------- subcommand: scratch-dir ----------
 # Print the canonical per-project scratch root under $TMPDIR.
 # Layout: $TMPDIR/jcode/<repo-name>-<short-sha>/
@@ -613,6 +780,7 @@ case "$cmd" in
   skills)      cmd_skills "$@" ;;
   mcp)         cmd_mcp "$@" ;;
   models)      cmd_models "$@" ;;
+  preflight)   cmd_preflight "$@" ;;
   scratch-dir) cmd_scratch_dir "$@" ;;
   doctor)      cmd_doctor "$@" ;;
   help|--help|-h|"")
@@ -629,6 +797,7 @@ Subcommands:
   skills list                          Enumerate per-project skills (jcode-native)
   mcp info                             Show per-project MCP config status (jcode-native)
   models [list|probe <name>]           List jcode-known models; probe auth for one
+  preflight [--worktree P] [--project P]  Pre-spawn env gate (auth, install, paths)
   scratch-dir [root|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
   artifact validate <path>                Validate a typed-artifact JSON file (8-field contract)
   doctor                               Single-shot enumeration of all 10 extension axes
