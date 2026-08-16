@@ -251,202 +251,98 @@ Workers reporting back to root: use `report` action with
 `complete_node` with a typed artifact is the only authoritative
 worker → root handoff. Anything else (`dm`, `follow_up`, `channel`,
 `broadcast` for non-stop events) can stall, get lost, or arrive out
-of order. The discipline below catalogs the failure modes the contract
-defends against, the rules that defend against them, and the one known
-limitation we accept by design.
+of order.
 
 #### Status enum (4 states)
 
 Every typed artifact declares its `status` from this fixed enum. The
 root session parses this mechanically — anything not in this enum is a
-parsing failure, not a partial artifact.
+parsing failure, not a partial artifact. The status is the worker's
+self-reported outcome; the artifact's content drives downstream
+actions.
 
-This `status` is the worker's **self-reported outcome**, not the
-engine's machine state — the orchestrator tracks execution lifecycle
-separately, and this 4-state enum sits inside the artifact as the
-worker's explicit signal of what it thinks it accomplished. The
-artifact's content (`findings`, `open_questions[]`, `what_i_did_not_check[]`)
-drives downstream actions; `status` is the worker's compact declaration
-of intent.
-
-- `completed` — the role's work is fully done, all 8 contract fields
+- `completed` — role's work is fully done, all 8 contract fields
   populated, all gates passed. **Per-role meaning**:
-  - implementer / migrator / test-writer / doc-writer: code/docs are
-    ready to integrate.
-  - reviewer: the **review is thorough and complete** — `findings[]`
-    drives acceptance, NOT `status`. A reviewer can emit
-    `status: completed` while flagging `severity: blocker` findings;
-    root rejects the code based on findings, not on this status.
-  - investigator: the hypothesis is confirmed or denied with evidence.
-- `partial` — some goals met, others explicitly deferred or out of
-  scope. Root re-spawns or extends the slice as needed. Use this for
-  scope-creep discovery (you found 3 more call sites than the spawn
-  prompt listed; you fixed 1, deferred 2).
-- `needs-info` — scope was ambiguous; worker proceeded with the most
-  reasonable interpretation but wants root to confirm before integration.
-  Emit the artifact with everything done so far AND both interpretations
-  in `open_questions[]`. Root arbitrates.
-- `blocked` — cannot proceed at all (missing API key, file the work
-  depends on does not exist, contradictory requirements that cannot be
-  reconciled, a tool genuinely unavailable). Worker stops, root
-  unblocks or re-scopes.
-  - **Zero-work rule**: if you completed part of the work before
-    hitting the blocker (e.g., 5 of 7 files migrated, 2 are blocked
-    by a missing dependency), use `partial` instead and mark the
-    blocker as `[BLOCKER]` in `open_questions[]`. `blocked` means
-    ZERO useful work was done — `partial` covers the rest.
+  - implementer / migrator / test-writer / doc-writer: code/docs ready
+    to integrate.
+  - reviewer: the **review is thorough** — `findings[]` drives
+    acceptance, NOT `status`. A reviewer can emit `status: completed`
+    while flagging `severity: blocker`; root rejects on findings.
+  - investigator: hypothesis confirmed or denied with evidence.
+- `partial` — some goals met, others deferred or out of scope. Use
+  this for scope-creep discovery (found 3 more call sites; fixed 1,
+  deferred 2).
+- `needs-info` — scope was ambiguous; you proceeded with the most
+  reasonable interpretation AND documented both interpretations in
+  `open_questions[]`. Root arbitrates.
+- `blocked` — cannot proceed at all (missing capability). Worker
+  stops, root unblocks or re-scopes. **Zero-work rule**: if you
+  completed useful work before hitting the blocker, use `partial`
+  instead and mark the blocker `[BLOCKER]` in `open_questions[]`.
+  `blocked` means zero useful work.
 
-The status enum is the worker→root communication surface for
-non-progress signals. Workers do NOT use `dm` or `follow_up` to ask
-questions — `status: needs-info` is the answer.
+#### Picking a status + root's action
 
-#### Picking a status (decision tree)
+Picking (first-match-wins):
 
-Answer in order, top-to-bottom — first match wins:
+1. Did you produce any useful work root might integrate? **NO** →
+   step 2. **YES** → step 3.
+2. Was the blocker a missing **capability** (tool, file, key) or
+   **decision** root didn't make? Capability → `blocked`. Decision →
+   `needs-info`.
+3. Did you complete every goal in the spawn prompt? **YES** →
+   `completed`. **NO** → `partial` (defer in `findings[]` +
+   `open_questions[]`).
 
-1. **Did you produce any useful work that root might integrate?**
-   - **NO** → continue to step 2.
-   - **YES** → continue to step 3.
-2. **Was the blocker a missing capability (tool, file, API key) or a
-   missing decision root didn't make?**
-   - **Missing capability** → `blocked` (root must unblock).
-   - **Missing decision** → `needs-info` (root must arbitrate).
-3. **Did you complete every goal the spawn prompt listed?**
-   - **YES** → `completed`.
-   - **NO** → `partial` (explain what was deferred in `findings[]`
-     and `open_questions[]`).
+Common confusion: "I did some work but it depends on a decision root
+hasn't made" — that is `partial` + the decision in `open_questions[]`,
+NOT `blocked` (decision ≠ capability gap).
 
-Common confusion: "I did some work but it all depends on a decision
-the root hasn't made." That is `partial` (some useful work) + the
-decision needed in `open_questions[]`, NOT `blocked` (decision is not
-a capability gap).
-
-#### Root's action per status
-
-The worker's `status` tells root what to do next. Reading `findings[]`,
-`validation`, and `open_questions[]` is mandatory before acting.
+Root's action per status (read `findings[]` + `validation` +
+`open_questions[]` before acting):
 
 | Worker status | Root action |
 |---|---|
-| `completed` | Read `findings` + `validation`. Integrate if `confidence` is acceptable. **Reviewers**: `findings[]` severity drives acceptance — a `blocker` finding rejects regardless of `status: completed`. |
-| `partial` | Read `findings` + `open_questions[]`. Choose: (a) re-spawn with the deferred slice, (b) accept partial and move on, (c) re-scope entirely. Do NOT auto-integrate — partial means the slice was deliberately cut. |
-| `needs-info` | Read `open_questions[]` FIRST — this is the arbitration queue. Pick the right interpretation, then integrate, amend the worker's commit, or re-spawn. Never integrate without reading `open_questions[]`. |
-| `blocked` | Read `blockers[]` (or `[BLOCKER]` entries in `open_questions[]`). Choose: (a) unblock by providing the missing capability, (b) re-scope to avoid the blocker, (c) abort the slice. The worker's branch holds nothing useful — clean it up. |
+| `completed` | Integrate if `confidence` is acceptable. Reviewers: `blocker` finding rejects regardless of `status`. |
+| `partial` | Choose: re-spawn with deferred slice, accept partial, or re-scope. Do NOT auto-integrate. |
+| `needs-info` | Read `open_questions[]` FIRST. Arbitrate, then integrate / amend / re-spawn. |
+| `blocked` | Read `blockers[]` (or `[BLOCKER]` in `open_questions[]`). Choose: unblock, re-scope, abort. |
 
-#### Failure modes and the rules that close them
+Distinction: `open_questions[]` = missing *information* (proceed with
+assumptions). `blockers[]` = missing *capability* (cannot work
+around). A `follow_up` to ask root a question is M1 in disguise.
 
-**M1 — dm-as-clarification.** Worker hits ambiguous scope, `dm`s the
-root with "wait, what did you mean by X?" The worker stalls. The dm
-may not arrive (root busy, daemon hiccup, lost packet). The artifact
-never gets emitted. **Rule: never `dm` root to ask a question.** Emit
-`status: needs-info` instead, with the partial work and both
-interpretations in `open_questions[]`. Root arbitrates when it sees
-the artifact.
+#### Failure modes the contract closes + JSON discipline
 
-**M2 — finish-without-complete_node.** Worker finishes the work,
-commits the branch, then forgets to emit the artifact. The branch
-rots, root waits indefinitely. **Rule: emit the artifact, then commit
-— not the other way around.** Treat the artifact as the unit of
-completion, not the commit. The artifact's `evidence[]` MUST cite the
-commit SHA(s) and `files_changed` so the root session can correlate
-artifact ↔ branch ↔ worktree.
+**M1 — dm-as-clarification.** Worker `dm`s root on ambiguous scope,
+the dm stalls or never arrives, artifact never emits. **Rule**: never
+`dm` root to ask a question. Emit `status: needs-info` with both
+interpretations in `open_questions[]`; root arbitrates.
 
-**M3 — silent disappearance.** Daemon crash, OOM kill, network drop,
-sandboxed-exec terminated — the artifact never arrives. **Known
-limitation.** This bundle intentionally does NOT ship a poll-style
-watchdog to detect this. The tick-era `root-tick.sh` that did was
-removed as tick-era contamination. Trade-off: simpler protocol, zero
-polling overhead, but root waits indefinitely for a worker that has
-gone silent. A worker that has accepted a spawn is committing to
-return either a typed artifact OR a `report` with `status: blocked`.
+**M2 — finish-without-complete_node.** Worker commits, then forgets
+the artifact. Branch rots, root waits indefinitely. **Rule**: emit
+the artifact, then commit. The artifact's `evidence[]` MUST cite the
+commit SHA + `files_changed` so root can correlate.
 
-**Cleanup is two-layered, not interchangeable.** Root does not clean
-up silent workers itself; two helpers cover the residue at different
-scopes:
+**M3 — silent disappearance.** Daemon crash / OOM / network drop —
+artifact never arrives. **Known limitation** (no poll-style watchdog;
+the tick-era `root-tick.sh` was removed as tick-era contamination).
+Two-layered cleanup covers the residue at different scopes:
 
 - **Session-level reaper** (engine-side, automatic). Closes spawned
-  workers that have reported back and then sat idle in a terminal
-  state for too long. Default threshold ~30 min; configurable; `0`
-  disables. Reaper never fires on user-created sessions or on the
-  coordinator — only on workers that were spawned by another agent
-  and do not hold the coordinator role. So a long-running root main
-  session is safe regardless of the threshold. The reaper catches
-  many M3-adjacent cases (worker reported but root forgot to
-  integrate) — true M3 (worker vanishes without ever reporting) is
-  still uncaught by it.
-- **Worktree-level sweep** (`swarm-sweep`, manual). Cleans the git
-  worktree + branch residue left by abandoned workers. Dry-run by
-  default; `--yes` to actually remove. Independent of the reaper:
-  the reaper handles live processes, `swarm-sweep` handles
-  filesystem residue. See AGENTS.md "Cleanup: stale swarm worktrees".
+  workers idle in terminal state past threshold (~30 min default,
+  configurable; `0` disables). Never fires on user-created sessions
+  or the coordinator — long-running root is safe regardless.
+- **Worktree-level sweep** (`swarm-sweep`, manual). Cleans git
+  worktree + branch residue. Dry-run by default; `--yes` to remove.
+  See AGENTS.md "Cleanup: stale swarm worktrees".
 
-#### When scope is ambiguous — proceed, do not stall
-
-- **Proceed** with the most reasonable interpretation.
-- **Emit `status: needs-info`** (not `completed`) so root knows the
-  work needs confirmation.
-- **Document** the ambiguity and both interpretations in the artifact's
-  `open_questions[]`.
-- **Let the root arbitrate** — root reads `open_questions[]` when the
-  artifact arrives, decides which interpretation was right, and
-  re-spawns if needed.
-
-The artifact is the channel — questions travel inside it via
-`open_questions[]`, not via a dm roundtrip.
-
-#### When you cannot proceed at all — use `status: blocked`, not `follow_up`
-
-Hard blockers (missing API key, file the work depends on does not
-exist, contradictory requirements that cannot be reconciled, a tool
-the work needs is unavailable):
-
-- Stop work.
-- Emit the typed artifact with `status: "blocked"` and a
-  `blockers[]` list. (If `blockers[]` is not part of your role's
-  schema, put the blocker list inside `open_questions[]` and mark
-  it `[BLOCKER]` so root can find it.)
-- Root will either unblock you, re-scope, or pull you back.
-
-Distinction: `open_questions[]` is for missing *information* the
-worker can proceed past with assumptions. `blockers[]` is for missing
-*capability* the worker cannot work around. A `follow_up` action used
-to ask the root a question is just M1 in disguise — it stalls the
-worker the same way a `dm` does.
-
-#### The artifact termination contract
-
-Every worker's final assistant message MUST end with the typed-artifact
-JSON block, parseable as-is. The root session parses it mechanically
-and treats it as the deliverable. **Prose-only summaries will be
-rejected** — the work is not "done" until the artifact lands.
-
-Common rejection causes:
-- Forgetting the JSON block at the end of a long-running dispatch.
-- Putting the JSON inside a longer prose summary (use a bare
-  ` ```json ` fence, not nested in another fence).
-- Omitting one or more of the 8 required fields (`status`, `findings`,
-  `evidence`, `edge_cases_considered`, `validation`, `open_questions`,
-  `confidence`, `what_i_did_not_check`).
-- `evidence[]` missing commit SHA and `files_changed` (root cannot
-  correlate artifact to branch).
-
-If you find yourself writing a long prose summary and then "forgetting"
-the artifact block — the prose is not the deliverable. The artifact is.
-
-#### Anti-patterns
-
-- Don't `dm` root to ask "what did you mean?" — emit `status: needs-info`
-  with both interpretations in `open_questions[]`.
-- Don't `follow_up` to ask for clarification — that's M1 with a
-  different verb. Use `status: blocked`.
-- Don't commit before emitting the artifact. The artifact references
-  the commit SHA; if the commit doesn't exist yet, the root cannot
-  correlate.
-- Don't broadcast "I'm starting on X" — broadcast is stop/recall only.
-- Don't write intermediate files for sibling workers — out-of-band
-  handoff is forbidden (invariant 2).
-- Don't ship a prose-only summary as your final message. The JSON
-  block is mandatory.
+**Artifact termination contract.** Every worker's final message MUST
+end with a parseable `\`\`\`json` fenced typed-artifact block. The
+root parses it mechanically. Prose-only summaries are rejected.
+Common rejection causes: forgetting the JSON block, nesting it
+inside prose, omitting any of the 8 contract fields, `evidence[]`
+missing commit SHA or `files_changed`.
 
 ---
 
