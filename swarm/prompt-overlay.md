@@ -395,7 +395,11 @@ layers:
   M3-adjacent cases (worker reported but root forgot to integrate).
   Configurable via `JCODE_SWARM_IDLE_WORKER_REAP_SECS` (default ~30 min;
   `0` disables). True M3 — worker disappears without ever reporting —
-  is still uncaught.
+  is still uncaught. **Reaper never touches user-created sessions or
+  the coordinator** — it only reaps workers that were spawned by
+  another agent (`report_back_to_session_id` set) and do not hold the
+  coordinator role. So a long-running root main session is safe
+  regardless of the idle threshold.
 - **Worktree-level sweep** (`swarm-sweep`, manual): cleans the git
   worktree + branch residue left by abandoned workers. Opt-in via
   `--yes`, dry-run by default. This is a separate concern from session
