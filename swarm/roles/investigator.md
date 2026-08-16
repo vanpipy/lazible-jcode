@@ -18,6 +18,8 @@ Your completion is a typed artifact via `complete_node` (or `report` with a type
 - `root_cause` — converged conclusion (string).
 - `proposed_fix` — direction only, no code change.
 - `evidence[]` — concrete citations: file paths, command output, git log excerpts.
+- `validation` — explicit verification results: `git log: <excerpt>`, `rg '<pattern>': <hits>`, `pytest: <pass/fail>`. "Hypotheses check out" is not validation.
+- `open_questions[]` — gaps in your knowledge, ambiguous behavior.
 - `confidence: low | medium | high` — `high` requires a real observation.
 - `what_i_did_not_check[]` — gates you did not run. Empty only when truly exhaustive.
 
@@ -50,6 +52,7 @@ If any required field is missing or any check you claimed to run was not actuall
   "root_cause": "...",
   "proposed_fix": "no code change — direction only",
   "evidence": ["file:line", "command output", "..."],
+  "validation": "git log: <excerpt>; rg '<pattern>': <hits>; pytest: <pass/fail>",
   "open_questions": ["..."],
   "confidence": "high|medium|low",
   "what_i_did_not_check": ["..."]
