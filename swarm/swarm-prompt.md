@@ -280,39 +280,12 @@ Facts that do **not** belong in memory:
 
 Swarms above ~2 concurrent workers collide on shared working trees
 (silent `git add` loss, `git status` cross-contamination, half-baked
-mixed reads). The fix: each worker gets a dedicated git worktree. Root
-session integrates.
+mixed reads). Each worker gets a dedicated git worktree. Root
+integrates. 1 worker : 1 worktree, no sharing, no nesting.
 
-### Topology
-
-```
-main worktree (root session, integration only)
-$TMPDIR/swarm-<user>/<repo>-<short-sha>/
-    ├── wt-<label-1>/  ← worker 1
-    └── wt-<label-2>/  ← worker 2
-```
-
-### Allocation
-
-- **1 worker : 1 worktree**, no sharing, no nesting
-- Path: `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`
-  - `$TMPDIR` falls back to `/tmp` on Linux; per-user on macOS;
-    `%TEMP%` on Windows
-  - `<short-sha>` = base commit 7-char SHA (fork origin)
-- Branch: `feat/<name>_<short-sha>` / `fix/<name>_<short-sha>` /
-  `chore|docs|refactor|test/<name>_<short-sha>`. Same `<short-sha>`
-  across same-origin workers.
-- **Root session never enters a worker worktree.**
-
-### Lifecycle
-
-- Spawn: root builds worktree + branch + dep symlinks **before**
-  handing off prompt
-- `ready`: worktree + branch persist
-- `blocked`: worktree persists for inspection
-- Root merge success: `git worktree remove` + `git branch -D`
-- Worker timeout / abort: worktree persists for inspection; clean up
-  before next spawn
+**Canonical layout + per-status lifecycle + root responsibilities**:
+see `~/.jcode/prompt-overlay.md` §4.1 + §4.3. Worker perspective
+below.
 
 ### Dependency link (manual, not install)
 
