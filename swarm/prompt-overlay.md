@@ -128,8 +128,9 @@ action when the answers converge.
    first, then re-spawn. Workers must never spawn their own children
    to "fix" this.
 
-If questions 0, 1, and 2 all say "spawn", spawn. The spawn call MUST
-include all of these fields:
+If questions 0, 1, and 2 all say "spawn", pick the right primitive:
+
+Mandatory fields for plain `spawn`:
 
 - `label` — short, shown in swarm UI (e.g., `auth reviewer`).
 - `model` + `effort` — explicit (or omit to inherit from root).
@@ -145,18 +146,39 @@ include all of these fields:
 - `scope_body` — what to do, what not to do, what gates to run.
 - `termination_template` — the 7-field typed-artifact JSON shape.
 
-Optional but recommended:
+Optional for plain `spawn`:
 
-- `depends_on: <branch or SHA>` — root queues this worker's spawn
-  until the named branch is merged into the integration base. Lets
-  root avoid serializing all workers when only some need ordering.
-  Workers themselves do NOT spawn their own children to satisfy
-  this — they emit `status: needs-info` if a dependency they
-  expected is missing, and root handles it.
 - `concurrency_limit` — the swarm tool's max-live-workers knob.
   Default 4. Exceeding it risks git index contention and root
   attention overflow. Use the swarm's `fill_slots` /
   `run_plan` `concurrency_limit` to raise or lower it.
+
+#### Ordered dispatch — use `task_graph` when ≥2 workers have dependencies
+
+If any two workers have an ordering dependency (B needs A's commits
+before B can start), do NOT use plain `spawn` and rely on root
+attention to serialize. Use the swarm tool's `task_graph` action
+instead:
+
+- Each node carries `depends_on: [<node_id>]`.
+- `task_graph` schedules nodes in topological order, parallelizing
+  independent branches automatically — root attention is not the
+  scheduler.
+- Each node still emits the same 7-field typed artifact via
+  `complete_node`. Root still owns integration (§5).
+- Star topology invariant is preserved: there is no peer edge.
+  `task_graph` is a dispatcher in the root's spawn call, not a
+  coordination mechanism between workers.
+
+**Decision rule for which primitive to use**:
+
+- All workers independent → plain `spawn` (parallel-safe).
+- ≥2 workers with ordering deps → `task_graph` (mode: `deep`).
+- Exactly 2 workers, one depends on the other → `task_graph` is
+  still preferred, but serial plain `spawn` is acceptable.
+
+If you find yourself adding `depends_on: <branch-or-SHA>` to a
+plain `spawn` prompt, you should be using `task_graph` instead.
 
 ### Code implementation routing rule (hard)
 
