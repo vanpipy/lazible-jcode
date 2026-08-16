@@ -385,27 +385,24 @@ polling overhead, but root waits indefinitely for a worker that has
 gone silent. A worker that has accepted a spawn is committing to
 return either a typed artifact OR a `report` with `status: blocked`.
 
-**Two-layer cleanup, distinct scopes.** Root does not need to clean up
-silent workers itself; two helpers cover the residue at different
-layers:
+**Cleanup is two-layered, not interchangeable.** Root does not clean
+up silent workers itself; two helpers cover the residue at different
+scopes:
 
-- **Session-level reaper** (engine-side, automatic): the orchestrator
-  reaps spawned workers that have reported back and then sat idle in
-  `ready` or a terminal status for too long. This catches many
-  M3-adjacent cases (worker reported but root forgot to integrate).
-  Configurable via `JCODE_SWARM_IDLE_WORKER_REAP_SECS`: **unset = default
-  ~30 min** (the orchestrator reads the env var and falls back when
-  absent); **explicit `0` = fully disabled** (orchestrator returns
-  `None` and never reaps). True M3 — worker disappears without ever
-  reporting — is still uncaught. **Reaper never touches user-created
-  sessions or the coordinator** — it only reaps workers that were
-  spawned by another agent (`report_back_to_session_id` set) and do
-  not hold the coordinator role. So a long-running root main session
-  is safe regardless of the idle threshold.
-- **Worktree-level sweep** (`swarm-sweep`, manual): cleans the git
-  worktree + branch residue left by abandoned workers. Opt-in via
-  `--yes`, dry-run by default. This is a separate concern from session
-  reaping — the reaper handles live processes, `swarm-sweep` handles
+- **Session-level reaper** (engine-side, automatic). Closes spawned
+  workers that have reported back and then sat idle in a terminal
+  state for too long. Default threshold ~30 min; configurable; `0`
+  disables. Reaper never fires on user-created sessions or on the
+  coordinator — only on workers that were spawned by another agent
+  and do not hold the coordinator role. So a long-running root main
+  session is safe regardless of the threshold. The reaper catches
+  many M3-adjacent cases (worker reported but root forgot to
+  integrate) — true M3 (worker vanishes without ever reporting) is
+  still uncaught by it.
+- **Worktree-level sweep** (`swarm-sweep`, manual). Cleans the git
+  worktree + branch residue left by abandoned workers. Dry-run by
+  default; `--yes` to actually remove. Independent of the reaper:
+  the reaper handles live processes, `swarm-sweep` handles
   filesystem residue. See AGENTS.md "Cleanup: stale swarm worktrees".
 
 #### When scope is ambiguous — proceed, do not stall
