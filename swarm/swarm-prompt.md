@@ -174,20 +174,18 @@ Every completion artifact **must** declare `confidence: low | medium | high`.
   remains about edge cases the worker did not enumerate.
 - `low` — work partially done, or verification relied on the worker's
   judgment rather than an observation. Must be reported honestly.
-- Discovered dependencies outside the spawn scope that were left
-  unhandled (e.g., user asked to delete a facade, you found 3
-  production call sites still using the old import, but the user did
-  not ask for migration).
-- A new public API does not match the call-site usage patterns it is
-  meant to serve (must explicitly explain why this is correct,
-  otherwise it does not count as `low` confidence).
+  Two cases that are always `low`:
+  - Discovered dependencies outside the spawn scope that were left
+    unhandled (e.g., user asked to delete a facade, you found 3
+    production call sites still using the old import).
+  - A new public API does not match the call-site usage patterns it is
+    meant to serve (must explicitly explain why this is correct,
+    otherwise it does not count as `low`).
 
-`low` confidence is **not** failure. It routes follow-up work
-automatically. A fake `high` is far worse than an honest `low`.
-
-The `what_i_did_not_check` list is mandatory. "Nothing" is a valid
-answer only when truly exhaustive; otherwise list the gaps. Reviewers
-use this list to decide where to drill.
+`low` is **not** failure — it routes follow-up work automatically. The
+`what_i_did_not_check[]` list is mandatory: "Nothing" is only valid
+when truly exhaustive. Reviewers use this list to decide where to
+drill.
 
 ---
 

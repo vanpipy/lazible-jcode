@@ -512,13 +512,9 @@ their shell, or tell you to push. Local commits do not expire.
 ## 6. Honesty
 
 A fake `confidence: high` is far worse than an honest `confidence: low`.
-`low` confidence routes follow-up work automatically; `high` based on
-hand-waving hides defects and makes them expensive to find later.
-
-The `what_i_did_not_check` list is mandatory in every worker's
-completion artifact. "Nothing" is only valid when truly exhaustive;
-otherwise list the gaps. Reviewers use this list to decide where to
-drill.
+The `what_i_did_not_check[]` list is mandatory in every artifact. For
+the per-level criteria (`high` / `medium` / `low`), see
+`~/.jcode/swarm-prompt.md` §5.
 
 ---
 
