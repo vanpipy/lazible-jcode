@@ -75,6 +75,91 @@ info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
 err()  { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# ── env probe (step 0) ────────────────────────────────────────────────────────
+# Linux-only sanity check of the host environment. Required deps block the
+# install (exit 3); optional deps warn and continue. Run BEFORE the 3 install
+# steps so the user sees "your environment is missing X" instead of a cryptic
+# failure halfway through step 1.
+#
+# Linux scope: bash >= 4 (typical on every maintained distro; bash 3.2 is
+# the legacy macOS default and out of scope), `git`, `$HOME` writable,
+# `/tmp` writable, curl-or-wget. Optional: python3 / jq / ~/.local/bin on
+# PATH.
+env_probe() {
+  info "env check:"
+  local failed=0
+
+  # bash version
+  local bash_ver
+  bash_ver="$(bash --version 2>/dev/null | head -1 | awk '{print $4}' | cut -d. -f1)"
+  bash_ver="${bash_ver:-0}"
+  if [[ "$bash_ver" -ge 4 ]]; then
+    printf '  %-30s %s\n' "bash >= 4" "ok (${bash_ver})"
+  else
+    warn "  bash < 4 detected (${bash_ver:-unknown}); install.sh requires bash 4+ on Linux"
+    failed=1
+  fi
+
+  # git
+  if command -v git >/dev/null 2>&1; then
+    printf '  %-30s %s\n' "git" "ok ($(command -v git))"
+  else
+    warn "  git not on PATH; required by jcode and extension.sh"
+    failed=1
+  fi
+
+  # HOME writable
+  if [[ -z "${HOME:-}" ]]; then
+    warn "  HOME is unset; cannot determine ~/.jcode or ~/.local/bin"
+    failed=1
+  elif [[ ! -d "$HOME" ]] || [[ ! -w "$HOME" ]]; then
+    warn "  HOME ($HOME) does not exist or is not writable"
+    failed=1
+  else
+    printf '  %-30s %s\n' "HOME writable" "ok ($HOME)"
+  fi
+
+  # /tmp writable (jcode scratch dir default)
+  if [[ -w /tmp ]]; then
+    printf '  %-30s %s\n' "/tmp writable" "ok"
+  else
+    warn "  /tmp not writable; set LAZIBLE_TMPDIR to a writable path before running"
+    failed=1
+  fi
+
+  # curl or wget (needed for upstream jcode install)
+  if command -v curl >/dev/null 2>&1; then
+    printf '  %-30s %s\n' "curl or wget" "ok (curl: $(command -v curl))"
+  elif command -v wget >/dev/null 2>&1; then
+    printf '  %-30s %s\n' "curl or wget" "ok (wget: $(command -v wget))"
+  else
+    warn "  neither curl nor wget on PATH; required to fetch jcode binary"
+    failed=1
+  fi
+
+  # Optional: python3 / jq (extension.sh uses one of these for JSON inspection)
+  if command -v python3 >/dev/null 2>&1; then
+    printf '  %-30s %s\n' "python3 (optional)" "ok"
+  elif command -v jq >/dev/null 2>&1; then
+    printf '  %-30s %s\n' "python3 / jq (optional)" "jq only (some extension.sh checks simplified)"
+  else
+    warn "  python3/jq missing; extension.sh mcp info + artifact validate will report 'unavailable'"
+  fi
+
+  # Optional: ~/.local/bin on PATH
+  if [[ ":$PATH:" == *":$HOME/.local/bin:"* ]]; then
+    printf '  %-30s %s\n' "~/.local/bin on PATH" "ok"
+  else
+    warn "  ~/.local/bin is NOT on PATH; new shells won't find jcode. Add: export PATH=\"\$HOME/.local/bin:\$PATH\""
+  fi
+
+  echo ""
+  if [[ $failed -ne 0 ]]; then
+    err "env check failed (see warnings above). Aborting install."
+  fi
+}
+env_probe
+
 # Overwrite a file or symlink unconditionally. If dst exists (regular file,
 # symlink, or directory), back it up to <dst>.bak.<ts> first. If dst does not
 # exist, just create it. Always links src as the final dst.

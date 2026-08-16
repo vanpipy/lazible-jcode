@@ -794,6 +794,10 @@ cmd_models() {
 # Tells root what's wired up vs. what's relying on defaults. Designed
 # to be run once at session start so root can plan its strategy.
 #
+# Usage:
+#   extension.sh doctor          # default: list per-axis status (A1-A10)
+#   extension.sh doctor --env    # environment probe (Linux-only deps)
+#
 # Output format (fixed column widths for easy grep):
 #   AXIS   FILE                                   STATUS
 #   ─────────────────────────────────────────────────────────
@@ -801,6 +805,20 @@ cmd_models() {
 #   A2 worker policy   <repo>/.jcode/swarm-prompt.md     (not configured)
 #   ...
 cmd_doctor() {
+  local mode="${1:-axes}"
+  case "$mode" in
+    --env|env)
+      doctor_env
+      return 0
+      ;;
+    axes|"")
+      : # fall through to default axes table below
+      ;;
+    *)
+      echo "usage: extension.sh doctor [--env]" >&2
+      return 2
+      ;;
+  esac
   printf '%-30s %-50s %s\n' "AXIS" "FILE" "STATUS"
   printf '%-30s %-50s %s\n' "----" "----" "------"
   # A10 scratch dir (derived from cwd; works even without .jcode/)
@@ -874,6 +892,54 @@ cmd_doctor() {
   echo "Run 'extension.sh help' for invocation details on each axis."
 }
 
+# doctor_env — environment probe (Linux-only). Reports which tools
+# the bundle relies on, separately from the per-axis status table.
+# Use this when something fails and you want to know whether the
+# environment is the cause (vs. a missing per-project file).
+#
+# Always exits 0. Problems are reported as "missing" lines, not
+# non-zero exit codes, because "json_tool missing" is information
+# the caller wants to see, not a failure of `doctor` itself.
+doctor_env() {
+  printf '%-30s %s\n' "CHECK" "STATUS"
+  printf '%-30s %s\n' "-----" "------"
+  printf '%-30s %s\n' "bash >= 4" \
+    "$(bash --version 2>/dev/null | head -1 | awk '{print $4}')"
+  printf '%-30s %s\n' "git" \
+    "$(command -v git 2>/dev/null || echo missing)"
+  printf '%-30s %s\n' "HOME" "${HOME:-(unset)}"
+  printf '%-30s %s\n' "HOME writable" \
+    "$([[ -n "${HOME:-}" && -d "$HOME" && -w "$HOME" ]] && echo yes || echo no)"
+  printf '%-30s %s\n' "/tmp writable" \
+    "$([[ -w /tmp ]] && echo yes || echo no)"
+  printf '%-30s %s\n' "LAZIBLE_TMPDIR" \
+    "${LAZIBLE_TMPDIR:-(unset, defaults to /tmp)}"
+  if command -v curl >/dev/null 2>&1; then
+    printf '%-30s %s\n' "curl or wget" "curl: $(command -v curl)"
+  elif command -v wget >/dev/null 2>&1; then
+    printf '%-30s %s\n' "curl or wget" "wget: $(command -v wget)"
+  else
+    printf '%-30s %s\n' "curl or wget" "missing"
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%-30s %s\n' "JSON tool" "python3: $(command -v python3)"
+  elif command -v jq >/dev/null 2>&1; then
+    printf '%-30s %s\n' "JSON tool" "jq: $(command -v jq)"
+  else
+    printf '%-30s %s\n' "JSON tool" "missing"
+  fi
+  printf '%-30s %s\n' "sha256sum" \
+    "$(command -v sha256sum >/dev/null 2>&1 && echo "$(command -v sha256sum)" || echo missing)"
+  printf '%-30s %s\n' "jcode" \
+    "$(command -v jcode >/dev/null 2>&1 && echo "$(command -v jcode)" || echo missing)"
+  printf '%-30s %s\n' "~/.local/bin on PATH" \
+    "$([[ ":$PATH:" == *":$HOME/.local/bin:"* ]] && echo yes || echo "no (jcode won't be reachable)")"
+  printf '%-30s %s\n' "NO_COLOR env" \
+    "${NO_COLOR:-(unset; color OK)}"
+  printf '%-30s %s\n' "TERM" \
+    "${TERM:-(unset)}"
+}
+
 # ---------- dispatch ----------
 case "$cmd" in
   artifact)     cmd_artifact "$@" ;;
@@ -905,7 +971,7 @@ Subcommands:
   preflight [--worktree P] [--project P]  Pre-spawn env gate (auth, install, paths)
   scratch-dir [root|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
   artifact validate <path>                Validate a typed-artifact JSON file (8-field contract)
-  doctor                               Single-shot enumeration of all 10 extension axes
+  doctor [--env]                       Per-axis status table (default) or environment probe (--env)
 
 Per-project hooks live at <repo>/.jcode/{pre-merge,verify,notify,pre-spawn}.sh
 Per-project role overrides live at <repo>/.jcode/roles/<name>.md
