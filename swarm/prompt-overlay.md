@@ -661,3 +661,63 @@ When a worker's report conflicts with this overlay, trust the worker
 role template for worker-side concerns (output schema, worktree
 etiquette, commit style) and this overlay for main-agent-side concerns
 (when to spawn, communication shape).
+
+---
+
+## 8. Extension mechanism discovery (jcode-native vs bundle convention)
+
+The bundle exposes nine per-project extension points. **Run
+`scripts/extension.sh doctor` at session start** to see what's
+wired up in the current project vs. what falls back to global
+defaults. This is the cheapest way to plan a spawn strategy: know
+what's available before deciding what to ask for.
+
+Two groups:
+
+**jcode-native (4 axes)** — jcode loads these automatically with
+per-project precedence. Bundle does nothing; you reference them:
+
+- **A1 Overlay** (`<repo>/.jcode/prompt-overlay.md`) — project
+  coordination rules. Already in your context if present.
+- **A2 Worker policy** (`<repo>/.jcode/swarm-prompt.md`) — worker
+  model routing, anti-patterns. Already in worker context.
+- **A3 Skills** (`<repo>/.jcode/skills/<name>/SKILL.md`) — auto-loaded
+  per-project skill bundles. Workers get them for free; no spawn
+  wiring needed. Run `extension.sh skills list` to see what's available.
+- **A4 MCP** (`<repo>/.jcode/mcp.json`) — per-project MCP server
+  registrations. Workers inherit them automatically when the file
+  exists. Run `extension.sh mcp info` to inspect.
+
+**Bundle convention (5 axes)** — invoked via `scripts/extension.sh`:
+
+- **A5 Role override** — `extension.sh role <name>` reads per-project
+  role file first; falls back to global.
+- **A6 Verify hook** — `extension.sh verify` runs project's verify.sh
+  if present. Used by the bundle's verification suite step 6.
+- **A7 Pre-merge hook** — `extension.sh pre-merge <branch> <base> <role>`
+  before any worker merge. 5-minute timeout. Exit ≠ 0 blocks merge.
+- **A8 Notify hook** — `extension.sh notify <status> <label> <artifact>`
+  on worker completion. Bypass mode: failure does not block workflow.
+- **A9 Pre-spawn hook** — `extension.sh pre-spawn <label> <role> <count>`
+  before each spawn. Hook stdout `KEY=VALUE` lines are exported as
+  env vars (via `--exports FILE` protocol).
+
+**When to use each:**
+
+- Spawning into a project with per-project skills (A3)? The skill
+  is auto-loaded; do NOT add it to `required_skills[]`.
+- Project has MCP servers (A4)? They register automatically; workers
+  don't need to be told.
+- Project specializes a role (A5)? Use `extension.sh role <name>` to
+  fetch the per-project template instead of the global one.
+- Need a custom verification gate (A6)? Drop `verify.sh` in
+  `<repo>/.jcode/`. The bundle's verification suite picks it up.
+- Need to block merges on a cross-worker integration test (A7)?
+  Drop `pre-merge.sh` in `<repo>/.jcode/`. Root runs it before every merge.
+- Want to log every worker completion (A8)? Drop `notify.sh`. Bypass
+  semantics mean a slow notify can't stall the workflow.
+- Want to inject env vars into spawned workers (A9)? Drop
+  `pre-spawn.sh` and have it emit `KEY=VALUE` lines.
+
+Full 9×7 boundary-behavior walkthrough: `docs/EXTENSIONS.md`.
+Single source of truth for the dispatch contract: `scripts/extension.sh`.

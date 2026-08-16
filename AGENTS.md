@@ -218,10 +218,14 @@ bash scripts/install.sh                          # idempotent rerun (should prin
 # Confirm both run with zero .bak.<ts> files created
 find ~/.jcode -maxdepth 1 -name '*.bak.*' | wc -l   # should be 0
 
-# 6. Per-project verify hook (opt-in, only runs if present). See
+# 6. Per-project verify hook + extension surface check. See
 #    "Per-project customization" above. Bundle's single entry point
 #    for extension conventions is scripts/extension.sh.
 scripts/extension.sh verify
+scripts/extension.sh doctor  # informational only — surfaces what is
+                             # wired up vs. what falls back to defaults.
+                             # Use this to verify the bundle's own
+                             # discovery helpers work in cwd.
 ```
 
 All six must pass before any commit touching the installer or

@@ -167,3 +167,85 @@ A8 参数合约：`extension.sh notify <status> <worker_label> <artifact_path>`
 
 9 axes × 7 sub-cases = 63 boundary scenarios.
 7 axes bundle-shipped, 4 jcode-native + 5 bundle conventions.
+
+---
+
+## Precedence reference (jcode-native mechanisms)
+
+When multiple sources define the same thing, this is the order
+jcode uses. Later entries override earlier ones.
+
+### A1: prompt-overlay.md (overlay)
+
+```
+~/.jcode/prompt-overlay.md              (global, symlinked by bundle)
+./.jcode/prompt-overlay.md              (per-project; wins)
+```
+
+Source: `crates/jcode-base/src/prompt.rs::load_prompt_overlay_files_from_dir` (line 948+).
+
+### A2: swarm-prompt.md (worker policy)
+
+```
+DEFAULT_SWARM_PROMPT (built-in)
+~/.jcode/swarm-prompt.md                (global, symlinked by bundle)
+./.jcode/swarm-prompt.md                (per-project; wins)
+```
+
+Source: `crates/jcode-base/src/prompt.rs::load_swarm_prompt` (line 75).
+
+### A3: skills/
+
+```
+~/.jcode/skills/                         (global, symlinked by bundle)
+./.jcode/skills/                        (per-project jcode; wins)
+./.agents/skills/                       (cross-tool convention)
+./.claude/skills/                       (legacy Claude compat)
+```
+
+Source: `crates/jcode-base/src/skill.rs::load_project_local_dirs`
+(line 304-329). Same-named skill → later dir wins.
+
+### A4: mcp.json (MCP servers)
+
+```
+~/.jcode/mcp.json                        (global, symlinked by bundle)
+./.claude.json                           (per-user Claude fallback)
+./.claude/mcp.json                       (legacy compat; loaded last)
+./.mcp.json                              (Claude Code project config)
+./.jcode/mcp.json                        (per-project jcode; HIGHEST)
+```
+
+Source: `crates/jcode-base/src/mcp/protocol.rs::load_project_locals`
+(line 569-583). The 5 sources are merged; same-named server →
+later source wins.
+
+### A5-A9: bundle conventions
+
+Per-project wins → global fallback → missing = exit 0.
+
+```
+./.jcode/roles/<name>.md                (per-project)
+~/.jcode/roles/<name>.md                (global fallback)
+./.jcode/verify.sh                      (per-project; no global)
+./.jcode/pre-merge.sh                   (per-project; no global)
+./.jcode/notify.sh                      (per-project; no global)
+./.jcode/pre-spawn.sh                   (per-project; no global)
+```
+
+`scripts/extension.sh project_jcode_dir` walks up from cwd but
+stops at the first `.git` boundary (does NOT cross into ~/.jcode/).
+
+---
+
+## How to inspect at session start
+
+```bash
+scripts/extension.sh doctor      # one-row-per-axis status table
+scripts/extension.sh skills list # per-project skills (A3)
+scripts/extension.sh mcp info    # per-project MCP config (A4)
+```
+
+The `doctor` output is the entry point. If A3 / A4 are present,
+root should plan spawns around the auto-loaded skills and MCP
+servers — workers get them for free.

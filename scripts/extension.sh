@@ -58,9 +58,24 @@ set -euo pipefail
 
 # Walk up from a directory until we find a `.jcode/` dir. Echoes the
 # path to that `.jcode/` dir, or empty string if none found.
+#
+# Boundary: stops at the first directory containing `.git` (project
+# root marker) — does NOT walk past project boundaries to ~/.jcode/.
+# Walking all the way to $HOME would mistake the global ~/.jcode/
+# (where bundle symlinks live) for the project's own .jcode/. This
+# is the bug that bit the first doctor run inside lazible-jcode
+# itself: PROJ_DIR resolved to ~/.jcode/ instead of being empty.
 project_jcode_dir() {
   local dir="${1:-$PWD}"
   while [[ "$dir" != "/" ]]; do
+    # If we hit a project boundary before finding .jcode/, stop.
+    if [[ -d "$dir/.git" ]]; then
+      if [[ -d "$dir/.jcode" ]]; then
+        echo "$dir/.jcode"
+        return 0
+      fi
+      return 1
+    fi
     if [[ -d "$dir/.jcode" ]]; then
       echo "$dir/.jcode"
       return 0
@@ -275,6 +290,83 @@ cmd_mcp() {
   esac
 }
 
+# ---------- subcommand: doctor ----------
+# Single-shot enumeration of all 9 per-project extension axes.
+# Tells root what's wired up vs. what's relying on defaults. Designed
+# to be run once at session start so root can plan its strategy.
+#
+# Output format (fixed column widths for easy grep):
+#   AXIS   FILE                                   STATUS
+#   ─────────────────────────────────────────────────────────
+#   A1 overlay         <repo>/.jcode/prompt-overlay.md   per-project (active)
+#   A2 worker policy   <repo>/.jcode/swarm-prompt.md     (not configured)
+#   ...
+cmd_doctor() {
+  printf '%-30s %-50s %s\n' "AXIS" "FILE" "STATUS"
+  printf '%-30s %-50s %s\n' "----" "----" "------"
+  if [[ -z "$PROJ_DIR" ]]; then
+    printf '%-30s %-50s %s\n' "(no .jcode/ in cwd ancestors)" "" "(none)"
+    return 0
+  fi
+  # A1 overlay
+  local s=""
+  [[ -e "$PROJ_DIR/prompt-overlay.md" ]] && s="per-project (active)"
+  [[ -z "$s" && -e "$HOME/.jcode/prompt-overlay.md" ]] && s="global only"
+  [[ -z "$s" ]] && s="(not configured)"
+  printf '%-30s %-50s %s\n' "A1 overlay" "$PROJ_DIR/prompt-overlay.md" "$s"
+  # A2 worker policy
+  s=""
+  [[ -e "$PROJ_DIR/swarm-prompt.md" ]] && s="per-project (active)"
+  [[ -z "$s" && -e "$HOME/.jcode/swarm-prompt.md" ]] && s="global only"
+  [[ -z "$s" ]] && s="(not configured)"
+  printf '%-30s %-50s %s\n' "A2 worker policy" "$PROJ_DIR/swarm-prompt.md" "$s"
+  # A3 skills
+  s=""
+  if [[ -d "$PROJ_DIR/skills" ]]; then
+    local n=0
+    while IFS= read -r _; do n=$((n+1)); done < <(find "$PROJ_DIR/skills" -mindepth 2 -maxdepth 2 -name SKILL.md -print 2>/dev/null)
+    s="per-project ($n skills)"
+  fi
+  [[ -z "$s" ]] && s="(not configured)"
+  printf '%-30s %-50s %s\n' "A3 skills" "$PROJ_DIR/skills/" "$s"
+  # A4 mcp
+  s=""
+  if [[ -e "$PROJ_DIR/mcp.json" ]]; then
+    local count="?"
+    count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('mcpServers', {})))" "$PROJ_DIR/mcp.json" 2>/dev/null || echo "?")
+    s="per-project ($count servers)"
+  fi
+  [[ -z "$s" ]] && s="(not configured)"
+  printf '%-30s %-50s %s\n' "A4 mcp" "$PROJ_DIR/mcp.json" "$s"
+  # A5-A9 hooks
+  for axis_def in \
+    "A5 role override:$PROJ_DIR/roles/" \
+    "A6 verify hook:$PROJ_DIR/verify.sh" \
+    "A7 pre-merge hook:$PROJ_DIR/pre-merge.sh" \
+    "A8 notify hook:$PROJ_DIR/notify.sh" \
+    "A9 pre-spawn hook:$PROJ_DIR/pre-spawn.sh"; do
+    local axis="${axis_def%%:*}"
+    local file="${axis_def#*:}"
+    s=""
+    if [[ "$file" == */ ]] && [[ -d "$file" ]]; then
+      local n=0
+      while IFS= read -r _; do n=$((n+1)); done < <(find "$file" -mindepth 2 -maxdepth 2 -name SKILL.md -print 2>/dev/null) || true
+      # roles/ uses .md files, not SKILL.md
+      while IFS= read -r _; do n=$((n+1)); done < <(find "$file" -mindepth 1 -maxdepth 1 -name "*.md" -print 2>/dev/null) || true
+      if [[ $n -gt 0 ]]; then s="per-project ($n roles)"; else s="(empty dir)"; fi
+    elif [[ -x "$file" ]]; then
+      s="per-project (executable)"
+    elif [[ -e "$file" ]]; then
+      s="per-project (NOT executable)"
+    else
+      s="(not configured)"
+    fi
+    printf '%-30s %-50s %s\n' "$axis" "$file" "$s"
+  done
+  echo ""
+  echo "Run 'extension.sh help' for invocation details on each axis."
+}
+
 # ---------- dispatch ----------
 case "$cmd" in
   role)        cmd_role "$@" ;;
@@ -284,6 +376,7 @@ case "$cmd" in
   pre-spawn)   cmd_pre_spawn "$@" ;;
   skills)      cmd_skills "$@" ;;
   mcp)         cmd_mcp "$@" ;;
+  doctor)      cmd_doctor "$@" ;;
   help|--help|-h|"")
     cat <<EOF
 scripts/extension.sh — bundle's per-project extension mechanisms.
@@ -297,6 +390,7 @@ Subcommands:
      [--exports FILE]                  Emit KEY=VALUE exports to FILE for caller to source
   skills list                          Enumerate per-project skills (jcode-native)
   mcp info                             Show per-project MCP config status (jcode-native)
+  doctor                               Single-shot enumeration of all 9 extension axes
 
 Per-project hooks live at <repo>/.jcode/{pre-merge,verify,notify,pre-spawn}.sh
 Per-project role overrides live at <repo>/.jcode/roles/<name>.md
