@@ -297,8 +297,39 @@ cmd_scratch_dir() {
     root)    echo "$root" ;;
     wt)      echo "$root/wt-${2:?usage: extension.sh scratch-dir wt <label>}" ;;
     scratch) echo "$root/scratch" ;;
+    clean)
+      # Remove the entire scratch root for the current project.
+      # Dry-run by default; pass --yes to actually delete.
+      shift
+      local confirm=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --yes|-y) confirm="yes"; shift ;;
+          *) echo "extension.sh: unknown clean flag '$1'" >&2; return 2 ;;
+        esac
+      done
+      if [[ ! -d "$root" ]]; then
+        echo "(no $root — nothing to clean)"
+        return 0
+      fi
+      # Enumerate contents so the user sees what would go.
+      local size
+      size=$(du -sh "$root" 2>/dev/null | awk '{print $1}')
+      echo "scratch root: $root"
+      echo "size: $size"
+      echo "contents:"
+      ls -la "$root" | tail -n +2 | awk '{print "  " $NF}' | grep -v '^\.$\|^\.\.$' || true
+      if [[ "$confirm" != "yes" ]]; then
+        echo ""
+        echo "DRY-RUN. Pass --yes to actually delete:"
+        echo "  extension.sh scratch-dir clean --yes"
+        return 0
+      fi
+      rm -rf "$root"
+      echo "removed: $root"
+      ;;
     *)
-      echo "usage: extension.sh scratch-dir [root|wt <label>|scratch]" >&2
+      echo "usage: extension.sh scratch-dir [root|wt <label>|scratch|clean [--yes]]" >&2
       return 2
       ;;
   esac
@@ -339,7 +370,7 @@ cmd_mcp() {
 }
 
 # ---------- subcommand: doctor ----------
-# Single-shot enumeration of all 9 per-project extension axes.
+# Single-shot enumeration of all 10 per-project extension axes.
 # Tells root what's wired up vs. what's relying on defaults. Designed
 # to be run once at session start so root can plan its strategy.
 #
@@ -352,6 +383,8 @@ cmd_mcp() {
 cmd_doctor() {
   printf '%-30s %-50s %s\n' "AXIS" "FILE" "STATUS"
   printf '%-30s %-50s %s\n' "----" "----" "------"
+  # A10 scratch dir (derived from cwd; works even without .jcode/)
+  printf '%-30s %-50s %s\n' "A10 scratch dir" "$(cmd_scratch_dir root 2>/dev/null || echo '?')" "(derived from cwd)"
   if [[ -z "$PROJ_DIR" ]]; then
     printf '%-30s %-50s %s\n' "(no .jcode/ in cwd ancestors)" "" "(none)"
     return 0
@@ -439,8 +472,8 @@ Subcommands:
      [--exports FILE]                  Emit KEY=VALUE exports to FILE for caller to source
   skills list                          Enumerate per-project skills (jcode-native)
   mcp info                             Show per-project MCP config status (jcode-native)
-  scratch-dir [root|wt <label>|scratch] Print canonical per-project scratch path under \$TMPDIR
-  doctor                               Single-shot enumeration of all 9 extension axes
+  scratch-dir [root|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
+  doctor                               Single-shot enumeration of all 10 extension axes
 
 Per-project hooks live at <repo>/.jcode/{pre-merge,verify,notify,pre-spawn}.sh
 Per-project role overrides live at <repo>/.jcode/roles/<name>.md
