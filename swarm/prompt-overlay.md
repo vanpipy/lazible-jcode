@@ -282,6 +282,14 @@ Every typed artifact declares its `status` from this fixed enum. The
 root session parses this mechanically — anything not in this enum is a
 parsing failure, not a partial artifact.
 
+This `status` is the worker's **self-reported outcome**, not the
+engine's machine state — the orchestrator tracks execution lifecycle
+separately, and this 4-state enum sits inside the artifact as the
+worker's explicit signal of what it thinks it accomplished. The
+artifact's content (`findings`, `open_questions[]`, `what_i_did_not_check[]`)
+drives downstream actions; `status` is the worker's compact declaration
+of intent.
+
 - `completed` — the role's work is fully done, all 8 contract fields
   populated, all gates passed. **Per-role meaning**:
   - implementer / migrator / test-writer / doc-writer: code/docs are
@@ -373,6 +381,23 @@ polling overhead, but root waits indefinitely for a worker that has
 gone silent. A worker that has accepted a spawn is committing to
 return either a typed artifact OR a `report` with `status: blocked`.
 
+**Two-layer cleanup, distinct scopes.** Root does not need to clean up
+silent workers itself; two helpers cover the residue at different
+layers:
+
+- **Session-level reaper** (engine-side, automatic): the orchestrator
+  reaps spawned workers that have reported back and then sat idle in
+  `ready` or a terminal status for too long. This catches many
+  M3-adjacent cases (worker reported but root forgot to integrate).
+  Configurable via `JCODE_SWARM_IDLE_WORKER_REAP_SECS` (default ~30 min;
+  `0` disables). True M3 — worker disappears without ever reporting —
+  is still uncaught.
+- **Worktree-level sweep** (`swarm-sweep`, manual): cleans the git
+  worktree + branch residue left by abandoned workers. Opt-in via
+  `--yes`, dry-run by default. This is a separate concern from session
+  reaping — the reaper handles live processes, `swarm-sweep` handles
+  filesystem residue. See AGENTS.md "Cleanup: stale swarm worktrees".
+
 #### When scope is ambiguous — proceed, do not stall
 
 - **Proceed** with the most reasonable interpretation.
@@ -448,6 +473,14 @@ the artifact block — the prose is not the deliverable. The artifact is.
 Swarms above ~2 concurrent workers collide on shared working trees
 (silent `git add` loss, `git status` cross-contamination, half-baked
 mixed reads). The fix: each worker gets a dedicated git worktree.
+
+**Two layers of cleanup cover worker residue at different scopes; they
+are not interchangeable.** The engine's session-level reaper (M3 §3.4)
+closes idle spawned-worker processes automatically. The
+worktree-level cleanup (`swarm-sweep`, see AGENTS.md "Cleanup: stale
+swarm worktrees") deletes the git worktree + branch residue left
+behind. Workers' responsibility ends at "stay in your own worktree";
+root's responsibility includes both.
 
 ### 4.1 Worktree discipline
 
