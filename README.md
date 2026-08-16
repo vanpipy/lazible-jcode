@@ -167,7 +167,7 @@ their own skills on top.
 | `swarm/**/*.md` | ✅ | Generic swarm config + role templates; no secrets, no per-project state |
 | `config/*.example` | ✅ | Reference only, no secrets |
 | `config/config.toml` | ✅ | Live snapshot; no API keys live here, only model names and keybindings |
-| `~/.jcode/mcp.json` | ❌ | NOT committed. Live MCP server tokens — must remain local. Shape reference: `config/mcp.json.example`. Recommended local-only stack (filesystem + git + serena + sqlite): `docs/INTEGRATIONS.md` |
+| `~/.jcode/mcp.json` | ❌ | NOT committed. Live MCP server tokens — must remain local. Shape reference: `config/mcp.json.example`. Recommended local-only stack (filesystem + git + serena): `docs/INTEGRATIONS.md` |
 | `~/.jcode/builds/`, `cache/`, `logs/`, `sessions/`, `memory/`, telemetry files | ❌ | Runtime state; rebuilt on each session |
 
 ## License

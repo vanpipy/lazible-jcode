@@ -12,23 +12,30 @@
     "  - filesystem: scoped file I/O, safer than unrestricted bash read/write",
     "  - git:        structured local git ops (log/blame/diff/branch)",
     "  - serena:     code intelligence (symbols, refs, rename) via tree-sitter",
-    "  - sqlite:     local database query/inspection",
     "",
     "Each entry below assumes the server binary is on PATH (npx / uvx will",
-    "fetch on first run). Replace /workspace with the actual project root."
+    "fetch on first run). Replace /workspace with the actual project root.",
+    "",
+    "Verified working as of 2026-08-16 against serena-agent v1.28.1,",
+    "@modelcontextprotocol/server-filesystem 2026.7.10, and",
+    "@cyanheads/git-mcp-server v2.15.1. sqlite is intentionally NOT in the",
+    "stack — every sqlite MCP server currently published (mcp-sqlite,",
+    "sqlite-mcp, mcp-server-sqlite) either fails the JSON-RPC handshake or",
+    "produces no output on stdout. Use jcode-native `bash` + the `sqlite3`",
+    "CLI for database inspection until a working sqlite MCP server exists."
   ],
   "mcpServers": {
     "filesystem": {
-      "_comment": "Scoped filesystem access. Replace --root paths with your project roots.",
+      "_comment": "Scoped filesystem access. Replace the trailing path with your project root.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
       "env": {},
       "shared": true
     },
     "git": {
-      "_comment": "Local git ops (status/log/diff/blame/branch/commit). Auto-discovers repo from cwd.",
-      "command": "uvx",
-      "args": ["mcp-server-git", "--repository", "/workspace"],
+      "_comment": "Local git ops (status/log/diff/blame/branch/commit/checkout). Auto-discovers repo from cwd.",
+      "command": "npx",
+      "args": ["-y", "@cyanheads/git-mcp-server"],
       "env": {},
       "shared": true
     },
@@ -36,13 +43,6 @@
       "_comment": "Code intelligence via tree-sitter (oraios/serena). No external LSP install needed for Python/TS/Java/Go. See docs/INTEGRATIONS.md.",
       "command": "uvx",
       "args": ["serena-agent", "start-mcp-server", "--project", "/workspace"],
-      "env": {},
-      "shared": true
-    },
-    "sqlite": {
-      "_comment": "Local SQLite inspection. mcp-sqlite is the published package; point --db-path at the project database file.",
-      "command": "npx",
-      "args": ["-y", "mcp-sqlite", "--db-path", "/workspace/db.sqlite"],
       "env": {},
       "shared": true
     }
