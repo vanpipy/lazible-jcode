@@ -63,8 +63,10 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
   printf "  - symlinks: $JCODE_HOME/roles/*.md\n"
   if [[ "$KEEP_BINARY" -ne 1 ]]; then
     printf "  - jcode binary at $INSTALL_DIR/jcode (if installed by lazible-jcode)\n"
+    printf "  - swarm-sweep helper at $INSTALL_DIR/swarm-sweep (if installed by lazible-jcode)\n"
   else
     printf "  - (jcode binary at $INSTALL_DIR/jcode will be kept -- --keep-binary)\n"
+    printf "  - (swarm-sweep helper at $INSTALL_DIR/swarm-sweep will be kept -- --keep-binary)\n"
   fi
   if [[ "$PURGE" -eq 1 ]]; then
     printf "  - the entire $JCODE_HOME/ directory (--purge)\n"
@@ -104,18 +106,20 @@ if [[ "$PURGE" -eq 1 ]]; then
   rm -rf "$JCODE_HOME"
 fi
 
-# ── remove jcode binary if it looks like ours ────────────────────────────────
+# ── remove jcode binary + swarm-sweep helper if they look like ours ──────
 if [[ "$KEEP_BINARY" -ne 1 ]]; then
-  jcode_path="$INSTALL_DIR/jcode"
-  if [[ -x "$jcode_path" ]]; then
-    warn "removing $jcode_path"
-    rm -f "$jcode_path"
-    # Also remove the most recent backup if present.
-    latest_bak="$(ls -t "$INSTALL_DIR"/jcode.bak.* 2>/dev/null | head -1 || true)"
-    if [[ -n "$latest_bak" ]]; then
-      info "left in place: $latest_bak (most recent backup; remove manually if unwanted)"
+  for tool in jcode swarm-sweep; do
+    tool_path="$INSTALL_DIR/$tool"
+    if [[ -x "$tool_path" ]]; then
+      warn "removing $tool_path"
+      rm -f "$tool_path"
+      # Also note the most recent backup if present.
+      latest_bak="$(ls -t "$INSTALL_DIR/${tool}.bak."* 2>/dev/null | head -1 || true)"
+      if [[ -n "$latest_bak" ]]; then
+        info "left in place: $latest_bak (most recent backup; remove manually if unwanted)"
+      fi
     fi
-  fi
+  done
 fi
 
 info "done"

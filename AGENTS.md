@@ -20,8 +20,9 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `AGENTS.md` (this file) | Operating manual for any agent working here | yes |
 | `README.md` | Project overview, quick start, repo table | yes |
 | `docs/INSTALL.md` | Detailed install / uninstall / troubleshooting | yes |
-| `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/` | yes |
+| `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/`, and `swarm-sweep` into `~/.local/bin/` | yes |
 | `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
+| `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `~/.local/bin/swarm-sweep` by install.sh | yes |
 | `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
 | `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
 | `swarm/ARCHITECTURE.md` | Human-readable star topology + contracts overview | yes |
@@ -206,7 +207,27 @@ swarm config is pushed.
 ## Logs / state
 
 - No runtime state lives in this repo.
-- The installer writes nothing outside `~/.local/bin/jcode` and
-  `~/.jcode/<overlay-files>`.
+- The installer writes nothing outside `~/.local/bin/jcode`,
+  `~/.local/bin/swarm-sweep`, and `~/.jcode/<overlay-files>`.
 - Worker liveness, sessions, telemetry, and auth all live in
   `~/.jcode/`, not here.
+
+## Cleanup: stale swarm worktrees
+
+When a worker disappears (M3 silent disappearance) or forgets to emit
+its artifact (M2), the worktree and branch it created sit in the repo
+indefinitely. `swarm-sweep` cleans them up:
+
+```bash
+swarm-sweep              # dry-run, lists stale worktrees
+swarm-sweep --yes        # actually remove them
+swarm-sweep --max-age=3  # threshold in days (default: 7)
+```
+
+The script only touches worktrees whose path matches the swarm
+convention `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`.
+The main worktree and any manual feature worktrees are NEVER touched.
+
+`swarm-sweep` is installed into `~/.local/bin/swarm-sweep` by
+`scripts/install.sh` (step 1, alongside jcode). Removing it happens
+via `scripts/uninstall.sh --yes`.

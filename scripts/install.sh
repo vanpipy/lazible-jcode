@@ -33,6 +33,8 @@ Linear install of jcode + lazible-jcode overlay. Runs 3 steps every time and
 overwrites the destination unconditionally:
 
   1. Install jcode binary to ~/.local/bin/jcode via the upstream installer.
+     Also symlinks the swarm-sweep helper to ~/.local/bin/swarm-sweep
+     for cleaning up stale swarm worktrees.
   2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md,
      swarm/ARCHITECTURE.md, and swarm/roles/*.md into ~/.jcode/.
   3. Symlink AGENTS.md to ~/.jcode/AGENTS.md.
@@ -99,7 +101,7 @@ overwrite_link() {
   info "linked $label → $src"
 }
 
-# ── step 1: install jcode binary via upstream installer ──────────────────────
+# ── step 1: install jcode binary + swarm-sweep helper ──────────────────────
 info "step 1/3: installing jcode binary"
 if command -v jcode >/dev/null 2>&1; then
   info "jcode already on PATH: $(command -v jcode)"
@@ -113,6 +115,15 @@ else
     err "jcode not installed and neither curl nor wget is available"
   fi
 fi
+
+# Install swarm-sweep helper into ~/.local/bin/. Symlinks the script
+# directly (not a copy) so updating the repo updates the installed
+# version. Idempotent: re-runs do not accumulate .bak.<ts> files
+# because the fast path in overwrite_link recognizes existing
+# correct symlinks.
+LCL_BIN="${LCL_BIN:-$HOME/.local/bin}"
+mkdir -p "$LCL_BIN"
+overwrite_link "$repo_root/scripts/swarm-sweep.sh" "$LCL_BIN/swarm-sweep" "swarm-sweep"
 
 # ── step 2: symlink swarm/* into ~/.jcode/ ───────────────────────────────────
 info "step 2/3: linking swarm/ into $JCODE_HOME"
