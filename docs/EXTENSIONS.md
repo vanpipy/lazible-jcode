@@ -151,6 +151,41 @@ A8 参数合约：`extension.sh notify <status> <worker_label> <artifact_path>`
 
 ---
 
+### A10: Per-project scratch dir  ✅ NEW (bundle convention)
+
+Worktrees and scratch files for a project go under `$TMPDIR/jcode/<repo>-<short-sha>/`,
+NOT under `~/.jcode/scratch/` (which is jcode's GLOBAL scratch, shared
+across all projects — see `crates/jcode-app-core/src/tool/bash.rs::tool_scratch_dir`).
+
+The bundle ships `scripts/extension.sh scratch-dir` to print the
+canonical path. Used by root when constructing `worktree_path` for
+spawn prompts.
+
+| # | 场景 | 期望 | 状态 |
+|---|---|---|---|
+| 10.1 | cwd 在 git repo 内 | path 含 `<repo-name>-<short-sha>` | ✅ |
+| 10.2 | cwd 非 git repo | 退到 hash 化的稳定 key | ✅ |
+| 10.3 | `$LAZIBLE_TMPDIR` 已设置 | 覆盖默认 `/tmp` | ✅ |
+| 10.4 | `wt <label>` 子命令 | 输出 `$root/wt-<label>` | ✅ |
+| 10.5 | `scratch` 子命令 | 输出 `$root/scratch` | ✅ |
+| 10.6 | 跨子目录同 repo | path 相同（依赖 `git rev-parse --show-toplevel`） | ✅ |
+| 10.7 | cwd 在 jcode session 内（`$TMPDIR` 被 jcode override 为 `~/.jcode/scratch/`） | bundle **不**用 `$TMPDIR`，强制 `/tmp` | ✅ |
+
+**Why this exists**: jcode's `$JCODE_SCRATCH_DIR` and bash-tool's
+`$TMPDIR` override are global. If we honored them, project A's
+scratch files would land in project B's scratch dir. The bundle
+hardcodes `/tmp` (overridable via `LAZIBLE_TMPDIR` env var) to
+guarantee per-project isolation on the filesystem.
+
+**Default layout**:
+```
+$TMPDIR/jcode/<repo>-<short-sha>/
+├── wt-<label>/      # git worktrees (one per worker)
+└── scratch/         # misc scratch files (logs, dumps, etc.)
+```
+
+---
+
 ## 实施状态
 
 | 轴 | 状态 | 实现位置 |
@@ -164,9 +199,10 @@ A8 参数合约：`extension.sh notify <status> <worker_label> <artifact_path>`
 | A7 pre-merge | ✅ | `scripts/extension.sh pre-merge` |
 | A8 notify | ✅ | `scripts/extension.sh notify` |
 | A9 pre-spawn | ✅ | `scripts/extension.sh pre-spawn` |
+| **A10 scratch dir** | ✅ | `scripts/extension.sh scratch-dir` |
 
-9 axes × 7 sub-cases = 63 boundary scenarios.
-7 axes bundle-shipped, 4 jcode-native + 5 bundle conventions.
+9 + 1 = **10 axes** × 7 sub-cases = 70 boundary scenarios.
+Bundle-shipped: 6 conventions (A5-A9 + A10) + 4 jcode-native (A1-A4).
 
 ---
 

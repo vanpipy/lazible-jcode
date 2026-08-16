@@ -500,6 +500,22 @@ root's responsibility includes both.
 
 Your responsibility as root:
 
+- **Place project worktrees under the system temp dir** (`$TMPDIR`,
+  typically `/tmp`). The canonical layout is:
+  ```
+  $TMPDIR/jcode/<repo-name>-<short-sha>/wt-<label>/   # git worktrees
+  $TMPDIR/jcode/<repo-name>-<short-sha>/scratch/      # misc scratch files
+  ```
+  `<repo-name>` is the basename of the repo directory; `<short-sha>`
+  is the first 8 hex chars of `git rev-parse HEAD` (or a stable
+  per-machine identifier if HEAD is unborn). Use
+  `scripts/extension.sh scratch-dir` to print the canonical path for
+  the current project. This keeps worktrees OFF the user's home
+  filesystem and OUT of the repo itself — both important on macOS
+  where home may be on a slow drive and `/tmp` may be RAM-backed.
+  Distinct from jcode's `$JCODE_SCRATCH_DIR` (global, defaults to
+  `~/.jcode/scratch/`) — that's NOT per-project. The bundle's
+  `$TMPDIR/jcode/<repo>-<short-sha>/` is per-project-scoped.
 - Build the worktree + branch + dep symlinks **before** handing off the
   spawn prompt.
 - **Never enter a worker worktree** yourself. Cross-worker reading

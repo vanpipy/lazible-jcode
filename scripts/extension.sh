@@ -256,6 +256,54 @@ cmd_skills() {
   esac
 }
 
+# ---------- subcommand: scratch-dir ----------
+# Print the canonical per-project scratch root under $TMPDIR.
+# Layout: $TMPDIR/jcode/<repo-name>-<short-sha>/
+#   ├── wt-<label>/    # git worktrees (one per worker)
+#   └── scratch/       # misc scratch files
+#
+# Used by root when constructing the spawn prompt's worktree_path arg.
+# The convention is documented in swarm/prompt-overlay.md §4.1 and
+# keeps worktrees OFF the user's home filesystem and OUT of the repo
+# itself — both important on macOS where home may be slow and /tmp
+# may be RAM-backed.
+#
+# Args:
+#   (none)             print the scratch root only
+#   wt <label>         print $root/wt-<label>
+#   scratch            print $root/scratch
+#
+# If cwd is not inside a git repo, fall back to a synthetic key from
+# the absolute path (stable per-machine, deterministic).
+cmd_scratch_dir() {
+  local kind="${1:-root}"
+  local repo_name short_sha root
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    local toplevel
+    toplevel="$(git rev-parse --show-toplevel)"
+    repo_name="$(basename "$toplevel")"
+    short_sha="$(git rev-parse --short=8 HEAD 2>/dev/null || echo "unborn")"
+  else
+    # Fallback for non-git cwd: derive stable key from absolute path.
+    # Use a hash so we don't expose absolute paths in /tmp.
+    local abs
+    abs="$(cd "${PROJ_DIR:-$PWD}" && pwd -P)"
+    repo_name="$(basename "$abs")"
+    short_sha="$(printf '%s' "$abs" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest()[:8])')"
+  fi
+  local tmpdir="${LAZIBLE_TMPDIR:-/tmp}"
+  root="$tmpdir/jcode/${repo_name}-${short_sha}"
+  case "$kind" in
+    root)    echo "$root" ;;
+    wt)      echo "$root/wt-${2:?usage: extension.sh scratch-dir wt <label>}" ;;
+    scratch) echo "$root/scratch" ;;
+    *)
+      echo "usage: extension.sh scratch-dir [root|wt <label>|scratch]" >&2
+      return 2
+      ;;
+  esac
+}
+
 # ---------- subcommand: mcp ----------
 # Discovery + validation helper for jcode-native per-project MCP
 # config at `./.jcode/mcp.json`. jcode loads this with precedence
@@ -376,6 +424,7 @@ case "$cmd" in
   pre-spawn)   cmd_pre_spawn "$@" ;;
   skills)      cmd_skills "$@" ;;
   mcp)         cmd_mcp "$@" ;;
+  scratch-dir) cmd_scratch_dir "$@" ;;
   doctor)      cmd_doctor "$@" ;;
   help|--help|-h|"")
     cat <<EOF
@@ -390,6 +439,7 @@ Subcommands:
      [--exports FILE]                  Emit KEY=VALUE exports to FILE for caller to source
   skills list                          Enumerate per-project skills (jcode-native)
   mcp info                             Show per-project MCP config status (jcode-native)
+  scratch-dir [root|wt <label>|scratch] Print canonical per-project scratch path under \$TMPDIR
   doctor                               Single-shot enumeration of all 9 extension axes
 
 Per-project hooks live at <repo>/.jcode/{pre-merge,verify,notify,pre-spawn}.sh

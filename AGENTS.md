@@ -109,15 +109,17 @@ five are bundle conventions:
 | Pre-merge hook | `pre-merge.sh` | `extension.sh pre-merge <branch> <base> <role>` | Cross-worker integration gate before merging |
 | Notify hook | `notify.sh` | `extension.sh notify <status> <label> <artifact>` | Completion observability (bypass mode) |
 | Pre-spawn hook | `pre-spawn.sh` | `extension.sh pre-spawn <label> <role> <count>` | Per-spawn env setup + KEY=VALUE exports |
+| **Scratch dir** | (no file) | `extension.sh scratch-dir` | Canonical per-project worktree/scratch path under `$TMPDIR/jcode/<repo>-<short-sha>/` (not `~/.jcode/scratch/`) |
 
 Discovery helpers for jcode-native points:
 - `extension.sh skills list` — enumerate per-project skills
 - `extension.sh mcp info` — show per-project MCP config status
+- `extension.sh scratch-dir` — print canonical `$TMPDIR/jcode/<repo>-<short-sha>/` path
 
-All nine live in `<repo>/.jcode/` — committed with the project, not
-the bundle. Absence of any of them is not a failure; root proceeds
-with the default behavior. Full 9×7 boundary-behavior walkthrough
-lives in `docs/EXTENSIONS.md`.
+All ten live in `<repo>/.jcode/` (except the scratch dir which is
+in `$TMPDIR` by design). Absence of any of them is not a failure;
+root proceeds with the default behavior. Full 10×7 boundary-behavior
+walkthrough lives in `docs/EXTENSIONS.md`.
 
 ## Commit conventions
 
