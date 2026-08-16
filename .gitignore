@@ -35,3 +35,6 @@ target/
 build/
 dist/
 *.log
+
+# serena MCP per-project state (created when serena-agent indexes a repo)
+.serena/

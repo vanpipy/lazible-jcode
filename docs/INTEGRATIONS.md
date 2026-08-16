@@ -14,8 +14,8 @@ Copy it to `~/.jcode/mcp.json` (global) or `<repo>/.jcode/mcp.json`
 | ------------ | ------------------------------------------------ | --------------------------------------------------- |
 | `filesystem` | Scoped file I/O, safer than unrestricted bash   | `npx -y @modelcontextprotocol/server-filesystem`    |
 | `git`        | Structured local git ops (log/blame/diff/branch) | `uvx mcp-server-git`                                |
-| `serena`     | Code intelligence (symbols, refs, rename)         | `uvx serena-mcp`                                    |
-| `sqlite`     | Local SQLite query and inspection                | `npx -y @modelcontextprotocol/server-sqlite`        |
+| `serena`     | Code intelligence (symbols, refs, rename)         | `uvx serena-agent start-mcp-server --project <path>` |
+| `sqlite`     | Local SQLite query and inspection                | `npx -y mcp-sqlite`                                  |
 
 `puppeteer` (browser automation, local Chromium) is an optional add-on
 when you need e2e coverage. Drop it from the stack if you do not.

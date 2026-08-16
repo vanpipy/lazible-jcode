@@ -33,16 +33,16 @@
       "shared": true
     },
     "serena": {
-      "_comment": "Code intelligence via tree-sitter. No external LSP install needed for Python/TS/Java/Go. See docs/INTEGRATIONS.md.",
+      "_comment": "Code intelligence via tree-sitter (oraios/serena). No external LSP install needed for Python/TS/Java/Go. See docs/INTEGRATIONS.md.",
       "command": "uvx",
-      "args": ["serena-mcp", "--project-dir", "/workspace"],
+      "args": ["serena-agent", "start-mcp-server", "--project", "/workspace"],
       "env": {},
       "shared": true
     },
     "sqlite": {
-      "_comment": "Local SQLite inspection. Point --db-path at the project database file.",
+      "_comment": "Local SQLite inspection. mcp-sqlite is the published package; point --db-path at the project database file.",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "/workspace/db.sqlite"],
+      "args": ["-y", "mcp-sqlite", "--db-path", "/workspace/db.sqlite"],
       "env": {},
       "shared": true
     }
