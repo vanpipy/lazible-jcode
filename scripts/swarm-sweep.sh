@@ -2,16 +2,28 @@
 #
 # scripts/swarm-sweep.sh — clean up stale swarm worktrees
 #
-# Find and (optionally) remove git worktrees whose path matches the
-# swarm convention `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`
-# and whose last commit is older than `--max-age` days. Cleans up
-# the residue of M3 (silent worker disappearance) and M2 (worker
-# forgot to emit artifact) without touching the main worktree or
-# any manual feature worktree.
+# Find and (optionally) remove git worktrees whose path matches either
+# of the two swarm worktree conventions:
+#
+#   bundle:   $LAZIBLE_TMPDIR/jcode/<repo>-<short-sha>/wt-<label>/
+#   jcode:    $TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/
+#
+# and whose last commit is older than `--max-age` days. Cleans up the
+# residue of M3 (silent worker disappearance) and M2 (worker forgot
+# to emit artifact) without touching the main worktree or any manual
+# feature worktree.
 #
 # Worktree detection: scans `git worktree list --porcelain` for paths
-# matching the swarm convention. Other worktrees (main, manual
-# feature work) are NEVER touched.
+# matching either convention. Other worktrees (main, manual feature
+# work) are NEVER touched.
+#
+# Why two patterns: bundle rewrites the path layout (drop the
+# `swarm-<user>` segment, add a `jcode/` prefix) so that worktrees
+# live under the same scratch root the user can see in
+# `extension.sh scratch-dir`. Older jcode versions and any workers
+# that bypass bundle's scratch-dir helper still emit the jcode
+# native form, so we match both. Sweep is silent on which one it
+# matched (a single worktree is either in scope or it isn't).
 #
 # Usage:
 #   swarm-sweep [--yes] [--max-age=N] [--repo=PATH]
@@ -43,7 +55,7 @@ for arg in "$@"; do
     --max-age=*) MAX_AGE_DAYS="${arg#*=}" ;;
     --repo=*) REPO_ROOT="${arg#*=}" ;;
     --help|-h)
-      sed -n '16,32p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '28,40p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -66,12 +78,24 @@ if [[ -z "$REPO_ROOT" ]]; then
   fi
 fi
 
-# Convention: $TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/
-# Match the tail: anything ending in /swarm-<user>/<repo>/wt-<label>(/)?
-WT_PATTERN='.*/swarm-[^/]+/[^/]+/wt-[^/]+/?$'
+# Convention (two forms):
+#   bundle:   $LAZIBLE_TMPDIR/jcode/<repo>-<short-sha>/wt-<label>/
+#   jcode:    $TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/
+#
+# Bundle uses `LAZIBLE_TMPDIR` (default /tmp). Older jcode and any
+# worker that bypasses bundle's `scratch-dir` helper still emit the
+# native form (uses `$TMPDIR`). Sweep matches BOTH so it works on
+# bundle-created AND jcode-native worktrees; the path itself is the
+# only signal — sweep does not care which convention produced it.
+WT_PATTERN='.*(/jcode/[^/]+-[0-9a-f]+/|/swarm-[^/]+/[^/]+/)wt-[^/]+/?$'
 
 NOW=$(date +%s)
 THRESHOLD=$((MAX_AGE_DAYS * 86400))
+
+echo "swarm-sweep: searching for stale swarm worktrees in $REPO_ROOT"
+echo "  max age: $MAX_AGE_DAYS days"
+echo "  match: bundle form (\$LAZIBLE_TMPDIR/jcode/<repo>-<short-sha>/wt-*)"
+echo "         jcode  form (\$TMPDIR/swarm-<user>/<repo>/wt-*)"
 
 STALE=()
 
@@ -115,6 +139,7 @@ done < <(git -C "$REPO_ROOT" worktree list --porcelain)
 
 if [[ ${#STALE[@]} -eq 0 ]]; then
   echo "swarm-sweep: no stale swarm worktrees (max age: $MAX_AGE_DAYS days, repo: $REPO_ROOT)"
+  echo "  hint: bundle worktrees live under \$LAZIBLE_TMPDIR/jcode/, jcode-native under \$TMPDIR/swarm-*/."
   exit 0
 fi
 

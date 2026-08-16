@@ -85,6 +85,31 @@ project_jcode_dir() {
   return 1
 }
 
+# Returns the name of the available JSON tool (python3 | jq) on stdout
+# and exit 0 if found, or prints nothing and exits 1 otherwise.
+#
+# Several subcommands (mcp info, artifact validate, scratch-dir hash,
+# doctor A4) need to parse JSON. Linux supports both python3 and jq;
+# we prefer python3 (more portable across minor versions of common
+# distros' default packages) but fall back to jq when python3 is
+# absent — and report explicitly when neither is present, so the user
+# sees "install python3 (or jq) to enable JSON inspection" instead of
+# a silent fallback or a false-positive "invalid JSON syntax".
+#
+# Always-available noop fallback: return non-zero without printing,
+# so callers can decide what to print.
+json_tool() {
+  if command -v python3 >/dev/null 2>&1; then
+    echo python3
+    return 0
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    echo jq
+    return 0
+  fi
+  return 1
+}
+
 # Globals used by subcommands.
 PROJ_DIR=""
 if PROJ_DIR="$(project_jcode_dir 2>/dev/null)"; then :; fi
@@ -285,6 +310,34 @@ cmd_artifact() {
         echo "artifact: no file at $path" >&2
         return 2
       fi
+      local tool
+      if ! tool="$(json_tool)"; then
+        echo "artifact: cannot validate — no python3 or jq on PATH" >&2
+        echo "  install python3 (preferred) or jq to enable the 8-field contract check" >&2
+        return 3
+      fi
+      if [[ "$tool" == jq ]]; then
+        # Simplified jq check: presence + basic type for each of the
+        # 8 contract fields. Rich per-field messages are python3-only;
+        # when only jq is available we report all problems at once.
+        local jq_out
+        if ! jq_out=$(jq -e '
+          (.status|type=="string") and
+          (.findings|type=="array") and
+          (.evidence|type=="array") and
+          (.edge_cases_considered|type=="array") and
+          (.validation|type=="string") and
+          (.open_questions|type=="array") and
+          (.confidence|type=="string") and
+          (.what_i_did_not_check|type=="array")
+        ' "$path" 2>&1); then
+          echo "artifact: validation failed (jq): $jq_out" >&2
+          return 1
+        fi
+        jq -r '"artifact OK: status=\(.status) confidence=\(.confidence) findings=\(.findings|length) evidence=\(.evidence|length) open_questions=\(.open_questions|length)"' "$path"
+        return 0
+      fi
+      # python3 path — full field-by-field validation with rich messages.
       python3 - "$path" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -537,7 +590,38 @@ cmd_scratch_dir() {
     local abs
     abs="$(cd "${PROJ_DIR:-$PWD}" && pwd -P)"
     repo_name="$(basename "$abs")"
-    short_sha="$(printf '%s' "$abs" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest()[:8])')"
+    # Hash the absolute path with whichever tool is available so we
+    # don't expose absolute paths in /tmp. python3 is preferred (same
+    # algorithm); if absent, fall back to jq's @sha256 or sha256sum.
+    # If none of those exist, fall back to a deterministic but less
+    # opaque key (the basename's printable length + a non-cryptographic
+    # checksum via `cksum`). Always emits 8 chars.
+    local tool=""
+    if command -v python3 >/dev/null 2>&1; then
+      tool=python3
+    elif command -v jq >/dev/null 2>&1; then
+      tool=jq
+    elif command -v sha256sum >/dev/null 2>&1; then
+      tool=sha256sum
+    fi
+    case "$tool" in
+      python3)
+        short_sha="$(printf '%s' "$abs" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest()[:8])')"
+        ;;
+      jq)
+        short_sha="$(printf '%s' "$abs" | jq -sRr '.[0] | @sha256 | .[0:8]')"
+        ;;
+      sha256sum)
+        short_sha="$(printf '%s' "$abs" | sha256sum | cut -c1-8)"
+        ;;
+      *)
+        # Last-resort fallback: cksum-derived, not cryptographic.
+        # Warns because collisions are easier to construct and the
+        # path is no longer hidden behind the hash.
+        echo "extension.sh: no python3/jq/sha256sum — using cksum-derived short_sha" >&2
+        short_sha="$(printf '%s' "$abs" | cksum | awk '{printf "%08x", $1}' | cut -c1-8)"
+        ;;
+    esac
   fi
   local tmpdir="${LAZIBLE_TMPDIR:-/tmp}"
   root="$tmpdir/jcode/${repo_name}-${short_sha}"
@@ -602,12 +686,27 @@ cmd_mcp() {
         return 0
       fi
       echo "per-project MCP config: $proj_mcp"
-      if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$proj_mcp" 2>/dev/null; then
-        echo "  WARNING: invalid JSON syntax"
-        return 3
+      local tool
+      if ! tool="$(json_tool)"; then
+        echo "  servers: unavailable (no python3/jq on PATH; install one to enable JSON inspection)"
+        return 0
       fi
-      local count
-      count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('mcpServers', {})))" "$proj_mcp" 2>/dev/null || echo "?")
+      # Validate JSON syntax.
+      if [[ "$tool" == python3 ]]; then
+        if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$proj_mcp" 2>/dev/null; then
+          echo "  WARNING: invalid JSON syntax"
+          return 3
+        fi
+        local count
+        count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('mcpServers', {})))" "$proj_mcp" 2>/dev/null || echo "?")
+      else
+        if ! jq -e . "$proj_mcp" >/dev/null 2>&1; then
+          echo "  WARNING: invalid JSON syntax"
+          return 3
+        fi
+        local count
+        count=$(jq -r '.mcpServers | length' "$proj_mcp" 2>/dev/null || echo "?")
+      fi
       echo "  servers: $count"
       ;;
     *)
@@ -735,7 +834,11 @@ cmd_doctor() {
   s=""
   if [[ -e "$PROJ_DIR/mcp.json" ]]; then
     local count="?"
-    count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('mcpServers', {})))" "$PROJ_DIR/mcp.json" 2>/dev/null || echo "?")
+    if json_tool >/dev/null 2>&1; then
+      count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('mcpServers', {})))" "$PROJ_DIR/mcp.json" 2>/dev/null || echo "?")
+    else
+      count="? (no python3/jq)"
+    fi
     s="per-project ($count servers)"
   fi
   [[ -z "$s" ]] && s="(not configured)"
