@@ -1,220 +1,212 @@
 # AGENTS.md — lazible-jcode
 
-Project-level instructions for any jcode agent working in this repo. Mirrors the
-upstream jcode repo's `AGENTS.md` style: focused on workflow, paths, and
-non-obvious gotchas. Anything an agent needs to know but cannot infer from the
-code lives here.
+Project-level instructions for any jcode agent working in this repo.
+Focused on workflow, paths, and non-obvious gotchas. Anything you cannot
+infer from the code itself lives here.
+
+## What this repo is
+
+A **prompt store + installer** for jcode customizations. The shipped
+content is the markdown under `swarm/` and `AGENTS.md`, plus the
+two shell scripts that install and uninstall them. There is **no
+build step, no test suite, no CI**. Editing markdown is the primary
+work. The bundle is generic — no project-specific terms, no per-machine
+state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 
 ## Layout
 
-- Skills live under `skills/<name>/SKILL.md` (no `SKILL.md` outside a skill dir).
-  Symlink the entire `skills/` directory into `~/.jcode/skills/` to install them
-  for the current user.
-- The four "live-copied" skills (`auto-swarm-planner`, `git-expert`, `rn-dev`,
-  `optimization`) are byte-equivalent copies of the corresponding files in a
-  real `~/.jcode/skills/` install. Treat them as upstream artifacts: do not
-  rewrite their semantics; if a local divergence is needed, add a `local-*`
-  skill beside them instead.
-- The `swarm/` directory carries three distinct artifacts that are **not**
-  skills (no `SKILL.md` frontmatter, not auto-loaded by trigger):
-  - `swarm/swarm-prompt.md` — root-session + worker coordination rules (model
-    routing, spawn hygiene, verification, decomposition, anti-patterns,
-    workspace isolation). Loaded when you construct spawn calls.
-  - `swarm/roles/<name>.md` — six worker persona templates (`reviewer`,
-    `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer`).
-  - `swarm/prompt-overlay.md` — the **enhanced default main-agent prompt**.
-    Symlinked to `~/.jcode/prompt-overlay.md` by `scripts/install.sh`. jcode
-    reads it at session start and concatenates it onto the base system prompt
-    (see `crates/jcode-base/src/prompt.rs::load_prompt_overlay_files_from_dir`).
-    Purpose: turn the default main agent into a swarm-coordinator-first agent
-    by adding model routing, spawn-when rules, hygiene, decomposition order,
-    and verification anti-patterns to the *main* prompt. Worker-only concerns
-    (worktree paths, output schema, per-role workflow) belong in the worker
-    prompt, not here.
-  Install all three via `scripts/install.sh` (default behavior). Old
-  `skills/copy-from-jcode/copy-from-jcode.sh --install` path still works but
-  is no longer the recommended way.
-- `swarm/ARCHITECTURE.md` — human-readable overview of the three goals
-  (main = organizer, worker = executor, star topology), topology, contracts
-  (invariants + output contract + cross-worker handoff), and the path map
-  after install. Read this first if you are new to the swarm layout.
-- `docs/HEARTBEAT.md` — worker-driven liveness contract. The framework
-  has no watchdog; liveness is a worker-side obligation: heartbeat ≤5
-  min (commit / dm / report), stuck self-escalation ≥3 min
-  (`{"type":"stuck"}` dm), self-alarm on spawn, and a 5-min exit right
-  after stuck. The root session responds when woken; it does not poll
-  or self-schedule. The commit-as-artifact schema is unchanged. Read
-  this before designing any new worker role or changing the spawn
-  contract.
-- `docs/POSTMAN_PROTOCOL.md` — Smart Postman tick protocol. The
-  framework's rule for how root observes worker state without polling.
-  Covers inline tick cadence, the three-observation gate before
-  re-dispatch, three recovery actions (Continue / Reset / Recover), and
-  the root session snapshot protocol that protects against context
-  overflow. Companion to `docs/HEARTBEAT.md`: HEARTBEAT is the
-  worker-side obligation, POSTMAN_PROTOCOL is the root-side protocol
-  that consumes it.
-- `docs/LIVENESS_VALIDATION.md` — 5-turn interactive walkthrough of
-  the contract (trivial / productive / blocked / abandoned / dead
-  worker). Verdict per turn + net assessment. Read this if you want
-  to understand *why* the contract works, not just *what* it says.
-- `docs/MANUAL_BINARY_SWAP.md` — `mv` + `cp` procedure for replacing
-  the running jcode binary when `install.sh` fails with `Text file
-  busy`. Use this when the canary build is ready but the next session
-  needs to pick it up immediately.
-- Config templates under `config/*.example` are **reference only**. Live config
-  lives in `~/.jcode/`. Use `skills/copy-from-jcode/copy-from-jcode.sh` to pull
-  a machine's `~/.jcode/` into this repo.
-- `config/config.toml` is a sanitized live snapshot. It contains personal
-  keybindings, model names, and `[launch_hotkeys].entries[].dir` paths, but
-  no API keys or OAuth tokens. Do not add secrets there.
-- `config/mcp.json` is **deliberately not committed**. The live
-  `~/.jcode/mcp.json` carries MCP server tokens; `config/mcp.json.example` is
-  the only safe place to reference its shape.
-- Installer lives at `scripts/install.sh` (repo-level wrapper) and
-  `skills/install-jcode/jcode-install.sh` (standalone upstream binary installer).
-  The wrapper is **linear and unconditional**: it runs 4 steps every time and
-  overwrites the destination without prompting. Flags (all are *values*, not
-  step toggles):
-  - `--canary-version <v>` — pin the jcode tag the canary is built against.
-  - `--clean` — pass through to `scripts/build-jcode-canary.sh --clean`: wipe
-    the canary source-dir (`~/Project/jcode`) before cloning + applying patches.
-    Use when a previous build left a polluted working tree and the patch fails
-    to apply.
-  Steps:
-  1. Install jcode binary. If `jcode-patches/*.patch` exists, build a canary
-     from those patches (via `scripts/build-jcode-canary.sh --replace-main`);
-     otherwise call the standalone upstream installer. Either way, the result
-     replaces `~/.local/bin/jcode` (the previous binary is backed up as
-     `jcode.bak.<ts>`).
-  2. Symlink overlay + swarm config (`swarm/prompt-overlay.md`,
-     `swarm/swarm-prompt.md`, `swarm/roles/`) into `~/.jcode/`.
-  3. Symlink each `skills/<name>/SKILL.md` directory into `~/.jcode/skills/<name>`.
-  4. Symlink `AGENTS.md` into `~/.jcode/AGENTS.md`.
-  Existing files at any destination are backed up to `<dst>.bak.<timestamp>`
-  before being replaced.
-- `jcode-patches/swarm-coordinator-first.system_prompt.md` is the source of
-  truth for the rewritten base identity. The matching `.patch` file is
-  generated from it against the upstream jcode HEAD at time of commit; see
-  `docs/SELFDEV.md` §4 for the re-sync recipe when upstream drifts.
-- `scripts/sync-jcode-source.sh` pulls the latest upstream jcode tag and
-  re-applies every patch in `jcode-patches/`. Exits non-zero with a recovery
-  recipe when a patch fails to apply.
+| Path | Purpose | Touchable? |
+| --- | --- | --- |
+| `AGENTS.md` (this file) | Operating manual for any agent working here | yes |
+| `README.md` | Project overview, quick start, repo table | yes |
+| `docs/INSTALL.md` | Detailed install / uninstall / troubleshooting | yes |
+| `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/` | yes |
+| `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
+| `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
+| `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
+| `swarm/ARCHITECTURE.md` | Human-readable star topology + contracts overview | yes |
+| `swarm/roles/<name>.md` | Worker persona templates. **Exactly 6 roles**: `reviewer`, `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer` | yes |
+| `config/config.toml` | Sanitized live snapshot from a real `~/.jcode/config.toml`. Reference only. | no |
+| `config/config.toml.example` | Template for the above | yes |
+| `config/mcp.json.example` | Schema reference for MCP servers layout | yes |
+| `.gitignore` | Excludes `.bak.<ts>`, `.bak.*`, OS noise, the live `config/mcp.json` | yes |
+
+There are no `scripts/lib/`, `tests/`, `jcode-patches/`, `experiments/`,
+`docs/HEARTBEAT.md`, `docs/POSTMAN_PROTOCOL.md`, `skills/`, or
+`swarm/role-templates/` directories. If you reach for one of those
+paths, you are looking at the old layout — refer to the current files
+above instead.
+
+## Working in this repo
+
+### Bootstrap a fresh machine
+
+```bash
+git clone https://github.com/vanpipy/lazible-jcode.git
+cd lazible-jcode
+./scripts/install.sh          # 3 steps, idempotent, overwrite-by-default
+```
+
+The installer symlinks the overlay into `~/.jcode/`. The real
+`~/.jcode/config.toml`, runtime state, sessions, and auth are NOT
+touched.
+
+### Tear down
+
+```bash
+./scripts/uninstall.sh --keep-binary --yes        # remove symlinks, keep jcode
+./scripts/uninstall.sh --keep-binary --purge --yes  # also wipe ~/.jcode/
+./scripts/uninstall.sh --yes                       # remove symlinks + jcode binary
+```
+
+### Add a new role persona
+
+1. Create `swarm/roles/<name>.md` using the same 8-section template as the others: `Persona`, `Position in swarm`, `Output contract (mandatory)`, `Scope`, `Workflow`, `Output schema`, `Skills to load`, `Anti-patterns`.
+2. The `Output contract (mandatory)` section **must** list all 6 fields: `findings`, `evidence[]`, `validation`, `open_questions[]`, `confidence`, `what_i_did_not_check[]`. The `Output schema` JSON block must include all 6 keys.
+3. Update `swarm/ARCHITECTURE.md` topology to add the new worker node.
+4. Update `swarm/prompt-overlay.md` worker-templates list (§11).
+5. Re-run install; the new role auto-symlinks into `~/.jcode/roles/`.
+
+### Edit the overlay
+
+Touch `swarm/prompt-overlay.md` for any main-agent behavior change
+(coordination mode, decision flow, invariants). Edit `swarm/swarm-prompt.md`
+for worker-side policy (model routing, spawn hygiene, anti-patterns).
+Keep them consistent: any invariant in one must appear in the other.
+
+### Edit the install / uninstall scripts
+
+Treat them as a pair. Anything added to `install.sh` steps must be
+mirrored in `uninstall.sh`. After editing, run `bash -n` on both and
+re-run the live install + idempotent rerun to confirm nothing broke.
+
+### Edit docs
+
+`README.md` is the user-facing entry point (quick start, layout,
+file-purpose table). `docs/INSTALL.md` is the deeper reference
+(troubleshooting, re-install semantics, flags). `AGENTS.md` (this file)
+is the agent-facing operating manual. Do not duplicate content across
+the three — point at the canonical location.
 
 ## Commit conventions
 
-- One skill per commit when possible.
-- One swarm role per commit is preferred when iterating on a single role's
-  prompt. Bundle multiple roles only when intentionally rotating the whole set.
-- Keep commit subjects under 72 chars; body explains *why*, not *what*.
-- `type(scope): summary` style. e.g. `feat(install): add --dry-run flag`.
-- When porting a skill from upstream jcode, use `chore(skills): import <name>
-  from ~/.jcode/skills` and add a one-line note about why (version bump,
-  local divergence, etc.).
-- Swarm config (`swarm/swarm-prompt.md`, `roles/*.md`) uses `feat(swarm): ...`
-  or `chore(swarm): ...` scope; bundle them with their corresponding script
-  changes when the script depends on the new shape.
-- The main-agent overlay (`swarm/prompt-overlay.md`) uses `feat(overlay): ...`
-  scope. Bundling it with installer changes is preferred so the install
-  flow stays consistent.
+- `type(scope): summary` style. Example: `feat(roles): add security-reviewer`.
+- Subject under 72 chars; body explains *why*, not *what*.
+- One concept per commit. Bundle only when the second change is meaningless
+  without the first (e.g. an installer flag + its docs).
+- Scopes in this repo:
+  - `install`, `uninstall`, `scripts` — installer changes
+  - `overlay` — `swarm/prompt-overlay.md`
+  - `swarm` — `swarm/swarm-prompt.md`, `swarm/ARCHITECTURE.md`
+  - `roles` — `swarm/roles/*.md`
+  - `readme`, `docs`, `agents` — documentation
+  - `repo` — meta / cleanup / gitignore
+  - `config` — config templates
+- Common types: `feat`, `fix`, `refactor`, `chore`, `docs`.
 
 ## Things an agent must not do
 
-- **Do not** commit anything under `config/` that is not an `.example` file or
-  the sanitized `config.toml`. Live secrets belong in `~/.jcode/` and must
-  never reach git. The `.gitignore` already excludes live mcp.json; respect it.
-- **Do not** modify upstream jcode's skill semantics when porting. Keep
-  `description`, `skill-type`, `version`, and `type` aligned with upstream so
-  search-by-embedding still hits the same triggers.
-- **Do not** add `README.md` files inside skill directories. jcode's loader
-  indexes only `SKILL.md`; extra READMEs are dead weight.
-- **Do not** add `package.json`, `Cargo.toml`, or any build manifest here.
-  This repo has no build step; everything is shipped as-is.
-- **Do not** rewrite a "live-copied" skill's content to fix upstream bugs. Fix
-  it upstream first, then re-run `copy-from-jcode.sh` to refresh. Diverging
-  silently makes the next re-sync non-trivial.
+- **Do not** commit anything under `config/` that is not `.example` or
+  the sanitized `config.toml`. Live secrets belong in `~/.jcode/`.
+  The `.gitignore` excludes the live `mcp.json`; respect it.
+- **Do not** add a `package.json`, `Cargo.toml`, `pyproject.toml`, or
+  any other build manifest. This repo has no build step.
+- **Do not** introduce new directories. The 4 top-level dirs are
+  `config/`, `docs/`, `scripts/`, `swarm/`. Adding `tests/`, `lib/`,
+  `experiments/`, `examples/` reopens the surface area the cleanup
+  closed.
+- **Do not** add a 7th role. The 6 roles are deliberate; adding another
+  dilutes the spawn decision the root makes. If you genuinely need a
+  new role, document the case in the PR body.
+- **Do not** rewrite the overlay's invariants, the `Output contract`
+  fields, or the ARCHITECTURE topology in a way that breaks the existing
+  6 roles. The contract is the spine.
+- **Do not** add `.bak.<ts>` files to git. They are runtime artifacts.
+- **Do not** introduce Sages / tick-era / Smart Postman / DAG-stage
+  terminology. The bundle is deliberately generic; project-specific
+  terms belong in the user-written `~/.jcode/AGENTS.md`, not here.
+- **Do not** push to `origin/main` without an explicit user decision.
+  This is the autonomy boundary. Surface the push plan in chat and
+  wait for the user to pick the strategy (force-push / new branch / PR).
 
-## Mandatory root pre-action inspection (silent-stuck guard)
+## Verification before push
 
-The root session (main agent) **MUST** run `scripts/root-tick.sh` before
-**any** of the following actions:
+Run the following locally on every commit that touches `scripts/`,
+`swarm/`, or `docs/`:
 
-- merging a worker branch into the integration target (e.g. `git merge --no-ff
-  feat/<name>_<short-sha>`)
-- spawning a new worker on top of an active branch
-- declaring a session's task complete in chat to the user
-- re-running `install.sh` after a worker has touched the install / patch path
+```bash
+# 1. Shell-script syntax
+bash -n scripts/install.sh
+bash -n scripts/uninstall.sh
 
-This is not a poll and not a scheduled self-wakeup. It is the root agent's
-pre-action gate. The wrapper enforces the silent-stuck discipline that was
-violated in the postman-framework-hardening session: a worker can commit a
-`final` artifact without calling `complete_node`, and without the gate the
-branch rots indefinitely.
+# 2. Config-file parse
+python3 -c "import json; json.load(open('config/mcp.json.example'))"
+python3 -c "import tomllib; [tomllib.load(open(p, 'rb')) for p in ['config/config.toml', 'config/config.toml.example']]"
 
-Exit code semantics:
+# 3. Help output matches the committed help text
+bash scripts/install.sh --help
+bash scripts/uninstall.sh --help
 
-- `0` -- no worker action needed; safe to integrate / spawn
-- `1` -- at least one branch has `recommended_action` in
-  `{integrate-now, investigate, dm-heartbeat-reminder}`; root must act
-  directly on the branch listed in the `action` column
-- `2` -- at least one branch is silent / dead / has no commits; spawn a
-  recoverer worker per `docs/POSTMAN_PROTOCOL.md`
-- `3` -- git missing or not a repo (early exit, no action possible)
+# 4. Role-schema contract (all 6 files have all 6 mandated fields)
+python3 -c "
+import re, json, sys
+required = {'findings', 'evidence', 'validation', 'open_questions', 'confidence', 'what_i_did_not_check'}
+ok = True
+for role in ['reviewer', 'implementer', 'investigator', 'migrator', 'test-writer', 'doc-writer']:
+    text = open(f'swarm/roles/{role}.md').read()
+    m = re.search(r'## Output schema.*?\`\`\`json\s*(\{.*?\})\s*\`\`\`', text, re.DOTALL)
+    if not m:
+        print(f'{role}: NO schema'); ok = False; continue
+    obj = json.loads(m.group(1))
+    missing = required - set(obj)
+    if missing:
+        print(f'{role}: missing {missing}'); ok = False
+sys.exit(0 if ok else 1)
+"
 
-Do NOT integrate a branch whose tick output shows `integrate-now` without
-first verifying its gate (test/typecheck/lint/build) directly on the commit
--- the in-session evidence requirement is unchanged. The tick exit code
-tells you *that* integration is needed; the gate evidence tells you *whether*
-the work is ready to integrate.
+# 5. Live install smoke test (uses real ~/.jcode/ — safe: install.sh
+#    does not touch config.toml, sessions, cache, etc.)
+bash scripts/install.sh                          # first run
+bash scripts/install.sh                          # idempotent rerun (should print 'unchanged' for all)
+# Confirm both run with zero .bak.<ts> files created
+find ~/.jcode -maxdepth 1 -name '*.bak.*' | wc -l   # should be 0
+```
 
-Rationale: see `docs/POSTMAN_PROTOCOL.md` (root-side protocol that consumes
-this output) and `docs/HEARTBEAT.md` (worker-side obligation this
-complements). The overlay's §12 root obligation 3 ("passive inspection at
-every decision point") is mechanicalized by this wrapper.
+All five must pass before any commit touching the installer or
+swarm config is pushed.
+
+## Repo-specific gotchas
+
+- **The overlay is generic.** If you find yourself adding project-specific
+  terms (project names, team names, internal tool names), stop and
+  push those to the user's own `~/.jcode/AGENTS.md` instead. This repo
+  is a public bundle.
+- **6 roles, fixed names.** The `swarm/roles/*.md` filenames are
+  referenced verbatim from `swarm/prompt-overlay.md`, `swarm/ARCHITECTURE.md`,
+  and the README. Renaming a role requires updating all three.
+- **The 6-field contract is invariant.** Every role's JSON schema must
+  contain `findings`, `evidence`, `validation`, `open_questions`,
+  `confidence`, `what_i_did_not_check`. The overlay's invariant 4 says
+  so. Adding a 7th field to one role is fine; removing a field from
+  any role is a contract break.
+- **Backup branches are safety nets, not stale branches.** `backup/pre-clear-2026-08-16`
+  (HEAD `7bdb611`) and `backup/pre-rebuild-2026-08-16` (HEAD `bcc0b72`)
+  hold the pre-cleanup states. Do not delete them. They are not
+  pushed to `origin`; they exist only in this clone.
+- **Live `~/.jcode/` is shared across machines.** The install creates
+  symlinks INTO `~/.jcode/`. If you rebase this repo, the symlinks
+  automatically re-target. If you delete the repo checkout, the
+  symlinks dangle — uninstall first.
+- **No sweep/cleanup cron.** The installer does not rotate `.bak.<ts>`
+  files. The fast path in `overwrite_link` (skip backup when dst
+  already links to src) prevents accumulation on idempotent reruns.
+  Old `.bak.<ts>` files left over from installs against user-edited
+  destinations are intentional and can be removed by hand.
 
 ## Logs / state
 
 - No runtime state lives in this repo.
-- The standalone installer writes nothing outside `~/.jcode/builds/`,
-  `~/.local/bin/`, and the user's shell rc files (path lines, idempotent).
-- Worker liveness does **not** live in this repo. It lives in the
-  worker's commit history on its `<worker_branch>`. See
-  `docs/HEARTBEAT.md`.
-
-## Verification before push
-
-Before pushing any commit, run:
-
-```bash
-bash -n scripts/install.sh
-bash -n scripts/uninstall.sh
-bash -n scripts/build-jcode-canary.sh
-bash -n scripts/sync-jcode-source.sh
-bash -n skills/install-jcode/jcode-install.sh
-bash -n skills/copy-from-jcode/copy-from-jcode.sh
-bash -n scripts/root-tick.sh
-# IDEMPOTENT flag regression — runs install.sh twice in each mode against a
-# fake repo under $TMPDIR. Asserts non-idempotent rerun creates .bak files,
-# idempotent rerun leaves them alone.
-bash scripts/test_install_idempotent.sh
-# Smart-postman regression — silent-stuck detection (final commit, no handoff,
-# past handoff-pending window → recommended_action = integrate-now → exit 1).
-# Catches the discipline gap that caused the postman-framework-hardening
-# silent-stuck failure mode (worker committed final but root never noticed).
-python3 -m unittest scripts.test_swarm_state_monitor scripts.test_root_tick
-# Every shell script under `scripts/` and `skills/` is executable (catches
-# chmod regressions where a fresh checkout lands with non-executable scripts
-# and the `bash scripts/...` invocations above silently fail to load):
-python3 -m unittest scripts.test_exec_bits
-# Verify the patch still applies to upstream jcode
-git clone --depth 1 https://github.com/1jehuang/jcode.git /tmp/jcode-verify
-(cd /tmp/jcode-verify && git apply --check jcode-patches/swarm-coordinator-first.patch)
-rm -rf /tmp/jcode-verify
-# Help output should match the committed help text
-bash scripts/install.sh --help
-```
-
-All shell scripts must pass `bash -n`. The patch must apply cleanly. The
-`--help` output must look correct (linear 4-step description, only `--canary-version`
-flag). `scripts/test_install_idempotent.sh` must exit 0 before any change
-that touches `scripts/install.sh` is pushed.
+- The installer writes nothing outside `~/.local/bin/jcode` and
+  `~/.jcode/<overlay-files>`.
+- Worker liveness, sessions, telemetry, and auth all live in
+  `~/.jcode/`, not here.
