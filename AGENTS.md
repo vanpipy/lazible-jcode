@@ -20,6 +20,8 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `AGENTS.md` (this file) | Operating manual for any agent working here | yes |
 | `README.md` | Project overview, quick start, repo table | yes |
 | `docs/INSTALL.md` | Detailed install / uninstall / troubleshooting | yes |
+| `docs/EXTENSIONS.md` | Per-project extension points (10 axes) | yes |
+| `docs/INTEGRATIONS.md` | Recommended local MCP server stack (filesystem + git + serena + sqlite) | yes |
 | `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/`, and `swarm-sweep` into `~/.local/bin/` | yes |
 | `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
 | `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `~/.local/bin/swarm-sweep` by install.sh | yes |
@@ -30,7 +32,7 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `swarm/roles/<name>.md` | Worker persona templates. **Exactly 6 roles**: `reviewer`, `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer` | yes |
 | `config/config.toml` | Sanitized live snapshot from a real `~/.jcode/config.toml`. Reference only. | no |
 | `config/config.toml.example` | Template for the above | yes |
-| `config/mcp.json.example` | Schema reference for MCP servers layout | yes |
+| `config/mcp.json.example` | Schema reference for MCP servers layout; ships the recommended local stack (filesystem + git + serena + sqlite) | yes |
 | `.gitignore` | Excludes `.bak.<ts>`, `.bak.*`, OS noise, the live `config/mcp.json` | yes |
 
 There are no `scripts/lib/`, `tests/`, `jcode-patches/`, `experiments/`,

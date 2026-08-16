@@ -47,7 +47,9 @@ lazible-jcode/
 │   ├── uninstall.sh                   # Inverse: removes symlinks + optionally the binary
 │   └── swarm-sweep.sh                 # Manual cleanup for stale swarm worktrees (→ ~/.local/bin/swarm-sweep)
 └── docs/
-    └── INSTALL.md                     # Detailed install / uninstall / troubleshooting
+    ├── INSTALL.md                     # Detailed install / uninstall / troubleshooting
+    ├── EXTENSIONS.md                  # Per-project extension points (10 axes)
+    └── INTEGRATIONS.md                # Recommended local MCP server stack
 ```
 
 ## Quick start
@@ -165,7 +167,7 @@ their own skills on top.
 | `swarm/**/*.md` | ✅ | Generic swarm config + role templates; no secrets, no per-project state |
 | `config/*.example` | ✅ | Reference only, no secrets |
 | `config/config.toml` | ✅ | Live snapshot; no API keys live here, only model names and keybindings |
-| `~/.jcode/mcp.json` | ❌ | NOT committed. Live MCP server tokens — must remain local. Shape reference: `config/mcp.json.example` |
+| `~/.jcode/mcp.json` | ❌ | NOT committed. Live MCP server tokens — must remain local. Shape reference: `config/mcp.json.example`. Recommended local-only stack (filesystem + git + serena + sqlite): `docs/INTEGRATIONS.md` |
 | `~/.jcode/builds/`, `cache/`, `logs/`, `sessions/`, `memory/`, telemetry files | ❌ | Runtime state; rebuilt on each session |
 
 ## License
