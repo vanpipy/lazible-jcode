@@ -18,6 +18,8 @@ time and overwrites the destination without prompting:
 
 1. Install jcode binary via the standalone upstream installer if no
    `jcode` is on `PATH` yet. Existing binaries are left in place.
+   Also installs the `swarm-sweep` helper into `~/.local/bin/` (see
+   "Stale swarm worktrees" below).
 2. Symlink `swarm/prompt-overlay.md`, `swarm/swarm-prompt.md`,
    `swarm/ARCHITECTURE.md`, and `swarm/roles/*.md` into their
    canonical locations under `~/.jcode/`.
@@ -86,6 +88,9 @@ point elsewhere are preserved. By default it removes:
   `~/.jcode/roles/` that point into this repo.
 - The jcode binary (`~/.local/bin/jcode`) and prior backup installs
   (`jcode.bak.*`), unless `--keep-binary` is passed.
+- The `swarm-sweep` helper at `~/.local/bin/swarm-sweep`, unless
+  `--keep-binary` is passed (it shares the same keep flag because
+  the two binaries are installed side by side).
 
 It does **not** touch (without `--purge`):
 
@@ -96,6 +101,30 @@ It does **not** touch (without `--purge`):
 
 It never touches shell rc files. If you want to remove the PATH line
 the upstream installer added, edit the rc file by hand.
+
+## Stale swarm worktrees
+
+When a spawned worker disappears mid-task (M3 silent failure) or
+finishes without cleanup, the git worktree and branch it created sit
+in the repo indefinitely. `swarm-sweep` cleans them up:
+
+```bash
+swarm-sweep              # dry-run, lists stale worktrees
+swarm-sweep --yes        # actually remove them
+swarm-sweep --max-age=3  # threshold in days (default: 7)
+```
+
+The script only touches worktrees whose path matches the swarm
+convention `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`.
+The main worktree and any manual feature worktrees are NEVER touched.
+This is the worktree-level cleanup layer — distinct from the
+session-level reaper inside the orchestrator (which closes idle
+spawned workers automatically). See `AGENTS.md` "Cleanup: stale
+swarm worktrees" for the full description of both layers.
+
+`swarm-sweep` is installed into `~/.local/bin/swarm-sweep` by
+`scripts/install.sh` (step 1, alongside jcode). Removing it happens
+via `scripts/uninstall.sh --yes`.
 
 ## Re-install / overwrite
 
