@@ -72,9 +72,19 @@ err()  { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 # Overwrite a file or symlink unconditionally. If dst exists (regular file,
 # symlink, or directory), back it up to <dst>.bak.<ts> first. If dst does not
 # exist, just create it. Always links src as the final dst.
+#
+# Fast path: if dst is already a symlink pointing at src, do nothing. This
+# keeps idempotent reruns from accumulating a symlink-of-a-symlink per run
+# when the user just wants to refresh links that are already correct.
 overwrite_link() {
   local src="$1" dst="$2" label="$3"
   [[ -e "$src" ]] || { warn "skip $label — source missing: $src"; return 0; }
+
+  # Fast path: dst already links to src — nothing to do.
+  if [[ -L "$dst" ]] && [[ "$(readlink "$dst")" == "$src" ]]; then
+    info "unchanged $label → $src"
+    return 0
+  fi
 
   if [[ -e "$dst" || -L "$dst" ]]; then
     mv "$dst" "$dst.bak.$TIMESTAMP"
