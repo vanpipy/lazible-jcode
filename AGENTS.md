@@ -63,7 +63,7 @@ touched.
 ### Add a new role persona
 
 1. Create `swarm/roles/<name>.md` using the same 8-section template as the others: `Persona`, `Position in swarm`, `Output contract (mandatory)`, `Scope`, `Workflow`, `Output schema`, `Skills to load`, `Anti-patterns`.
-2. The `Output contract (mandatory)` section **must** list all 6 fields: `findings`, `evidence[]`, `validation`, `open_questions[]`, `confidence`, `what_i_did_not_check[]`. The `Output schema` JSON block must include all 6 keys.
+2. The `Output contract (mandatory)` section **must** list all 7 fields: `findings`, `evidence[]`, `edge_cases_considered[]`, `validation`, `open_questions[]`, `confidence`, `what_i_did_not_check[]`. The `Output schema` JSON block must include all 7 keys (plus `status` as the 8th field that lives at the top of the schema).
 3. Update `swarm/ARCHITECTURE.md` topology to add the new worker node.
 4. Update `swarm/prompt-overlay.md` worker-templates list (§11).
 5. Re-run install; the new role auto-symlinks into `~/.jcode/roles/`.
@@ -148,10 +148,10 @@ python3 -c "import tomllib; [tomllib.load(open(p, 'rb')) for p in ['config/confi
 bash scripts/install.sh --help
 bash scripts/uninstall.sh --help
 
-# 4. Role-schema contract (all 6 files have all 6 mandated fields)
+# 4. Role-schema contract (all 6 files have all 7+1 mandated fields)
 python3 -c "
 import re, json, sys
-required = {'findings', 'evidence', 'validation', 'open_questions', 'confidence', 'what_i_did_not_check'}
+required = {'findings', 'evidence', 'edge_cases_considered', 'validation', 'open_questions', 'confidence', 'what_i_did_not_check', 'status'}
 ok = True
 for role in ['reviewer', 'implementer', 'investigator', 'migrator', 'test-writer', 'doc-writer']:
     text = open(f'swarm/roles/{role}.md').read()
@@ -185,11 +185,13 @@ swarm config is pushed.
 - **6 roles, fixed names.** The `swarm/roles/*.md` filenames are
   referenced verbatim from `swarm/prompt-overlay.md`, `swarm/ARCHITECTURE.md`,
   and the README. Renaming a role requires updating all three.
-- **The 6-field contract is invariant.** Every role's JSON schema must
-  contain `findings`, `evidence`, `validation`, `open_questions`,
-  `confidence`, `what_i_did_not_check`. The overlay's invariant 4 says
-  so. Adding a 7th field to one role is fine; removing a field from
-  any role is a contract break.
+- **The 7+1-field contract is invariant.** Every role's JSON schema must
+  contain `status`, `findings`, `evidence`, `edge_cases_considered`,
+  `validation`, `open_questions`, `confidence`, `what_i_did_not_check`.
+  The overlay's invariant 4 says so. Adding a 9th role-specific field
+  to one role is fine (e.g. `risks`, `migration_plan`, `coverage`);
+  removing any of the 8 contract fields from any role is a contract
+  break.
 - **Backup branches are safety nets, not stale branches.** `backup/pre-clear-2026-08-16`
   (HEAD `7bdb611`) and `backup/pre-rebuild-2026-08-16` (HEAD `bcc0b72`)
   hold the pre-cleanup states. Do not delete them. They are not

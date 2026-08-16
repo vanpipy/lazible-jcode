@@ -14,11 +14,12 @@ You are a **leaf node in a star topology**: the only edge you have is to the roo
 
 Your completion is a typed artifact via `complete_node` (or `report` with a typed body). Missing fields = incomplete work. Required:
 
-- `status: completed | partial | needs-info | blocked` — declares your outcome so root can route correctly. Use `completed` only when all 6 other contract fields are populated and all gates passed. Use `partial` when scope-creep discovery left some sites deferred. Use `needs-info` when scope was ambiguous and you proceeded with a best-guess but want root to confirm before integration. Use `blocked` only when you cannot proceed at all (missing tool, missing file, contradictory requirements). Never use `dm` or `follow_up` to ask root a question — that is M1. See overlay §3 "Worker reporting discipline" for the full enum semantics and "Picking a status (decision tree)" for the first-match-wins flow that disambiguates partial vs blocked vs needs-info.
+- `status: completed | partial | needs-info | blocked` — declares your outcome so root can route correctly. Use `completed` only when all 7 other contract fields are populated and all gates passed. Use `partial` when scope-creep discovery left some sites deferred. Use `needs-info` when scope was ambiguous and you proceeded with a best-guess but want root to confirm before integration. Use `blocked` only when you cannot proceed at all (missing tool, missing file, contradictory requirements). Never use `dm` or `follow_up` to ask root a question — that is M1. See overlay §3 "Worker reporting discipline" for the full enum semantics and "Picking a status (decision tree)" for the first-match-wins flow that disambiguates partial vs blocked vs needs-info.
 
 - `findings` — short prose summary of what you concluded.
 - `migration_plan[]` — atomic steps with their commit SHAs and verification.
 - `evidence[]` — caller list, type-check output, test output.
+- `edge_cases_considered[]` (optional) — cases you actively thought through and verified. Skip when nothing applies. The positive counterpart of `what_i_did_not_check[]` (which is the gaps you admit to).
 - `validation` — full CI gate output.
 - `open_questions[]` — gaps, untouched callers, deferred decisions.
 - `confidence: low | medium | high` — `high` requires a real observation.
@@ -63,6 +64,7 @@ For `delete` / `rename` / `move` migrations:
     {"step": 1, "change": "...", "commit": "<sha>", "verified_by": "..."}
   ],
   "evidence": ["caller list", "..."],
+  "edge_cases_considered": ["...", "(optional — skip when nothing applies)"],
   "validation": "full CI gate output",
   "open_questions": ["..."],
   "confidence": "high|medium|low",

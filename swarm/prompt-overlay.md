@@ -68,12 +68,16 @@ of them, the action is wrong — do not rationalize around it.
    `open_questions[]` in the artifact, not to a commit.
 4. **Typed artifact is a contract, not a suggestion.** Every worker
    completion carries `status` (`completed` / `partial` / `needs-info` /
-   `blocked`), plus `findings`, `evidence[]`, `validation`,
-   `open_questions[]`, `confidence`, and `what_i_did_not_check[]`.
-   Missing or invalid `status`, or a missing contract field, = incomplete
-   work, regardless of whether the code compiled. The `evidence[]`
-   array MUST cite the commit SHA(s) and the changed files so the root
-   can correlate artifact ↔ branch ↔ worktree.
+   `blocked`), plus `findings`, `evidence[]`, `edge_cases_considered[]`,
+   `validation`, `open_questions[]`, `confidence`, and
+   `what_i_did_not_check[]`. Missing or invalid `status`, or a missing
+   contract field, = incomplete work, regardless of whether the code
+   compiled. The `evidence[]` array MUST cite the commit SHA(s) and the
+   changed files so the root can correlate artifact ↔ branch ↔ worktree.
+   `edge_cases_considered[]` is OPTIONAL — list the cases you actively
+   thought through (empty when nothing applies); it is the positive
+   counterpart of `what_i_did_not_check[]` (gaps you admit to).
+
 5. **Root owns integration.** Only the root merges worker branches,
    resolves conflicts, runs cross-scope gates, and pushes. Workers never
    merge each other — that pollutes history with noise commits.
@@ -248,10 +252,10 @@ Use these primitives in this order of preference:
 
 1. **`complete_node` with typed artifact** — primary handoff. Forces
    the worker to produce `status` plus `findings`, `evidence[]`,
-   `validation`, `open_questions[]`, `confidence`,
-   `what_i_did_not_check[]` (matching invariant 4 above). The `status`
-   is one of `completed` / `partial` / `needs-info` / `blocked` — see
-   the discipline section below.
+   `edge_cases_considered[]`, `validation`, `open_questions[]`,
+   `confidence`, `what_i_did_not_check[]` (matching invariant 4 above).
+   The `status` is one of `completed` / `partial` / `needs-info` /
+   `blocked` — see the discipline section below.
 2. **`dm` to a specific worker** — for follow-up questions or to
    assign more work to an existing agent.
 3. **`broadcast` to your spawned subtree** — rare, only for genuine
@@ -278,7 +282,7 @@ Every typed artifact declares its `status` from this fixed enum. The
 root session parses this mechanically — anything not in this enum is a
 parsing failure, not a partial artifact.
 
-- `completed` — the role's work is fully done, all 7 contract fields
+- `completed` — the role's work is fully done, all 8 contract fields
   populated, all gates passed. **Per-role meaning**:
   - implementer / migrator / test-writer / doc-writer: code/docs are
     ready to integrate.
@@ -413,9 +417,9 @@ Common rejection causes:
 - Forgetting the JSON block at the end of a long-running dispatch.
 - Putting the JSON inside a longer prose summary (use a bare
   ` ```json ` fence, not nested in another fence).
-- Omitting one or more of the 7 required fields (`status`, `findings`,
-  `evidence`, `validation`, `open_questions`, `confidence`,
-  `what_i_did_not_check`).
+- Omitting one or more of the 8 required fields (`status`, `findings`,
+  `evidence`, `edge_cases_considered`, `validation`, `open_questions`,
+  `confidence`, `what_i_did_not_check`).
 - `evidence[]` missing commit SHA and `files_changed` (root cannot
   correlate artifact to branch).
 
@@ -512,9 +516,9 @@ gates between steps. Skipping gates is the most common cause of
 For each worker branch that completes with `status: completed` (or
 `partial` accepted), root performs:
 
-1. **Read** the artifact (`findings`, `evidence`, `validation`,
-   `open_questions`, `confidence`, `what_i_did_not_check`). Cross-
-   check `evidence[].commits` against `git log <base>..<branch>`.
+1. **Read** the artifact (`findings`, `evidence`, `edge_cases_considered`,
+   `validation`, `open_questions`, `confidence`, `what_i_did_not_check`).
+   Cross-check `evidence[].commits` against `git log <base>..<branch>`.
 2. **Inspect** the diff: `git diff <base>..<branch> -- <files_touched>`.
    Confirm only the `files_touched[]` files changed. If other files
    moved, the worker expanded scope — reject or amend.

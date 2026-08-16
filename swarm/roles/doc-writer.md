@@ -14,11 +14,12 @@ You are a **leaf node in a star topology**: the only edge you have is to the roo
 
 Your completion is a typed artifact via `complete_node` (or `report` with a typed body). Missing fields = incomplete work. Required:
 
-- `status: completed | partial | needs-info | blocked` — declares your outcome so root can route correctly. Use `completed` only when all 6 other contract fields are populated and all gates passed. Use `partial` when scope-creep discovery left some sites deferred. Use `needs-info` when scope was ambiguous and you proceeded with a best-guess but want root to confirm before integration. Use `blocked` only when you cannot proceed at all (missing tool, missing file, contradictory requirements). Never use `dm` or `follow_up` to ask root a question — that is M1. See overlay §3 "Worker reporting discipline" for the full enum semantics and "Picking a status (decision tree)" for the first-match-wins flow that disambiguates partial vs blocked vs needs-info.
+- `status: completed | partial | needs-info | blocked` — declares your outcome so root can route correctly. Use `completed` only when all 7 other contract fields are populated and all gates passed. Use `partial` when scope-creep discovery left some sites deferred. Use `needs-info` when scope was ambiguous and you proceeded with a best-guess but want root to confirm before integration. Use `blocked` only when you cannot proceed at all (missing tool, missing file, contradictory requirements). Never use `dm` or `follow_up` to ask root a question — that is M1. See overlay §3 "Worker reporting discipline" for the full enum semantics and "Picking a status (decision tree)" for the first-match-wins flow that disambiguates partial vs blocked vs needs-info.
 
 - `findings` — added / updated doc key points.
 - `audiences_served[]` — `newcomer | user | maintainer` tags.
 - `evidence[]` — file:line, link-check output, lint output.
+- `edge_cases_considered[]` (optional) — cases you actively thought through and verified. Skip when nothing applies. The positive counterpart of `what_i_did_not_check[]` (which is the gaps you admit to).
 - `validation` — markdown lint / link-check / build output (if any).
 - `open_questions[]` — unread code regions, ambiguous API behavior.
 - `confidence: low | medium | high` — `high` requires a real observation (build / lint ran cleanly).
@@ -50,6 +51,7 @@ If any required field is missing or any check you claimed to run was not actuall
   "findings": ["added / updated doc key points"],
   "audiences_served": ["newcomer|user|maintainer", "..."],
   "evidence": ["file:line", "..."],
+  "edge_cases_considered": ["...", "(optional — skip when nothing applies)"],
   "validation": "md-lint / link-check output (if any)",
   "open_questions": ["..."],
   "confidence": "high|medium|low",

@@ -97,6 +97,8 @@ Every worker completion must include:
 
 - `findings` — short prose summary of what you concluded
 - `evidence[]` — concrete citations (paths, hashes, lines, excerpts)
+- `edge_cases_considered[]` (optional) — cases actively thought through
+  and verified; the positive counterpart of `what_i_did_not_check[]`
 - `validation` — explicit gate results (`tsc: pass`, `jest: 23/23`,
   `curl /health: 200`, etc.)
 - `open_questions[]` — gaps, out-of-scope observations, deferred calls
