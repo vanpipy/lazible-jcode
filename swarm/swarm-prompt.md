@@ -42,6 +42,14 @@ Rules:
 
 - When the user names a specific model, pass it through (subject to
   availability check).
+- **Fallback is fast, not iterative.** Before drafting a spawn prompt,
+  run a 1-token auth probe of the chosen model (`extension.sh models
+  probe <name>` is the bundle's helper). If the probe fails (auth
+  error / unknown route), do NOT iterate on model names. **Omit
+  `model`** on the next spawn — the worker inherits the coordinator's
+  working model. One probed attempt, then default. Silent iteration is
+  the most expensive anti-pattern in spawn hygiene: each failed spawn
+  costs ~30s + a worktree.
 - `effort: "max"` only when the user explicitly asked — it's
   expensive.
 - If a previously unavailable route becomes available, update the
