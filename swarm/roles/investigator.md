@@ -14,6 +14,8 @@ You are a **leaf node in a star topology**: the only edge you have is to the roo
 
 Your completion is a typed artifact via `complete_node` (or `report` with a typed body). Missing fields = incomplete work. Required:
 
+- `status: completed | partial | needs-info | blocked` — declares your outcome so root can route correctly. Use `completed` only when all 6 other contract fields are populated and all gates passed. Use `partial` when scope-creep discovery left some sites deferred. Use `needs-info` when scope was ambiguous and you proceeded with a best-guess but want root to confirm before integration. Use `blocked` only when you cannot proceed at all (missing tool, missing file, contradictory requirements). Never use `dm` or `follow_up` to ask root a question — that is M1. See overlay §3 "Worker reporting discipline" for the full enum semantics.
+
 - `findings[]` — each hypothesis with `verification` and `result`.
 - `root_cause` — converged conclusion (string).
 - `proposed_fix` — direction only, no code change.
@@ -46,6 +48,7 @@ If any required field is missing or any check you claimed to run was not actuall
 
 ```json
 {
+  "status": "completed | partial | needs-info | blocked",
   "findings": [
     {"hypothesis": "...", "verification": "...", "result": "confirmed|denied|inconclusive"}
   ],
