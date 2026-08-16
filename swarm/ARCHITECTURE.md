@@ -1,19 +1,19 @@
-# Swarm Architecture (lazible-jcode)
+# Swarm Architecture
 
-This repo is a **prompt store + installer** for the lazible-jcode
-overlay. It does not contain runtime code; everything is shipped as
-markdown and symlinked into `~/.jcode/` by `scripts/install.sh`. This
-file is the entry point for humans (or agents) trying to understand
-the architecture in one read.
+This repo is a **prompt store + installer** for jcode. It does not
+contain runtime code; everything ships as markdown and is symlinked
+into `~/.jcode/` by `scripts/install.sh`. This file is the entry point
+for humans (or agents) trying to understand the architecture in one
+read.
 
 ---
 
 ## Goals
 
-1. **Main agent = organizer / planner / integrator.** Owns
-   cross-worker state, integration branches, push, and end-to-end
-   verification. Does not edit code in its own session; spawns
-   implementers for any code work.
+1. **Main agent = organizer / planner / integrator.** Owns cross-worker
+   state, integration branches, push, and end-to-end verification. Does
+   not edit code in its own session; spawns implementers for any code
+   work.
 2. **Workers = concrete executors.** Each worker takes a tightly
    scoped task under one of the six roles and produces a typed
    artifact. Stateless from each other's perspective.
@@ -26,7 +26,6 @@ the architecture in one read.
 
 ## Topology
 
-<!-- Diagram: star topology showing root at top, 6 workers below, and labeled communication edges -->
 ```mermaid
 graph TD
     Root["root (main agent)"]
@@ -58,29 +57,31 @@ graph TD
   help (`follow_up`)
 - Root-to-worker: scope prompt at spawn, follow-up (`dm`), control
   (`stop` / `assign_task`)
-- Workspace: root owns the main worktree; each worker owns a
-  dedicated worktree at
-  `$TMPDIR/swarm-$USER/<repo>-<short-sha>/wt-<label>/`
+- Workspace: root owns the main worktree; each worker owns a dedicated
+  worktree at `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`
 
 ---
 
 ## Components
 
-| File                                          | Loaded as                                       | Purpose                                              |
-| --------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------- |
-| `swarm/prompt-overlay.md`                     | `~/.jcode/prompt-overlay.md` (default-on)       | Main-agent identity, invariants, decision flow       |
-| `swarm/swarm-prompt.md`                       | `~/.jcode/swarm-prompt.md` (auto on spawn)      | Root + worker coordination policy, model routing     |
-| `swarm/roles/<name>.md` (×6)                  | `~/.jcode/roles/<name>.md` (per spawn)          | Worker persona templates; main prepends on spawn     |
-| `swarm/ARCHITECTURE.md` (this file)           | `~/.jcode/ARCHITECTURE.md`                      | Human-readable overview + goals                     |
-| `scripts/install.sh`                          | run once                                        | Symlinks the above into `~/.jcode/`                 |
-| `skills/<name>/SKILL.md`                      | `~/.jcode/skills/<name>/SKILL.md`               | Standalone skills; orthogonal to swarm but share symlink install path |
-| `jcode-patches/swarm-coordinator-first.*`     | applied to upstream jcode at build              | Swaps the default main-agent identity to coordinator-first |
+| File                              | Loaded as                              | Purpose                                              |
+| --------------------------------- | -------------------------------------- | ---------------------------------------------------- |
+| `swarm/prompt-overlay.md`         | `~/.jcode/prompt-overlay.md`           | Main-agent identity, invariants, decision flow       |
+| `swarm/swarm-prompt.md`           | `~/.jcode/swarm-prompt.md`             | Root + worker coordination policy, model routing     |
+| `swarm/roles/<name>.md` (×6)      | `~/.jcode/roles/<name>.md`             | Worker persona templates; main prepends on spawn     |
+| `swarm/ARCHITECTURE.md`           | `~/.jcode/ARCHITECTURE.md`             | Human-readable overview + goals                      |
+| `AGENTS.md`                       | `~/.jcode/AGENTS.md`                   | Project-level jcode instructions                     |
+| `scripts/install.sh`              | run once                               | Symlinks the above into `~/.jcode/`                  |
+
+`scripts/install.sh` is the single source of truth for this layout.
+It backs up existing files to `<dst>.bak.<timestamp>` before
+overwriting.
 
 ---
 
 ## Contracts (must hold)
 
-### Invariants (overlay `### Invariants`)
+### Invariants (overlay §Invariants)
 
 1. One root per session — spawning never creates a second root.
 2. No peer edges — inter-worker coordination flows rootward only.
@@ -105,9 +106,8 @@ Every worker completion must include:
 
 Missing fields = incomplete work; root will reject and ask for redo.
 
-### Cross-worker handoff (overlay `### Cross-worker handoff protocol`)
+### Cross-worker handoff (overlay §Cross-worker handoff)
 
-<!-- Diagram: 4-step sequence for cross-worker dependency resolution between Worker A, Root, and Worker B -->
 ```mermaid
 sequenceDiagram
     WorkerA->>Root: open_questions[]: "depends on Worker B output"
@@ -128,14 +128,16 @@ When worker A's slice depends on worker B's output:
 
 ## Decision flow (root, before every task)
 
-Run these three questions in order. Only proceed when the answers
-converge.
+Run these questions in order. Only proceed when the answers converge.
 
+0. **Is this coordination work?** If yes — writing spawn prompts,
+   integrating branches, scope decisions — root does it solo.
+   **Do NOT spawn for coordination.**
 1. **Independently verifiable on a worker slice?** If no — single
-   trivial edit, a question, a single grep, an FYI update — do it
-   solo and stop.
-2. **≥ 2 files OR ≥ 2 unrelated areas?** If yes, spawn. If no and
-   you can answer in one turn, stay solo.
+   trivial edit, a question, a single grep, an FYI update — do it solo
+   and stop.
+2. **≥ 2 files OR ≥ 2 unrelated areas?** If yes, spawn. If no and you
+   can answer in one turn, stay solo.
 3. **Ordering dependency on another in-flight worker?** If yes,
    serialize. Surface the gap, merge the dependency first, then
    re-spawn.
@@ -170,11 +172,11 @@ more worker branches.
 
 ### Slice-level vs project-level gates
 
-| Level        | Owner    | Scope                  | Gates                                  |
-|--------------|----------|------------------------|----------------------------------------|
-| Slice-level  | worker   | The worker's branch    | `tsc / lint / jest` on changed files   |
-| Project-level| root     | The integrated main    | Full suite + cross-module typecheck    |
-| End-to-end   | root     | Deployed / smoke path  | Manual reproduction or scripted smoke  |
+| Level         | Owner  | Scope                | Gates                                |
+| ------------- | ------ | -------------------- | ------------------------------------ |
+| Slice-level   | worker | The worker's branch  | `tsc / lint / jest` on changed files |
+| Project-level | root   | The integrated main  | Full suite + cross-module typecheck  |
+| End-to-end    | root   | Deployed / smoke path| Manual reproduction or scripted smoke|
 
 A worker reporting `confidence: high` with slice-level gates green has
 done its job. It has not proven the integration works.
@@ -182,7 +184,7 @@ done its job. It has not proven the integration works.
 ### When root MUST run project-level gates
 
 - After merging **any** worker branch that touched shared surfaces
-  (`src/`, `lib/`, build config, CI config, dep manifests).
+  (src/, lib/, build config, CI config, dep manifests).
 - After merging **multiple** worker branches in one cycle (cross-cuts).
 - Before `git push origin main`.
 
@@ -197,8 +199,8 @@ The exact commands depend on the project. For a typical repo:
 4. **Build** the production artifact. Workers may have committed code
    that compiles in isolation but breaks the build pipeline.
 5. **Dependency graph verification** for any `delete / rename / move`
-   operation — `git grep <old-symbol>` must return zero matches
-   across the whole repo (including docs, tests, configs).
+   operation — `git grep <old-symbol>` must return zero matches across
+   the whole repo (including docs, tests, configs).
 
 ### Confidence downgrade rule
 
@@ -225,42 +227,21 @@ means the integration is incomplete.
 
 ---
 
-## Smart Postman (root-side worker observation)
-
-See [`docs/POSTMAN_PROTOCOL.md`](../docs/POSTMAN_PROTOCOL.md) for the
-full protocol. Summary:
-
-- Root observes worker state via `swarm-state-monitor.py tick` at
-  decision points (user message, worker handoff, before spawn /
-  integrate). LLM sessions have no real-time timer; "tick every 5
-  minutes" is aspirational, not enforceable.
-- Three separate decision points must agree on `silent` / `dead` before
-  root re-dispatches, resets, or spawns a recoverer.
-- Three recovery actions: `Continue` (dm with concrete next step),
-  `Reset` (stop + fresh spawn), `Recover` (recoverer role classifies
-  partial work).
-- Root emits a `docs/POSTMAN_SESSION_<ts>.md` snapshot when its own
-  context is at risk of overflow or it is about to issue substantive
-  worker dms. Snapshots are durable; new sessions read them on startup.
-
----
-
 ## Path map (what lives where, after install)
 
 ```
 ~/.jcode/
-├── prompt-overlay.md      <- swarm/prompt-overlay.md (default-on)
-├── swarm-prompt.md        <- swarm/swarm-prompt.md (spawn-time)
+├── prompt-overlay.md      <- swarm/prompt-overlay.md
+├── swarm-prompt.md        <- swarm/swarm-prompt.md
 ├── ARCHITECTURE.md        <- swarm/ARCHITECTURE.md (this file)
 ├── AGENTS.md              <- ./AGENTS.md (project-level)
-├── roles/
-│   ├── reviewer.md
-│   ├── investigator.md
-│   ├── migrator.md
-│   ├── test-writer.md
-│   ├── doc-writer.md
-│   └── implementer.md
-└── skills/<name>/SKILL.md <- skills/<name>/SKILL.md
+└── roles/
+    ├── reviewer.md
+    ├── investigator.md
+    ├── migrator.md
+    ├── test-writer.md
+    ├── doc-writer.md
+    └── implementer.md
 ```
 
 `scripts/install.sh` is the single source of truth for this layout.
