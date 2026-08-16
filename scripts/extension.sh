@@ -199,6 +199,82 @@ cmd_pre_spawn() {
   fi
 }
 
+# ---------- subcommand: skills ----------
+# Discovery helper for jcode-native per-project skills at
+# `./.jcode/skills/`. jcode auto-loads these with precedence over
+# `~/.jcode/skills/`; this subcommand lets root enumerate what's
+# available so the spawn prompt's required_skills[] field can be
+# populated correctly.
+cmd_skills() {
+  local action="${1:-list}"
+  case "$action" in
+    list)
+      if [[ -z "$PROJ_DIR" ]]; then
+        echo "(no .jcode/ in cwd ancestors)"
+        return 0
+      fi
+      local proj_skills="$PROJ_DIR/skills"
+      local glob_skills="$HOME/.jcode/skills"
+      if [[ ! -d "$proj_skills" ]]; then
+        echo "(no $proj_skills)"
+        return 0
+      fi
+      local found=0
+      while IFS= read -r skill_md; do
+        local name
+        name="$(basename "$(dirname "$skill_md")")"
+        if [[ -f "$glob_skills/$name/SKILL.md" ]]; then
+          echo "per-project: $name  (overrides global)"
+        else
+          echo "per-project: $name"
+        fi
+        found=1
+      done < <(find "$proj_skills" -mindepth 2 -maxdepth 2 -name SKILL.md -print 2>/dev/null)
+      if [[ $found -eq 0 ]]; then
+        echo "(no SKILL.md files under $proj_skills)"
+      fi
+      ;;
+    *)
+      echo "usage: extension.sh skills list" >&2
+      return 2
+      ;;
+  esac
+}
+
+# ---------- subcommand: mcp ----------
+# Discovery + validation helper for jcode-native per-project MCP
+# config at `./.jcode/mcp.json`. jcode loads this with precedence
+# over `~/.jcode/mcp.json` and merges later sources over earlier
+# ones (see `crates/jcode-base/src/mcp/protocol.rs::load_project_locals`).
+cmd_mcp() {
+  local action="${1:-info}"
+  case "$action" in
+    info)
+      if [[ -z "$PROJ_DIR" ]]; then
+        echo "(no .jcode/ in cwd ancestors)"
+        return 0
+      fi
+      local proj_mcp="$PROJ_DIR/mcp.json"
+      if [[ ! -e "$proj_mcp" ]]; then
+        echo "(no $proj_mcp — using global ~/.jcode/mcp.json)"
+        return 0
+      fi
+      echo "per-project MCP config: $proj_mcp"
+      if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$proj_mcp" 2>/dev/null; then
+        echo "  WARNING: invalid JSON syntax"
+        return 3
+      fi
+      local count
+      count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('mcpServers', {})))" "$proj_mcp" 2>/dev/null || echo "?")
+      echo "  servers: $count"
+      ;;
+    *)
+      echo "usage: extension.sh mcp info" >&2
+      return 2
+      ;;
+  esac
+}
+
 # ---------- dispatch ----------
 case "$cmd" in
   role)        cmd_role "$@" ;;
@@ -206,6 +282,8 @@ case "$cmd" in
   verify)      cmd_verify "$@" ;;
   notify)      cmd_notify "$@" ;;
   pre-spawn)   cmd_pre_spawn "$@" ;;
+  skills)      cmd_skills "$@" ;;
+  mcp)         cmd_mcp "$@" ;;
   help|--help|-h|"")
     cat <<EOF
 scripts/extension.sh — bundle's per-project extension mechanisms.
@@ -217,10 +295,14 @@ Subcommands:
   notify <status> <label> <artifact>   Run notify hook if present (bypass mode)
   pre-spawn <label> <role> <count>     Run pre-spawn hook if present
      [--exports FILE]                  Emit KEY=VALUE exports to FILE for caller to source
+  skills list                          Enumerate per-project skills (jcode-native)
+  mcp info                             Show per-project MCP config status (jcode-native)
 
 Per-project hooks live at <repo>/.jcode/{pre-merge,verify,notify,pre-spawn}.sh
 Per-project role overrides live at <repo>/.jcode/roles/<name>.md
-See docs/EXTENSIONS.md for the full 8×7 boundary-behavior walkthrough.
+Per-project skills live at <repo>/.jcode/skills/<name>/SKILL.md (jcode-native)
+Per-project MCP servers live at <repo>/.jcode/mcp.json (jcode-native)
+See docs/EXTENSIONS.md for the full 9×7 boundary-behavior walkthrough.
 EOF
     ;;
   *)

@@ -92,27 +92,31 @@ the three — point at the canonical location.
 
 ### Per-project customization (extension mechanisms)
 
-The bundle exposes five per-project extension points — files at
-`<repo>/.jcode/<name>.{sh,md}` that root invokes via
-`scripts/extension.sh` (the single entry point):
+The bundle exposes nine per-project extension points — files at
+`<repo>/.jcode/<name>.{sh,md,json}/` that root invokes via
+`scripts/extension.sh` (the bundle convention entry point) or
+that jcode loads directly (jcode-native). Four are jcode-native;
+five are bundle conventions:
 
-| Convention | File | Subcommand | Purpose |
+| Convention | File | Loader | Purpose |
 |---|---|---|---|
-| Overlay (jcode-native) | `prompt-overlay.md` | (jcode loads directly) | Project coordination rules, role disables, preamble |
-| Worker policy (jcode-native) | `swarm-prompt.md` | (jcode loads directly) | Override model routing / spawn hygiene / anti-patterns |
+| Overlay (jcode-native) | `prompt-overlay.md` | jcode direct | Project coordination rules, role disables, preamble |
+| Worker policy (jcode-native) | `swarm-prompt.md` | jcode direct | Override model routing / spawn hygiene / anti-patterns |
+| Skills (jcode-native) | `skills/<name>/SKILL.md` | jcode direct | Auto-discovered per-project skill bundles |
+| MCP servers (jcode-native) | `mcp.json` | jcode direct | Project-local MCP server registrations |
 | Role override | `roles/<name>.md` | `extension.sh role <name>` | Specialize a role for the project (e.g. security reviewer) |
 | Verify hook | `verify.sh` | `extension.sh verify` | Project-specific invariants (lint, JSDoc, no console.log) |
 | Pre-merge hook | `pre-merge.sh` | `extension.sh pre-merge <branch> <base> <role>` | Cross-worker integration gate before merging |
+| Notify hook | `notify.sh` | `extension.sh notify <status> <label> <artifact>` | Completion observability (bypass mode) |
+| Pre-spawn hook | `pre-spawn.sh` | `extension.sh pre-spawn <label> <role> <count>` | Per-spawn env setup + KEY=VALUE exports |
 
-Two are jcode-native (overlay, worker policy) — jcode's loader
-already honors per-project precedence. Three are bundle conventions
-(role override, verify, pre-merge) — root calls `scripts/extension.sh`
-to invoke them with the correct fallback semantics (per-project
-wins, global fallback, missing-hook-is-not-failure).
+Discovery helpers for jcode-native points:
+- `extension.sh skills list` — enumerate per-project skills
+- `extension.sh mcp info` — show per-project MCP config status
 
-All five live in `<repo>/.jcode/` — committed with the project, not
+All nine live in `<repo>/.jcode/` — committed with the project, not
 the bundle. Absence of any of them is not a failure; root proceeds
-with the default behavior. Full 8×7 boundary-behavior walkthrough
+with the default behavior. Full 9×7 boundary-behavior walkthrough
 lives in `docs/EXTENSIONS.md`.
 
 ## Commit conventions
