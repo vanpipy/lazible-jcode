@@ -8,15 +8,18 @@
 #   3. Symlink AGENTS.md to ~/.jcode/AGENTS.md.
 #
 # No flags control which step runs or whether to overwrite. Overwriting is
-# the point. Existing files at the destination are always backed up to
+# the point. Existing files at the destination are backed up to
 # <dst>.bak.<ts> before being replaced, so rerunning this script is safe.
+# Fast path: a destination that is already a symlink to the source target
+# is left unchanged (no backup, no recreate) — repeated runs do not
+# accumulate .bak.<ts> files.
 #
 # Usage:
 #   ./scripts/install.sh             # run all 3 steps with defaults
 #   ./scripts/install.sh --help      # show usage
 #
 # Every run does all 3 steps and overwrites every destination (backed up as
-# <dst>.bak.<ts> first).
+# <dst>.bak.<ts> first, except for the fast-path case above).
 
 set -euo pipefail
 
@@ -35,7 +38,8 @@ overwrites the destination unconditionally:
   3. Symlink AGENTS.md to ~/.jcode/AGENTS.md.
 
 Existing files at any destination are backed up to <dst>.bak.<timestamp>
-before being replaced.
+before being replaced. A destination that is already a symlink to the
+source target is left unchanged (no backup, no recreate).
 
 Options:
   -h, --help   Show this help.
