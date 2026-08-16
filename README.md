@@ -68,6 +68,9 @@ jcode run "say hello"
 The installer is **always idempotent and unconditional**: it runs 3
 steps every time, overwrites every destination, and backs up any
 pre-existing file at the destination to `<dst>.bak.<timestamp>` first.
+Fast path: when a destination is already a symlink to the source
+target, it is left unchanged (no backup, no recreate) — so repeated
+runs do not accumulate `.bak.<ts>` files.
 
 ### Install flags
 

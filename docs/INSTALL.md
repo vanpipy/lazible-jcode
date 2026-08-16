@@ -102,13 +102,14 @@ the upstream installer added, edit the rc file by hand.
 The wrapper is **always idempotent and unconditional**: running
 `./scripts/install.sh` always runs all 3 steps and always overwrites
 every destination. Any pre-existing file or symlink at the destination
-is backed up to `<dst>.bak.<timestamp>` first. There is no `--refresh`
-flag — rerunning **is** the refresh.
+is backed up to `<dst>.bak.<timestamp>` first (except the fast path in
+the table below). There is no `--refresh` flag — rerunning **is** the
+refresh.
 
 | Destination state | What `install.sh` does |
 |---|---|
 | Does not exist | Creates the symlink |
-| Already a symlink to **this** repo | Removes, backs up the link, re-links (corrects any drift) |
+| Already a symlink to **this** repo | **Fast path**: leaves the link unchanged (no backup, no recreate) |
 | A symlink to **somewhere else** | Removes, backs up as `<dst>.bak.<ts>`, replaces with repo symlink |
 | A **regular file or directory** | Moves to `<dst>.bak.<ts>`, replaces with repo symlink |
 
