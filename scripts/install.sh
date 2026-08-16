@@ -63,7 +63,6 @@ for required in AGENTS.md swarm; do
 done
 
 JCODE_HOME="${JCODE_HOME:-$HOME/.jcode}"
-INSTALL_DIR="${JCODE_INSTALL_DIR:-$HOME/.local/bin}"
 TIMESTAMP="$(date +%s)"
 
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
