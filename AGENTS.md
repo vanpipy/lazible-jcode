@@ -115,10 +115,12 @@ Discovery helpers for jcode-native points:
 - `extension.sh skills list` — enumerate per-project skills
 - `extension.sh mcp info` — show per-project MCP config status
 - `extension.sh scratch-dir` — print canonical `$TMPDIR/jcode/<repo>-<short-sha>/` path
+- `extension.sh scratch-dir clean [--yes]` — remove the per-project scratch dir (dry-run by default)
+- `extension.sh artifact validate <path>` — validate a typed-artifact JSON against the 8-field contract
 
 All ten live in `<repo>/.jcode/` (except the scratch dir which is
 in `$TMPDIR` by design). Absence of any of them is not a failure;
-root proceeds with the default behavior. Full 10×7 boundary-behavior
+root proceeds with the default behavior. Full 10×10 boundary-behavior
 walkthrough lives in `docs/EXTENSIONS.md`.
 
 ## Commit conventions
