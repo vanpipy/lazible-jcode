@@ -537,9 +537,18 @@ behavior:
 - `git push origin <feature-branch>`: only after explicit user OK,
   or when the user said "and push to origin/X" in the original
   request.
-- `git push origin main`: NEVER without explicit user decision.
-  The repo's `AGENTS.md` may have additional project-specific
-  rules (e.g., force-push prohibitions); defer to that.
+- `git push origin main` (or any branch matching `main` / `master` /
+  `<repo>-main`): NEVER without **explicit user confirmation in this
+  chat**, not just an earlier "and push" instruction. Before pushing,
+  output the confirmation prompt below and wait for verbatim "yes":
+  
+  > About to `git push origin <branch>`. This affects shared history.
+  > Confirm? (yes/no)
+  
+  If the user does not reply "yes" verbatim, do NOT push. The user
+  can `git push` manually from their shell. Local commits are fine.
+  This is a hard rule — earlier instructions like "and push" do not
+  satisfy it for `main` / `master` / `<repo>-main`.
 - Tags and releases: never created without explicit user request.
 
 When in doubt: leave the commits local. The user can `git push` from
