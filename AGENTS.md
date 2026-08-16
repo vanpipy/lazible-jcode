@@ -89,6 +89,42 @@ file-purpose table). `docs/INSTALL.md` is the deeper reference
 is the agent-facing operating manual. Do not duplicate content across
 the three — point at the canonical location.
 
+### Per-project customization (overlay + verify hook)
+
+The bundle ships a **global** overlay + verification script that
+applies to every project you work in. Most users want project-specific
+behavior on top — for example, a repo may want to disable a worker
+role, add a domain-specific skill, or enforce a project-only invariant.
+Two extension points cover this without forking the bundle:
+
+- **Per-project overlay**: drop a `prompt-overlay.md` into
+  `<repo>/.jcode/prompt-overlay.md`. jcode reads it with precedence
+  over the global `~/.jcode/prompt-overlay.md` (the precedence is
+  already in jcode's overlay loader; the bundle just lets you use
+  it). Use this to add project-level coordination rules, disable
+  a role for that repo, or prepend a project-specific preamble.
+  The file does not need to be a full overlay — short additive
+  instructions work best ("in this repo, never spawn a test-writer
+  because the test harness is custom; always route test requests
+  to the implementer").
+- **Per-project verify hook**: drop an executable
+  `<repo>/.jcode/verify.sh`. The bundle's verification command
+  checks for it (see "Verification before push" below) and runs it
+  after the schema check passes. Use this to enforce project-only
+  invariants the bundle cannot know about (e.g. "no `console.log`
+  in `src/`", "all public APIs must have JSDoc", "TODO comments
+  need a linked issue"). The script must exit non-zero to fail the
+  verification.
+
+Both files live in `<repo>/.jcode/` — committed with the project,
+not the bundle. They have no effect on other projects. The bundle
+intentionally ships no defaults for either: they are opt-in hooks
+that the project author sets up if needed.
+
+The bundle does **not** install or symlink either file. install.sh
+runs from the bundle checkout, not from the project cwd, so it
+cannot know which project's `<cwd>/.jcode/` to read.
+
 ## Commit conventions
 
 - `type(scope): summary` style. Example: `feat(roles): add security-reviewer`.
@@ -187,10 +223,18 @@ bash scripts/install.sh                          # first run
 bash scripts/install.sh                          # idempotent rerun (should print 'unchanged' for all)
 # Confirm both run with zero .bak.<ts> files created
 find ~/.jcode -maxdepth 1 -name '*.bak.*' | wc -l   # should be 0
+
+# 6. Per-project verify hook (opt-in, only runs if present). See
+#    "Per-project customization" above. Bundle does NOT install this;
+#    if the project author put one at ./.jcode/verify.sh, run it.
+if [[ -x ./.jcode/verify.sh ]]; then
+  ./.jcode/verify.sh
+fi
 ```
 
-All five must pass before any commit touching the installer or
-swarm config is pushed.
+All six must pass before any commit touching the installer or
+swarm config is pushed. Step 6 only runs when the per-project hook
+exists; absence is not a failure.
 
 ## Repo-specific gotchas
 
