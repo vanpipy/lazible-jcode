@@ -45,6 +45,19 @@
 
 set -euo pipefail
 
+# Color-aware output. Disable color in three cases:
+#   1. NO_COLOR env set (https://no-color.org standard)
+#   2. stdout not a tty (output is being piped/captured)
+#   3. TERM=dumb (terminal can't render ANSI; CI / minimal emulators)
+if [[ -n "${NO_COLOR:-}" || ! -t 1 || "${TERM:-}" == "dumb" ]]; then
+  C_INFO=''; C_WARN=''; C_ERR=''; C_RESET=''
+else
+  C_INFO='\033[1;34m'; C_WARN='\033[1;33m'; C_ERR='\033[1;31m'; C_RESET='\033[0m'
+fi
+info() { printf '%b%s%b\n' "$C_INFO" "$*" "$C_RESET"; }
+warn() { printf '%b%s%b\n' "$C_WARN" "$*" "$C_RESET" >&2; }
+err()  { printf '%b%s%b\n' "$C_ERR" "error: $*" "$C_RESET" >&2; exit 1; }
+
 YES=0
 MAX_AGE_DAYS=7
 REPO_ROOT=""
@@ -59,22 +72,18 @@ for arg in "$@"; do
       exit 0
       ;;
     *)
-      echo "swarm-sweep: unknown option: $arg" >&2
-      echo "Run with --help for usage." >&2
-      exit 2
+      err "unknown option: $arg — run with --help for usage."
       ;;
   esac
 done
 
 if ! [[ "$MAX_AGE_DAYS" =~ ^[0-9]+$ ]] || [[ "$MAX_AGE_DAYS" -lt 1 ]]; then
-  echo "swarm-sweep: --max-age must be a positive integer" >&2
-  exit 2
+  err "--max-age must be a positive integer"
 fi
 
 if [[ -z "$REPO_ROOT" ]]; then
   if ! REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "swarm-sweep: not inside a git repository (use --repo=<path>)" >&2
-    exit 2
+    err "not inside a git repository (use --repo=<path>)"
   fi
 fi
 

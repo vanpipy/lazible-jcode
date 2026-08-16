@@ -86,7 +86,9 @@ There are no optional flags. The only accepted flags are:
 
 See `docs/INSTALL.md` for full install / uninstall / troubleshooting
 detail, including the `--purge`, `--yes`, and `--keep-binary` flags on
-`scripts/uninstall.sh`.
+`scripts/uninstall.sh`. Pre-flight env checks (bash ≥ 4, git, curl/wget,
+writable HOME and /tmp) are documented in `docs/ENVIRONMENTS.md` and run
+automatically as `install.sh` step 0.
 
 ## What's in the swarm config
 

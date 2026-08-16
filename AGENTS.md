@@ -22,6 +22,7 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `docs/INSTALL.md` | Detailed install / uninstall / troubleshooting | yes |
 | `docs/EXTENSIONS.md` | Per-project extension points (10 axes) | yes |
 | `docs/ARCHITECTURE.md` | Three-layer view: jcode native + lazible-jcode extension mechanism + MCP | yes |
+| `docs/ENVIRONMENTS.md` | Linux support matrix: required vs. optional deps, distro notes, recovery cheat sheet | yes |
 | `docs/INTEGRATIONS.md` | Recommended local MCP server stack (filesystem + git + serena; sqlite not currently shipping a working MCP server, see INTEGRATIONS.md) | yes |
 | `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/`, and `swarm-sweep` into `~/.local/bin/` | yes |
 | `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
@@ -266,9 +267,17 @@ scripts/extension.sh doctor  # informational only — surfaces what is
                              # wired up vs. what falls back to defaults.
                              # Use this to verify the bundle's own
                              # discovery helpers work in cwd.
+
+# 7. Linux-host environment probe (T1.2 / T5.1 in docs/ENVIRONMENTS.md).
+#    install.sh runs env_probe() as step 0; verify both pieces survive.
+bash scripts/install.sh                            # happy path: all rows "ok"
+NO_COLOR=1 bash scripts/install.sh                 # color stripped
+PATH=/usr/local/bin:/usr/bin:/bin bash scripts/install.sh  # min PATH still ok
+bash scripts/extension.sh doctor --env             # 13-row env snapshot
+bash scripts/extension.sh doctor --env | grep missing  # must be empty on a working host
 ```
 
-All six must pass before any commit touching the installer or
+All seven must pass before any commit touching the installer or
 swarm config is pushed. Step 6 only runs when the per-project hook
 exists; absence is not a failure.
 

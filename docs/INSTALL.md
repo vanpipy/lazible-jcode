@@ -70,6 +70,14 @@ If `jcode` is not on PATH, open a new shell — the upstream installer
 adds the launcher dir to `~/.bashrc` / `~/.zshenv` / `~/.profile` /
 `~/.config/fish/config.fish` idempotently.
 
+For the bundle's pre-flight environment check (bash ≥ 4, git, writable
+HOME and /tmp, curl or wget, optional python3 / jq), see
+[ENVIRONMENTS.md](ENVIRONMENTS.md). You can also run it at any time:
+
+```bash
+scripts/extension.sh doctor --env
+```
+
 ## Uninstall
 
 ```bash

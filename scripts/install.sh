@@ -71,9 +71,19 @@ done
 JCODE_HOME="${JCODE_HOME:-$HOME/.jcode}"
 TIMESTAMP="$(date +%s)"
 
-info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
-warn() { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
-err()  { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
+# Color-aware output. Disable color in three cases:
+#   1. NO_COLOR env set (https://no-color.org standard)
+#   2. stdout not a tty (output is being piped/captured)
+#   3. TERM=dumb (terminal can't render ANSI; CI / minimal emulators)
+# All other cases: cyan/blue info, yellow warn, red err.
+if [[ -n "${NO_COLOR:-}" || ! -t 1 || "${TERM:-}" == "dumb" ]]; then
+  C_INFO=''; C_WARN=''; C_ERR=''; C_RESET=''
+else
+  C_INFO='\033[1;34m'; C_WARN='\033[1;33m'; C_ERR='\033[1;31m'; C_RESET='\033[0m'
+fi
+info() { printf '%b%s%b\n' "$C_INFO" "$*" "$C_RESET"; }
+warn() { printf '%b%s%b\n' "$C_WARN" "$*" "$C_RESET" >&2; }
+err()  { printf '%b%s%b\n' "$C_ERR" "error: $*" "$C_RESET" >&2; exit 1; }
 
 # ── env probe (step 0) ────────────────────────────────────────────────────────
 # Linux-only sanity check of the host environment. Required deps block the
