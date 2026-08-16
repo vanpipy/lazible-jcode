@@ -415,19 +415,22 @@ until the artifact's outcome has been acted on.
 
 | Worker status + root decision | Worktree | Branch | Why |
 |---|---|---|---|
-| `completed`, accepted, merged | `git worktree remove` | keep (records history) | Work landed on main |
-| `completed`, accepted, branch kept open | keep | keep | User wants branch for follow-up |
+| `completed`, accepted (merged OR branch kept open) | remove if merged, keep if branch kept open | keep | Work accepted; lands on main OR held for follow-up |
 | `completed`, rejected (reviewer `blocker`) | `git worktree remove` | `git branch -D` | Code rejected, no useful artifact |
 | `partial`, root re-spawn chosen | KEEP | KEEP | Re-spawned worker reuses worktree, appends commits |
 | `partial`, root accepts the slice | `git worktree remove` | keep | Merged partial slice |
 | `needs-info`, awaiting arbitration | keep | keep | Root may amend the worker's commit |
 | `blocked`, zero useful work | `git worktree remove` | `git branch -D` | Nothing to preserve |
-| `blocked`, partial-then-blocked | `git worktree remove` | keep for record | Partial work may still be salvageable; root decides |
 
 A re-spawn on a kept worktree (the `partial` + re-spawn row) MUST
 rebase onto the current integration base before resuming:
 `git rebase <new_base>` inside the worktree. Stale commits from
 prior sessions can otherwise leak into the final merge.
+
+> **Note**: the §3 zero-work rule means "blocked with partial work"
+> should be reported as `partial` (with `[BLOCKER]` in
+> `open_questions[]`), not `blocked`. So the previous
+> `blocked, partial-then-blocked` row was a contradiction — cut.
 
 ---
 
