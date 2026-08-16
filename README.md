@@ -131,7 +131,7 @@ their own skills on top.
 | `swarm/**/*.md` | ✅ | Generic swarm config + role templates; no secrets, no per-project state |
 | `config/*.example` | ✅ | Reference only, no secrets |
 | `config/config.toml` | ✅ | Live snapshot; no API keys live here, only model names and keybindings |
-| `config/mcp.json` | ❌ | Contains live MCP server tokens — **must remain local** |
+| `~/.jcode/mcp.json` | ❌ | NOT committed. Live MCP server tokens — must remain local. Shape reference: `config/mcp.json.example` |
 | `~/.jcode/builds/`, `cache/`, `logs/`, `sessions/`, `memory/`, telemetry files | ❌ | Runtime state; rebuilt on each session |
 
 ## Note on AGENTS.md
