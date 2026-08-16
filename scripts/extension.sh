@@ -61,6 +61,17 @@
 #     (prints skip message + rm hint, exit 0). Used by users/agents
 #     entering a new project that hasn't set up MCP yet.
 #
+#   scripts/extension.sh mcp worktree-hint <wt-path>
+#     Worker-side serena staleness detector. jcode inherits the
+#     project's MCP config (A4) into spawned workers, but serena's
+#     --project is anchored to the MAIN repo path — its tree-sitter
+#     index is stale relative to worktree edits. This subcommand
+#     reports serena's effective status (live / stale / not-configured)
+#     plus the verification pattern (jcode-native read + agentgrep
+#     for post-edit symbol checks). Output is line-oriented and
+#     grep-friendly. Exit 0 on success (informational), 3 on hard
+#     errors (no MCP config; malformed serena args), 2 on usage.
+#
 # Conventions (which is the bundle, which is the project):
 #   - The script itself is bundle-owned (lives in scripts/).
 #   - The per-project files it looks for are project-owned
@@ -787,8 +798,189 @@ cmd_mcp() {
       echo ""
       echo "next: review $proj_mcp, then start a jcode session — servers register automatically"
       ;;
+    worktree-hint)
+      # Worker-side serena staleness detector. jcode spawns workers into
+      # per-project worktrees but inherits the project's MCP config
+      # (A4 axis) verbatim — serena's tree-sitter index stays anchored
+      # to the MAIN repo's --project path, so post-edit symbol lookups
+      # in the worktree return stale results from main. This subcommand
+      # gives the worker a deterministic way to detect that staleness
+      # and pick a safe verification path (jcode-native read/agentgrep).
+      #
+      # Usage: extension.sh mcp worktree-hint <wt-path>
+      #   <wt-path> must be absolute. The script does NOT require the
+      #   path to exist (workers may call this pre-`git worktree add`).
+      #
+      # Output is line-oriented and machine-greppable; a worker can
+      # `grep '^serena:'` to extract the status. Exits 0 on success
+      # (informational, not a gate). Exits 3 on hard errors
+      # (no MCP config; malformed serena args). Exits 2 on usage errors.
+      local wt_path="${1:-}"
+      if [[ -z "$wt_path" ]]; then
+        echo "usage: extension.sh mcp worktree-hint <wt-path>" >&2
+        return 2
+      fi
+      if [[ "$wt_path" != /* ]]; then
+        echo "extension.sh mcp worktree-hint: <wt-path> must be absolute (got '$wt_path')" >&2
+        return 2
+      fi
+
+      # Find the per-project MCP config. Two paths to try:
+      #   1. $PROJ_DIR/mcp.json — works when invoked from main repo
+      #      (PROJ_DIR is resolved by walking up from cwd).
+      #   2. <wt-path>'s main repo /.jcode/mcp.json — works when invoked
+      #      from a worker worktree where PROJ_DIR is empty (the walker
+      #      stops at .git and doesn't reach the main repo's .jcode/).
+      #      Derived via `git rev-parse --git-common-dir` so this works
+      #      whether <wt-path> IS the main repo or a worktree of it.
+      # Falls back to global $HOME/.jcode/mcp.json. If neither path
+      # resolves, exit 3 — the hint is meaningless without an MCP
+      # config to inspect.
+      local mcp_json=""
+      local serena_main_repo=""
+      if [[ -n "$PROJ_DIR" && -e "$PROJ_DIR/mcp.json" ]]; then
+        mcp_json="$PROJ_DIR/mcp.json"
+        serena_main_repo="$(dirname "$PROJ_DIR")"
+      elif command -v git >/dev/null 2>&1; then
+        local wt_common
+        wt_common="$(git -C "$wt_path" rev-parse --git-common-dir 2>/dev/null || true)"
+        if [[ -n "$wt_common" ]]; then
+          # git may return a relative path; resolve against wt_path.
+          case "$wt_common" in
+            /*) ;;
+            *) wt_common="$(cd "$wt_path" && cd "$wt_common" 2>/dev/null && pwd)" ;;
+          esac
+          serena_main_repo="$(dirname "$wt_common")"
+          if [[ -e "$serena_main_repo/.jcode/mcp.json" ]]; then
+            mcp_json="$serena_main_repo/.jcode/mcp.json"
+          fi
+        fi
+      fi
+      if [[ -z "$mcp_json" && -e "$HOME/.jcode/mcp.json" ]]; then
+        mcp_json="$HOME/.jcode/mcp.json"
+      fi
+
+      if [[ -z "$mcp_json" ]]; then
+        echo "extension.sh mcp worktree-hint: no MCP config found (per-project or global)" >&2
+        echo "  serena won't be available in this spawn anyway" >&2
+        return 3
+      fi
+
+      # Parse the MCP config via the existing json_tool helper (python3
+      # preferred, jq fallback). Never shell out to python3 -c directly
+      # — the helper makes the missing-tool case uniform across scripts.
+      local tool
+      if ! tool="$(json_tool)"; then
+        echo "extension.sh mcp worktree-hint: no python3 or jq on PATH; cannot parse $mcp_json" >&2
+        return 3
+      fi
+
+      # Extract (a) serena's --project path, (b) filesystem's scoped root,
+      # (c) whether serena is in the config at all. Single python3
+      # invocation returns all three separated by NULs — cheaper than 3
+      # separate JSON parses and keeps the jq branch parallel.
+      local serena_project="" fs_root="" has_serena=""
+      if [[ "$tool" == python3 ]]; then
+        local triple
+        triple="$(python3 - "$mcp_json" <<'PY'
+import json, sys
+try:
+    obj = json.load(open(sys.argv[1]))
+except Exception:
+    print("\n\n0")
+    sys.exit(0)
+servers = obj.get("mcpServers", {}) if isinstance(obj, dict) else {}
+
+# (a) serena --project
+serena_project = ""
+serena_args = servers.get("serena", {}).get("args", []) if isinstance(servers.get("serena"), dict) else []
+for i, a in enumerate(serena_args):
+    if a == "--project" and i + 1 < len(serena_args):
+        serena_project = serena_args[i + 1]
+        break
+
+# (b) filesystem scoped root (--root if present, else last arg)
+fs_root = ""
+fs_args = servers.get("filesystem", {}).get("args", []) if isinstance(servers.get("filesystem"), dict) else []
+for i, a in enumerate(fs_args):
+    if a == "--root" and i + 1 < len(fs_args):
+        fs_root = fs_args[i + 1]
+        break
+if not fs_root and fs_args:
+    # Canonical shape: ["-y", "<pkg>", "<root>"]
+    fs_root = fs_args[-1]
+
+# (c) serena presence
+has_serena = "1" if isinstance(servers.get("serena"), dict) else "0"
+
+print(serena_project)
+print(fs_root)
+print(has_serena)
+PY
+)"
+        serena_project="$(printf '%s' "$triple" | sed -n '1p')"
+        fs_root="$(printf '%s' "$triple" | sed -n '2p')"
+        has_serena="$(printf '%s' "$triple" | sed -n '3p')"
+      else
+        serena_project="$(jq -r '.mcpServers.serena.args // [] | . as $a | (range(0; length) as $i | if $a[$i] == "--project" and ($i+1) < length then $a[$i+1] else empty end) // ""' "$mcp_json" 2>/dev/null || echo "")"
+        fs_root="$(jq -r '.mcpServers.filesystem.args // [] | . as $a | (range(0; length) as $i | if $a[$i] == "--root" and ($i+1) < length then $a[$i+1] else empty end) // (if length > 0 then $a[-1] else empty end)' "$mcp_json" 2>/dev/null || echo "")"
+        has_serena="$(jq -r '.mcpServers | (has("serena") | tostring)' "$mcp_json" 2>/dev/null || echo "false")"
+      fi
+
+      # Determine serena status.
+      local serena_status=""
+      if [[ "$has_serena" != "1" && "$has_serena" != "true" ]]; then
+        # serena missing entirely — still a useful signal (worker may
+        # be using filesystem + git only).
+        serena_status="not-configured"
+      elif [[ -z "$serena_project" ]]; then
+        # serena exists but --project not parseable — config shape
+        # unexpected. Surface args on stderr so the user can debug.
+        echo "extension.sh mcp worktree-hint: serena config shape unexpected; cannot determine --project" >&2
+        echo "  mcp.json: $mcp_json" >&2
+        if [[ "$tool" == python3 ]]; then
+          python3 -c "import json,sys; print('  args:', json.load(open(sys.argv[1]))['mcpServers']['serena'].get('args', []), file=sys.stderr)" "$mcp_json" 2>&1 || true
+        else
+          echo "  args: $(jq -c '.mcpServers.serena.args' "$mcp_json" 2>/dev/null)" >&2
+        fi
+        return 3
+      elif [[ "$wt_path" == "$serena_project" ]]; then
+        # Worker is editing in main repo itself — no staleness.
+        serena_status="live (project=$serena_project)"
+      else
+        # Compare worktree's common git dir to serena project's .git.
+        local wt_common=""
+        if command -v git >/dev/null 2>&1; then
+          wt_common="$(git -C "$wt_path" rev-parse --git-common-dir 2>/dev/null || true)"
+          case "$wt_common" in
+            /*) ;;
+            *) [[ -n "$wt_common" ]] && wt_common="$(cd "$wt_path" && cd "$wt_common" 2>/dev/null && pwd)" ;;
+          esac
+        fi
+        local serena_git="$serena_project/.git"
+        if [[ -n "$wt_common" && "$wt_common" == "$serena_git" ]]; then
+          serena_status="stale (sees $serena_project only; worktree edits invisible)"
+        else
+          serena_status="stale (configured for $serena_project; this worktree $wt_path is a different repo entirely)"
+        fi
+      fi
+
+      echo "mcp worktree-hint $wt_path"
+      echo ""
+      echo "  main_repo:    ${serena_project:-(no serena config)}"
+      echo "  worktree:     $wt_path"
+      echo "  serena:       $serena_status"
+      echo "  filesystem:   scoped to ${fs_root:-(unknown)}"
+      echo "  git:          ok (auto-discovers from cwd)"
+      echo ""
+      echo "  Verification pattern:"
+      echo "    - BEFORE editing:  serena OK for code-intelligence exploration"
+      echo "    - AFTER editing:   use jcode-native read + agentgrep"
+      echo "    - NEVER trust serena for files you have just modified"
+      return 0
+      ;;
     *)
-      echo "usage: extension.sh mcp {info|init [--project=PATH]}" >&2
+      echo "usage: extension.sh mcp {info|init [--project=PATH]|worktree-hint <wt-path>}" >&2
       return 2
       ;;
   esac
@@ -1045,6 +1237,7 @@ Subcommands:
      [--exports FILE]                  Emit KEY=VALUE exports to FILE for caller to source
   skills list                          Enumerate per-project skills (jcode-native)
   mcp info                             Show per-project MCP config status (jcode-native)
+  mcp worktree-hint <wt-path>          Worker-side serena staleness detector (use at spawn start)
   models [list|probe <name>]           List jcode-known models; probe auth for one
   preflight [--worktree P] [--project P]  Pre-spawn env gate (auth, install, paths)
   scratch-dir [root|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
