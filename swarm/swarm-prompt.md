@@ -113,9 +113,11 @@ missing capability, and the root decides.
 Use these primitives in this order of preference:
 
 1. **`complete_node` with typed artifact** — primary handoff. Forces
-   the worker to produce `findings`, `evidence[]`, `validation`,
-   `open_questions[]`, `confidence`, and `what_i_did_not_check[]`
-   (matching the overlay's invariant 4).
+   the worker to produce `status` plus `findings`, `evidence[]`,
+   `validation`, `open_questions[]`, `confidence`, and
+   `what_i_did_not_check[]` (matching the overlay's invariant 4). The
+   `status` field uses the 4-state enum — see §3 discipline section
+   in the overlay for the full meaning of each state.
 2. **`dm` to a specific worker** — for follow-up questions or to
    assign more work to an existing agent.
 3. **`broadcast` to your spawned subtree** — rare, only for genuine
@@ -126,6 +128,31 @@ Use these primitives in this order of preference:
 Workers reporting back to root: use `report` action with
 `status: "ready"` and a typed artifact. `status: "blocked"` requires a
 `blockers[]` list.
+
+### Worker → root: progress, not clarification
+
+The overlay's §3 "Worker reporting discipline" is the canonical
+statement. The short version: workers must never `dm` the root to
+ask "wait, what did you mean by X?" — that stalls the worker, can be
+lost, and delays the `complete_node` artifact (the only authoritative
+handoff). When scope is ambiguous:
+
+- **Proceed** with the most reasonable interpretation.
+- **Emit the typed artifact with `status: "needs-info"`** (not
+  `completed`) so root knows the work needs confirmation.
+- **Document** the ambiguity and both interpretations in the
+  artifact's `open_questions[]`.
+- **Let the root arbitrate** — root reads `open_questions[]` when the
+  artifact arrives, decides which interpretation was right, and
+  re-spawns if needed.
+
+Use `status: "blocked"` (in the typed artifact) only when you cannot
+proceed at all — missing tool, missing file the work depends on,
+contradictory requirements that cannot be reconciled. For scope
+ambiguity that has a reasonable interpretation, use
+`status: "needs-info"` instead. For work partially done, use
+`status: "partial"`. Never use `dm` or `follow_up` to ask the root a
+question — those are M1 (dm-as-clarification) in disguise.
 
 ---
 

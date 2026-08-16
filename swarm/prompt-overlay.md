@@ -67,9 +67,13 @@ of them, the action is wrong — do not rationalize around it.
    listed in its spawn prompt. Anything outside that list goes to
    `open_questions[]` in the artifact, not to a commit.
 4. **Typed artifact is a contract, not a suggestion.** Every worker
-   completion carries `findings`, `evidence[]`, `validation`,
-   `open_questions[]`, `confidence`, `what_i_did_not_check[]`. Missing
-   fields = incomplete work, regardless of whether the code compiled.
+   completion carries `status` (`completed` / `partial` / `needs-info` /
+   `blocked`), plus `findings`, `evidence[]`, `validation`,
+   `open_questions[]`, `confidence`, and `what_i_did_not_check[]`.
+   Missing or invalid `status`, or a missing contract field, = incomplete
+   work, regardless of whether the code compiled. The `evidence[]`
+   array MUST cite the commit SHA(s) and the changed files so the root
+   can correlate artifact ↔ branch ↔ worktree.
 5. **Root owns integration.** Only the root merges worker branches,
    resolves conflicts, runs cross-scope gates, and pushes. Workers never
    merge each other — that pollutes history with noise commits.
@@ -195,9 +199,11 @@ artifact?" If yes, spawn.
 Use these primitives in this order of preference:
 
 1. **`complete_node` with typed artifact** — primary handoff. Forces
-   the worker to produce `findings`, `evidence[]`, `validation`,
-   `open_questions[]`, `confidence`, `what_i_did_not_check[]`
-   (matching invariant 4 above).
+   the worker to produce `status` plus `findings`, `evidence[]`,
+   `validation`, `open_questions[]`, `confidence`,
+   `what_i_did_not_check[]` (matching invariant 4 above). The `status`
+   is one of `completed` / `partial` / `needs-info` / `blocked` — see
+   the discipline section below.
 2. **`dm` to a specific worker** — for follow-up questions or to
    assign more work to an existing agent.
 3. **`broadcast` to your spawned subtree** — rare, only for genuine
@@ -208,6 +214,135 @@ Use these primitives in this order of preference:
 Workers reporting back to root: use `report` action with
 `status: "ready"` and a typed artifact. `status: "blocked"` requires a
 `blockers[]` list.
+
+### Worker reporting discipline
+
+`complete_node` with a typed artifact is the only authoritative
+worker → root handoff. Anything else (`dm`, `follow_up`, `channel`,
+`broadcast` for non-stop events) can stall, get lost, or arrive out
+of order. The discipline below catalogs the failure modes the contract
+defends against, the rules that defend against them, and the one known
+limitation we accept by design.
+
+#### Status enum (4 states)
+
+Every typed artifact declares its `status` from this fixed enum. The
+root session parses this mechanically — anything not in this enum is a
+parsing failure, not a partial artifact.
+
+- `completed` — work fully done, all 6 contract fields populated, all
+  gates passed. Safe to integrate.
+- `partial` — some goals met, others explicitly deferred or out of
+  scope. Root re-spawns or extends the slice as needed. Use this for
+  scope-creep discovery (you found 3 more call sites than the spawn
+  prompt listed; you fixed 1, deferred 2).
+- `needs-info` — scope was ambiguous; worker proceeded with the most
+  reasonable interpretation but wants root to confirm before integration.
+  Emit the artifact with everything done so far AND both interpretations
+  in `open_questions[]`. Root arbitrates.
+- `blocked` — cannot proceed at all (missing API key, file the work
+  depends on does not exist, contradictory requirements that cannot be
+  reconciled, a tool genuinely unavailable). Worker stops, root
+  unblocks or re-scopes.
+
+The status enum is the worker→root communication surface for
+non-progress signals. Workers do NOT use `dm` or `follow_up` to ask
+questions — `status: needs-info` is the answer.
+
+#### Failure modes and the rules that close them
+
+**M1 — dm-as-clarification.** Worker hits ambiguous scope, `dm`s the
+root with "wait, what did you mean by X?" The worker stalls. The dm
+may not arrive (root busy, daemon hiccup, lost packet). The artifact
+never gets emitted. **Rule: never `dm` root to ask a question.** Emit
+`status: needs-info` instead, with the partial work and both
+interpretations in `open_questions[]`. Root arbitrates when it sees
+the artifact.
+
+**M2 — finish-without-complete_node.** Worker finishes the work,
+commits the branch, then forgets to emit the artifact. The branch
+rots, root waits indefinitely. **Rule: emit the artifact, then commit
+— not the other way around.** Treat the artifact as the unit of
+completion, not the commit. The artifact's `evidence[]` MUST cite the
+commit SHA(s) and `files_changed` so the root session can correlate
+artifact ↔ branch ↔ worktree.
+
+**M3 — silent disappearance.** Daemon crash, OOM kill, network drop,
+sandboxed-exec terminated — the artifact never arrives. **Known
+limitation.** This bundle intentionally does NOT ship a poll-style
+watchdog to detect this. The tick-era `root-tick.sh` that did was
+removed as tick-era contamination. Trade-off: simpler protocol, zero
+polling overhead, but root waits indefinitely for a worker that has
+gone silent. A worker that has accepted a spawn is committing to
+return either a typed artifact OR a `report` with `status: blocked`.
+
+#### When scope is ambiguous — proceed, do not stall
+
+- **Proceed** with the most reasonable interpretation.
+- **Emit `status: needs-info`** (not `completed`) so root knows the
+  work needs confirmation.
+- **Document** the ambiguity and both interpretations in the artifact's
+  `open_questions[]`.
+- **Let the root arbitrate** — root reads `open_questions[]` when the
+  artifact arrives, decides which interpretation was right, and
+  re-spawns if needed.
+
+The artifact is the channel — questions travel inside it via
+`open_questions[]`, not via a dm roundtrip.
+
+#### When you cannot proceed at all — use `status: blocked`, not `follow_up`
+
+Hard blockers (missing API key, file the work depends on does not
+exist, contradictory requirements that cannot be reconciled, a tool
+the work needs is unavailable):
+
+- Stop work.
+- Emit the typed artifact with `status: "blocked"` and a
+  `blockers[]` list. (If `blockers[]` is not part of your role's
+  schema, put the blocker list inside `open_questions[]` and mark
+  it `[BLOCKER]` so root can find it.)
+- Root will either unblock you, re-scope, or pull you back.
+
+Distinction: `open_questions[]` is for missing *information* the
+worker can proceed past with assumptions. `blockers[]` is for missing
+*capability* the worker cannot work around. A `follow_up` action used
+to ask the root a question is just M1 in disguise — it stalls the
+worker the same way a `dm` does.
+
+#### The artifact termination contract
+
+Every worker's final assistant message MUST end with the typed-artifact
+JSON block, parseable as-is. The root session parses it mechanically
+and treats it as the deliverable. **Prose-only summaries will be
+rejected** — the work is not "done" until the artifact lands.
+
+Common rejection causes:
+- Forgetting the JSON block at the end of a long-running dispatch.
+- Putting the JSON inside a longer prose summary (use a bare
+  ` ```json ` fence, not nested in another fence).
+- Omitting one or more of the 7 required fields (`status`, `findings`,
+  `evidence`, `validation`, `open_questions`, `confidence`,
+  `what_i_did_not_check`).
+- `evidence[]` missing commit SHA and `files_changed` (root cannot
+  correlate artifact to branch).
+
+If you find yourself writing a long prose summary and then "forgetting"
+the artifact block — the prose is not the deliverable. The artifact is.
+
+#### Anti-patterns
+
+- Don't `dm` root to ask "what did you mean?" — emit `status: needs-info`
+  with both interpretations in `open_questions[]`.
+- Don't `follow_up` to ask for clarification — that's M1 with a
+  different verb. Use `status: blocked`.
+- Don't commit before emitting the artifact. The artifact references
+  the commit SHA; if the commit doesn't exist yet, the root cannot
+  correlate.
+- Don't broadcast "I'm starting on X" — broadcast is stop/recall only.
+- Don't write intermediate files for sibling workers — out-of-band
+  handoff is forbidden (invariant 2).
+- Don't ship a prose-only summary as your final message. The JSON
+  block is mandatory.
 
 ---
 
