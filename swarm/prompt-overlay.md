@@ -230,8 +230,15 @@ Every typed artifact declares its `status` from this fixed enum. The
 root session parses this mechanically — anything not in this enum is a
 parsing failure, not a partial artifact.
 
-- `completed` — work fully done, all 6 contract fields populated, all
-  gates passed. Safe to integrate.
+- `completed` — the role's work is fully done, all 7 contract fields
+  populated, all gates passed. **Per-role meaning**:
+  - implementer / migrator / test-writer / doc-writer: code/docs are
+    ready to integrate.
+  - reviewer: the **review is thorough and complete** — `findings[]`
+    drives acceptance, NOT `status`. A reviewer can emit
+    `status: completed` while flagging `severity: blocker` findings;
+    root rejects the code based on findings, not on this status.
+  - investigator: the hypothesis is confirmed or denied with evidence.
 - `partial` — some goals met, others explicitly deferred or out of
   scope. Root re-spawns or extends the slice as needed. Use this for
   scope-creep discovery (you found 3 more call sites than the spawn
@@ -244,10 +251,48 @@ parsing failure, not a partial artifact.
   depends on does not exist, contradictory requirements that cannot be
   reconciled, a tool genuinely unavailable). Worker stops, root
   unblocks or re-scopes.
+  - **Zero-work rule**: if you completed part of the work before
+    hitting the blocker (e.g., 5 of 7 files migrated, 2 are blocked
+    by a missing dependency), use `partial` instead and mark the
+    blocker as `[BLOCKER]` in `open_questions[]`. `blocked` means
+    ZERO useful work was done — `partial` covers the rest.
 
 The status enum is the worker→root communication surface for
 non-progress signals. Workers do NOT use `dm` or `follow_up` to ask
 questions — `status: needs-info` is the answer.
+
+#### Picking a status (decision tree)
+
+Answer in order, top-to-bottom — first match wins:
+
+1. **Did you produce any useful work that root might integrate?**
+   - **NO** → continue to step 2.
+   - **YES** → continue to step 3.
+2. **Was the blocker a missing capability (tool, file, API key) or a
+   missing decision root didn't make?**
+   - **Missing capability** → `blocked` (root must unblock).
+   - **Missing decision** → `needs-info` (root must arbitrate).
+3. **Did you complete every goal the spawn prompt listed?**
+   - **YES** → `completed`.
+   - **NO** → `partial` (explain what was deferred in `findings[]`
+     and `open_questions[]`).
+
+Common confusion: "I did some work but it all depends on a decision
+the root hasn't made." That is `partial` (some useful work) + the
+decision needed in `open_questions[]`, NOT `blocked` (decision is not
+a capability gap).
+
+#### Root's action per status
+
+The worker's `status` tells root what to do next. Reading `findings[]`,
+`validation`, and `open_questions[]` is mandatory before acting.
+
+| Worker status | Root action |
+|---|---|
+| `completed` | Read `findings` + `validation`. Integrate if `confidence` is acceptable. **Reviewers**: `findings[]` severity drives acceptance — a `blocker` finding rejects regardless of `status: completed`. |
+| `partial` | Read `findings` + `open_questions[]`. Choose: (a) re-spawn with the deferred slice, (b) accept partial and move on, (c) re-scope entirely. Do NOT auto-integrate — partial means the slice was deliberately cut. |
+| `needs-info` | Read `open_questions[]` FIRST — this is the arbitration queue. Pick the right interpretation, then integrate, amend the worker's commit, or re-spawn. Never integrate without reading `open_questions[]`. |
+| `blocked` | Read `blockers[]` (or `[BLOCKER]` entries in `open_questions[]`). Choose: (a) unblock by providing the missing capability, (b) re-scope to avoid the blocker, (c) abort the slice. The worker's branch holds nothing useful — clean it up. |
 
 #### Failure modes and the rules that close them
 
