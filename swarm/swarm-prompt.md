@@ -246,6 +246,12 @@ coordination debt.
   `report`.
 - **Forgetting `label`.** The tool rejects, but the retry wastes a
   turn.
+- **Trusting serena's symbol index for files you have just modified.**
+  Serena's MCP server inherits the project's `--project` path (anchored
+  to the main repo) — it does NOT re-index per worktree. Post-edit
+  `find_symbol` / `find_referencing_symbols` return main-repo HEAD
+  results, silently missing your edits. Use `read` + `agentgrep` for
+  post-edit verification. See §12.
 
 ---
 
@@ -315,3 +321,47 @@ with noise commits.
 Spawn context without `.git/`: skip worktree allocation, worker uses
 root cwd. swarm-prompt must flag this fallback explicitly, never
 pretend a worktree exists.
+
+---
+
+## 12. Code intelligence in worktrees (serena caveat)
+
+The serena MCP server, when registered (A4 axis), starts with
+`--project <main-repo-path>` taken from `mcpServers.serena.args`. That
+path is fixed for the lifetime of the jcode session — it is NOT
+re-bound per worktree. Consequence:
+
+- **Before editing**: serena is correct for code-intelligence
+  exploration of the main repo (reading the call graph you are about
+  to modify, finding all references pre-rename, getting a file's
+  structural overview). Tree-sitter indexes the main repo and is
+  fresh as of your last commit on main.
+- **After editing**: do **not** trust serena's symbol index for files
+  you have just modified. Its index is anchored to main; your
+  worktree edits are invisible. Use jcode-native `read <file>` and
+  `agentgrep <pattern> <worktree-path>/<glob>` instead.
+- **Verification of intent** ("did my edit land the way I expect?"):
+  re-read the file via `read`, or grep via `agentgrep` against the
+  absolute worktree path. Do not ask serena.
+
+The bundle ships a deterministic detector:
+
+```bash
+scripts/extension.sh mcp worktree-hint "$WORKTREE_PATH"
+# Output is line-oriented; grep for the status:
+#   serena: live (project=...)                          ← editing in main repo
+#   serena: stale (sees <main-repo> only; worktree edits invisible)
+#   serena: not-configured                              ← no serena in MCP config
+# Exit 0 always (informational, not a gate).
+```
+
+Run this at spawn start. If the line says `stale`, plan your
+verification accordingly: pre-edit use serena, post-edit use
+`read` + `agentgrep`. Mark `confidence: low` on the artifact if a
+gate relied on serena results against worktree files; that is
+honest reporting, not failure — see §5.
+
+This caveat is bundle-level, not engine-level. The jcode engine does
+not currently support per-spawn MCP project rebind; until it does,
+the worktree-hint check is the worker's only way to know whether
+serena is safe to trust for the file in front of them.

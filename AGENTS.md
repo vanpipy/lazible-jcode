@@ -145,16 +145,21 @@ It catches the three failure modes below BEFORE a worker is spawned
 | P1 | Model auth fail — worker spawns, immediately errors on first API call, dies. Wastes ~30s + a worktree. | `extension.sh models probe <name>` does a 1-token call; exit 4 = bad credentials. | Run probe before drafting. If 4, try a different model (per swarm-prompt, fallback = inherit from root). |
 | P2 | Scope ambiguity — worker `dm`s you with "what did you mean?", stalls waiting. | Pre-spawn checklist in §1 of overlay. | Write scope prompt tightly: enumerate `files_touched[]`, paste base SHA, state the gates explicitly. Worker emits `status: needs-info` if still ambiguous. |
 | P3 | Path confusion — worker writes into `$TMPDIR/jcode/.../wt-<label>/`, root thinks it'll land in `<repo>` directly. | `extension.sh preflight --worktree <path>` validates writable parent. | The bundle's `$TMPDIR/jcode/<repo>-<short-sha>/` is the worker scratch; integration root copies into `<repo>` after artifact acceptance. |
+| P4 | Serena stale — worker uses serena MCP for post-edit symbol lookups, gets main-repo HEAD results, silently misses its own edits. Worker emits `confidence: high` against wrong evidence. | `extension.sh mcp worktree-hint <wt-path>` reports `serena: stale (sees <main-repo> only; ...)`. | Include `mcp worktree-hint <wt-path>` in the spawn prompt's pre-flight steps (or in the per-project `pre-spawn.sh` hook via `A9` exports). Worker runs it at session start, plans verification accordingly: pre-edit serena OK, post-edit `read` + `agentgrep`. See `docs/INTEGRATIONS.md` §"Serena and worktrees" + `swarm/swarm-prompt.md` §12. |
 
 ### Quick spawn checklist
 
 1. `extension.sh preflight` (exit 0).
 2. `extension.sh models probe <model>` (exit 0) — if your chosen model is non-default.
 3. `extension.sh scratch-dir` to print the canonical WT path.
-4. Write spawn prompt with: `label`, `model`, `effort`, `worktree_path`,
+4. `extension.sh mcp worktree-hint <wt-path>` — verify serena's status against the worker's
+   worktree path. If `stale`, surface that pattern in the spawn prompt's scope body so the
+   worker doesn't trust serena for post-edit verification. (Add this step to a project's
+   `pre-spawn.sh` hook via `A9` to make it automatic for every spawn.)
+5. Write spawn prompt with: `label`, `model`, `effort`, `worktree_path`,
    `base_commit`, `worker_branch`, `files_touched[]`, `scope_body`,
    `termination_template`, `required_skills[]`.
-5. After worker emits artifact: read `findings` + `evidence[]` +
+6. After worker emits artifact: read `findings` + `evidence[]` +
    `validation` + `open_questions[]` before integrating.
 
 Skipping steps 1-2 is how you burn 5 minutes on a model that 401s on
