@@ -117,7 +117,7 @@ stream_idle_timeout_secs = 180
 
 [providers]
 
-[providers.minimax.models.MiniMax-M3]
+[providers.minimax.models.minimax-m3]
 context_window = 1000000
 
 [agents]
@@ -136,14 +136,7 @@ swarm_max_concurrent_agents = 32
 pre_tool_timeout_ms = 5000
 
 [ambient]
-enabled = true
-allow_api_keys = false
-min_interval_minutes = 5
-max_interval_minutes = 90
-pause_on_active_session = true
-proactive_work = true
-work_branch_prefix = "ambient/"
-visible = true
+enabled = false
 
 [safety]
 ntfy_server = "https://ntfy.sh"
@@ -192,13 +185,3 @@ enabled = false
 
 [autojudge]
 enabled = false
-
-[launch_hotkeys]
-enabled = true
-imported = true
-
-[[launch_hotkeys.entries]]
-chord = "cmd+'"
-dir = "$HOME"
-label = "home"
-self_dev = false
