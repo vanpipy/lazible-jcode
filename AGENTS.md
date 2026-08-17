@@ -35,7 +35,7 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
 | `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
 | `swarm/roles/<name>.md` | Worker persona templates. **Exactly 6 roles**: `reviewer`, `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer` | yes |
-| `config/config.toml` | Sanitized live snapshot from a real `~/.jcode/config.toml`. Reference only. | no |
+| `config/config.toml` | Sanitized live snapshot from a real `~/.jcode/config.toml`. Installed as `~/.jcode/config.toml`. | yes |
 | `config/config.toml.example` | Template for the above | yes |
 | `config/mcp.json.example` | Schema reference for MCP servers layout; ships the recommended local stack (filesystem + git + serena) | yes |
 | `.gitignore` | Excludes `.bak.<ts>`, `.bak.*`, OS noise, the live `config/mcp.json` | yes |

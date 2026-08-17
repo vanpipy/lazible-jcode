@@ -26,7 +26,7 @@ lazible-jcode/
 ├── README.md
 ├── AGENTS.md                          # Maintenance manual for this repo (not installed)
 ├── config/
-│   ├── config.toml                    # Live snapshot of ~/.jcode/config.toml (sanitized)
+│   ├── config.toml                    # Live snapshot of ~/.jcode/config.toml (sanitized, installed → ~/.jcode/config.toml)
 │   ├── config.toml.example            # Annotated reference (subset)
 │   └── mcp.json.example               # Reference ~/.jcode/mcp.json (secrets redacted)
 ├── swarm/                              # Generic swarm coordination + worker role templates

@@ -123,7 +123,6 @@ point elsewhere are preserved. By default it removes:
 
 It does **not** touch (without `--purge`):
 
-- `~/.jcode/config.toml`
 - `~/.jcode/mcp.json`
 - `~/.jcode/auth*`
 - `~/.jcode/{logs,sessions,memory,cache,builds}`

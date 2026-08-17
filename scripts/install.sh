@@ -252,10 +252,11 @@ LCL_BIN="${LCL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LCL_BIN"
 overwrite_link "$repo_root/scripts/swarm-sweep.sh" "$LCL_BIN/swarm-sweep" "swarm-sweep"
 
-# ── step 2: symlink swarm/* into ~/.jcode/ ───────────────────────────────────
+# ── step 2: symlink swarm/* + config into ~/.jcode/ ──────────────────────────
 info "step 2/3: linking swarm/ into $JCODE_HOME"
 overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md"           "prompt-overlay.md"
 overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"             "swarm-prompt.md"
+overwrite_link "$repo_root/config/config.toml"      "$JCODE_HOME/config.toml"                "config.toml"
 
 mkdir -p "$JCODE_HOME/roles"
 for role_file in "$repo_root/swarm/roles/"*.md; do
