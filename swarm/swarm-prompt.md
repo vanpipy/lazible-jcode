@@ -324,7 +324,63 @@ pretend a worktree exists.
 
 ---
 
-## 12. Code intelligence in worktrees (serena caveat)
+## 13. Author attribution
+
+Every commit you author **must** carry your real identity. You do not
+get to choose it — you must discover it.
+
+### Discovery order (do not skip)
+
+1. **Do not fabricate.** Never invent a name or email. If you do not
+   know who you are, you must find out.
+2. **Check project memory first.** Run `memory recall` with a query
+   like `"author"` or `"user name"` at the start of the session. If a
+   `project`-scope entry exists with `author` or `user` in the content,
+   use those `name` and `email` values.
+3. **Fall back to git.** If memory has no answer, run:
+   ```bash
+   git log -1 --format="%an <%ae>"
+   ```
+   Use the `name` and `email` from the last commit on the current branch.
+   If the repo has no commits yet, use the jcode session owner's identity
+   from `git config user.name` / `git config user.email` (or abort with
+   `status: blocked` if those are also absent).
+
+### Applying the author
+
+When creating a commit, pass the discovered `name` and `email` to the
+`author` field of `git commit`:
+
+```json
+{ "author": { "name": "Alice Chen", "email": "alice@example.com" } }
+```
+
+Root session and every worker: the same rule applies. Each worker's
+worktree may have a different last-commit author (if cut from a shared
+base); run the fallback command inside the worktree's directory, not
+from the root session's cwd.
+
+### Storing for next time
+
+After discovering the author, store it in project memory so future
+sessions in this repo skip the fallback step:
+
+```
+memory remember content="author: Alice Chen <alice@example.com>"
+  scope=project tag=author
+```
+
+### Anti-patterns
+
+- **Committing as "jcode" or "assistant".** Always discover the real
+  identity. Fabricated author names break `git blame` and policy
+  compliance (e.g. DCO sign-off).
+- **Using a different author per file.** One author per commit; the
+  author applies to all files in that commit.
+
+---
+
+## 14. Code intelligence in worktrees (serena caveat)
 
 The serena MCP server, when registered (A4 axis), starts with
 `--project <main-repo-path>` taken from `mcpServers.serena.args`. That

@@ -518,6 +518,11 @@ The `what_i_did_not_check[]` list is mandatory in every artifact. For
 the per-level criteria (`high` / `medium` / `low`), see
 `~/.jcode/swarm-prompt.md` §5.
 
+**Author attribution.** Never fabricate a commit author. Discover yours
+before committing: check project memory first (`memory recall`), fall
+back to `git log -1 --format="%an <%ae>"`. Store the result in project
+memory for future sessions. Full protocol: `swarm-prompt.md` §13.
+
 ---
 
 ## 7. Where the full rules live (pointers)
@@ -526,7 +531,7 @@ This overlay is the **main-agent-side summary**. The full set lives in:
 
 - `~/.jcode/swarm-prompt.md` — root + worker policy (model routing,
   communication, verification, decomposition, anti-patterns, worktree
-  topology). Loaded when you construct spawn calls.
+  topology, author attribution §13). Loaded when you construct spawn calls.
 - `~/.jcode/roles/reviewer.md` — code review worker persona.
 - `~/.jcode/roles/implementer.md` — TDD-first implementer persona.
 - `~/.jcode/roles/investigator.md` — read-only hypothesis-driven
