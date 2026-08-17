@@ -21,9 +21,9 @@ time and overwrites the destination without prompting:
    Also installs the `swarm-sweep` helper into `~/.local/bin/` (see
    "Stale swarm worktrees" below).
 2. Symlink `swarm/prompt-overlay.md`, `swarm/swarm-prompt.md`,
-   `swarm/ARCHITECTURE.md`, and `swarm/roles/*.md` into their
-   canonical locations under `~/.jcode/`.
-3. Symlink `AGENTS.md` to `~/.jcode/AGENTS.md`.
+   and `swarm/roles/*.md` into their canonical locations under `~/.jcode/`.
+   `swarm/ARCHITECTURE.md` and `docs/ARCHITECTURE.md` are reference docs
+   and are not installed.
 
 Existing files at any destination are backed up to `<dst>.bak.<timestamp>`
 before being replaced.
@@ -114,8 +114,7 @@ repo's checkout (`$REPO_ROOT/*`). Symlinks you created manually that
 point elsewhere are preserved. By default it removes:
 
 - Symlinks at `~/.jcode/prompt-overlay.md`, `~/.jcode/swarm-prompt.md`,
-  `~/.jcode/ARCHITECTURE.md`, `~/.jcode/AGENTS.md`, and
-  `~/.jcode/roles/` that point into this repo.
+  and `~/.jcode/roles/` that point into this repo.
 - The jcode binary (`~/.local/bin/jcode`) and prior backup installs
   (`jcode.bak.*`), unless `--keep-binary` is passed.
 - The `swarm-sweep` helper at `~/.local/bin/swarm-sweep`, unless

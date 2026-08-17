@@ -1,5 +1,9 @@
 # AGENTS.md — lazible-jcode
 
+> **This file is the maintenance manual for the lazible-jcode repository itself.**
+> It is NOT installed by `scripts/install.sh` — the bundle ships no `AGENTS.md`.
+> Per-project agent instructions are the user's own concern.
+
 Project-level instructions for any jcode agent working in this repo.
 Focused on workflow, paths, and non-obvious gotchas. Anything you cannot
 infer from the code itself lives here.
@@ -30,7 +34,6 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `scripts/extension.sh` | Single entry point for per-project extension conventions (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn` subcommands) | yes |
 | `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
 | `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
-| `swarm/ARCHITECTURE.md` | Human-readable star topology + contracts overview | yes |
 | `swarm/roles/<name>.md` | Worker persona templates. **Exactly 6 roles**: `reviewer`, `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer` | yes |
 | `config/config.toml` | Sanitized live snapshot from a real `~/.jcode/config.toml`. Reference only. | no |
 | `config/config.toml.example` | Template for the above | yes |
@@ -69,9 +72,8 @@ touched.
 
 1. Create `swarm/roles/<name>.md` using the same 8-section template as the others: `Persona`, `Position in swarm`, `Output contract (mandatory)`, `Scope`, `Workflow`, `Output schema`, `Skills to load`, `Anti-patterns`.
 2. The `Output contract (mandatory)` section **must** list all 7 fields: `findings`, `evidence[]`, `edge_cases_considered[]`, `validation`, `open_questions[]`, `confidence`, `what_i_did_not_check[]`. The `Output schema` JSON block must include all 7 keys (plus `status` as the 8th field that lives at the top of the schema).
-3. Update `swarm/ARCHITECTURE.md` topology to add the new worker node.
-4. Update `swarm/prompt-overlay.md` worker-templates list (§11).
-5. Re-run install; the new role auto-symlinks into `~/.jcode/roles/`.
+3. Update `swarm/prompt-overlay.md` (or `swarm-prompt.md`) as needed.
+4. Update `README.md` quick-start if install semantics change.
 
 ### Edit the overlay
 
@@ -174,7 +176,7 @@ the first call.
 - Scopes in this repo:
   - `install`, `uninstall`, `scripts` — installer changes
   - `overlay` — `swarm/prompt-overlay.md`
-  - `swarm` — `swarm/swarm-prompt.md`, `swarm/ARCHITECTURE.md`
+  - `swarm` — `swarm/swarm-prompt.md`, `swarm/prompt-overlay.md`
   - `roles` — `swarm/roles/*.md`
   - `readme`, `docs`, `agents` — documentation
   - `repo` — meta / cleanup / gitignore
@@ -293,7 +295,7 @@ exists; absence is not a failure.
   push those to the user's own `~/.jcode/AGENTS.md` instead. This repo
   is a public bundle.
 - **6 roles, fixed names.** The `swarm/roles/*.md` filenames are
-  referenced verbatim from `swarm/prompt-overlay.md`, `swarm/ARCHITECTURE.md`,
+  referenced verbatim from `swarm/prompt-overlay.md`, `swarm/swarm-prompt.md`,
   and the README. Renaming a role requires updating all three.
 - **The 7+1-field contract is invariant.** Every role's JSON schema must
   contain `status`, `findings`, `evidence`, `edge_cases_considered`,

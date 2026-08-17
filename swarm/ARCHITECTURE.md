@@ -69,8 +69,7 @@ graph TD
 | `swarm/prompt-overlay.md`         | `~/.jcode/prompt-overlay.md`           | Main-agent identity, invariants, decision flow       |
 | `swarm/swarm-prompt.md`           | `~/.jcode/swarm-prompt.md`             | Root + worker coordination policy, model routing     |
 | `swarm/roles/<name>.md` (×6)      | `~/.jcode/roles/<name>.md`             | Worker persona templates; main prepends on spawn     |
-| `swarm/ARCHITECTURE.md`           | `~/.jcode/ARCHITECTURE.md`             | Human-readable overview + goals                      |
-| `AGENTS.md`                       | `~/.jcode/AGENTS.md`                   | Project-level jcode instructions                     |
+| `swarm/ARCHITECTURE.md`           | (not installed — human reference only) | Human-readable overview + goals                      |
 | `scripts/install.sh`              | run once                               | Symlinks the above into `~/.jcode/`                  |
 
 `scripts/install.sh` is the single source of truth for this layout.
@@ -235,8 +234,6 @@ means the integration is incomplete.
 ~/.jcode/
 ├── prompt-overlay.md      <- swarm/prompt-overlay.md
 ├── swarm-prompt.md        <- swarm/swarm-prompt.md
-├── ARCHITECTURE.md        <- swarm/ARCHITECTURE.md (this file)
-├── AGENTS.md              <- ./AGENTS.md (project-level)
 └── roles/
     ├── reviewer.md
     ├── investigator.md
@@ -244,6 +241,9 @@ means the integration is incomplete.
     ├── test-writer.md
     ├── doc-writer.md
     └── implementer.md
+
+swarm/ARCHITECTURE.md   (not installed — human reference only)
+docs/ARCHITECTURE.md    (not installed — internal maintenance doc)
 ```
 
 `scripts/install.sh` is the single source of truth for this layout.

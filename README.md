@@ -14,19 +14,17 @@ It carries:
   swarm-coordinator-first agent
 - **Worker swarm policy + role templates** (`swarm/swarm-prompt.md`,
   `swarm/roles/*.md`) for the root session to load when spawning
+  workers
 - A **human-readable architecture overview** (`swarm/ARCHITECTURE.md`)
   documenting the star topology, contracts, and integration gates
-- A standalone installer (`scripts/install.sh`) and uninstaller
-  (`scripts/uninstall.sh`) that symlinks the above into `~/.jcode/`
-  (plus installs the jcode binary via the upstream installer)
-- A project-level `AGENTS.md` that jcode loads at session start
+  (not installed — human reference only)
 
 ## Layout
 
 ```
 lazible-jcode/
 ├── README.md
-├── AGENTS.md                          # Project-level jcode instructions
+├── AGENTS.md                          # Maintenance manual for this repo (not installed)
 ├── config/
 │   ├── config.toml                    # Live snapshot of ~/.jcode/config.toml (sanitized)
 │   ├── config.toml.example            # Annotated reference (subset)
@@ -34,7 +32,7 @@ lazible-jcode/
 ├── swarm/                              # Generic swarm coordination + worker role templates
 │   ├── prompt-overlay.md              # Enhanced default main-agent prompt (→ ~/.jcode/prompt-overlay.md)
 │   ├── swarm-prompt.md                # Root + worker policy (→ ~/.jcode/swarm-prompt.md)
-│   ├── ARCHITECTURE.md                # Human-readable overview (→ ~/.jcode/ARCHITECTURE.md)
+│   ├── ARCHITECTURE.md                # Human-readable overview (not installed)
 │   └── roles/                          # Worker persona templates
 │       ├── reviewer.md
 │       ├── implementer.md
@@ -60,7 +58,7 @@ lazible-jcode/
 git clone https://github.com/vanpipy/lazible-jcode.git
 cd lazible-jcode
 
-# 2. Install jcode + overlay + swarm config + AGENTS.md + .jcode/mcp.json (4 steps, overwrite-by-default; step 4 idempotent)
+# 2. Install jcode + overlay + swarm config + .jcode/mcp.json (3 steps, overwrite-by-default; step 3 idempotent)
 ./scripts/install.sh
 
 # 2b. Or, set up the bundle for a different project (installs bundle + inits that project's .jcode/mcp.json)
@@ -72,7 +70,7 @@ jcode --version
 jcode run "say hello"
 ```
 
-The installer is **always idempotent and unconditional**: it runs 4
+The installer is **always idempotent and unconditional**: it runs 3
 steps every time, overwrites every destination, and backs up any
 pre-existing file at the destination to `<dst>.bak.<timestamp>` first.
 Fast path: when a destination is already a symlink to the source
@@ -113,7 +111,7 @@ prompt + persona content jcode reads.
   topology. Installed as `~/.jcode/swarm-prompt.md`.
 - `swarm/ARCHITECTURE.md` — the goals, star topology diagram, and
   contracts (invariants + output contract + cross-worker handoff) for
-  this overlay bundle. Installed as `~/.jcode/ARCHITECTURE.md`.
+  this overlay bundle. Not installed — human reference only.
 - `swarm/roles/*.md` — six persona templates (`reviewer`, `implementer`,
   `investigator`, `migrator`, `test-writer`, `doc-writer`). Installed
   as `~/.jcode/roles/*.md`. The root session prepends the appropriate
@@ -159,9 +157,7 @@ across every spawned worker. The headline rules:
   pushes are free; the user can `git push` themselves.
 
 For the full rule set, see `swarm/prompt-overlay.md` (main-agent
-view) and `swarm/swarm-prompt.md` (worker-policy view). For
-the visual map of the topology and contracts, see
-`swarm/ARCHITECTURE.md`.
+view) and `swarm/swarm-prompt.md` (worker-policy view).
 
 ## What's not in this repo
 
