@@ -519,9 +519,10 @@ the per-level criteria (`high` / `medium` / `low`), see
 `~/.jcode/swarm-prompt.md` §5.
 
 **Author attribution.** Never fabricate a commit author. Discover yours
-before committing: check project memory first (`memory recall`), fall
-back to `git log -1 --format="%an <%ae>"`. Store the result in project
-memory for future sessions. Full protocol: `swarm-prompt.md` §13.
+before committing: (1) `git config user.name` / `git config user.email`,
+(2) `memory recall`, (3) `git log -1 --format="%an <%ae>"` as last
+resort. Store the result in project memory for future sessions. Full
+protocol: `swarm-prompt.md` §13.
 
 ---
 

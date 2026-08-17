@@ -331,20 +331,19 @@ get to choose it — you must discover it.
 
 ### Discovery order (do not skip)
 
-1. **Do not fabricate.** Never invent a name or email. If you do not
-   know who you are, you must find out.
-2. **Check project memory first.** Run `memory recall` with a query
-   like `"author"` or `"user name"` at the start of the session. If a
-   `project`-scope entry exists with `author` or `user` in the content,
-   use those `name` and `email` values.
-3. **Fall back to git.** If memory has no answer, run:
-   ```bash
+1. **Do not fabricate.** Never invent a name or email.
+2. **Git config.** Run `git config user.name` and `git config user.email`
+   in the repo root (or worktree root for workers). If both return
+   non-empty values, use them.
+3. **Project memory.** If git config is absent or empty, run
+   `memory recall` with a query like `"author"`. If a `project`-scope
+   entry exists with name and email, use it.
+4. **Git log fallback.** If memory is also empty, run:
+   ```
    git log -1 --format="%an <%ae>"
    ```
-   Use the `name` and `email` from the last commit on the current branch.
-   If the repo has no commits yet, use the jcode session owner's identity
-   from `git config user.name` / `git config user.email` (or abort with
-   `status: blocked` if those are also absent).
+   Use the last commit's author on the current branch. If the repo has
+   no commits yet, abort with `status: blocked`.
 
 ### Applying the author
 
