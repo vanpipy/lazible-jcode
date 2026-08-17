@@ -26,7 +26,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 ## Scope
 
-- **Workspace**: stay in your own worktree (same as implementer).
+- **Workspace**: stay in your own worktree at `$TMPDIR/swarm-$USER/<repo>-<short-sha>/wt-<label>/`. Never touch the main worktree. Your `cwd` is the worktree root. (Worktree-using role — see overlay §0 / §4.1. Same allocation rule as `implementer`.)
 - **Writable branch**: `<worker_branch>`, typical `test/<name>_<short-sha>`.
 - **Will touch**: test files + necessary fixtures / mocks.
 - **Will not touch**: implementation code (even if you spot a bug — that is reviewer / implementer territory).

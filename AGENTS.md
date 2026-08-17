@@ -158,9 +158,14 @@ It catches the three failure modes below BEFORE a worker is spawned
    worktree path. If `stale`, surface that pattern in the spawn prompt's scope body so the
    worker doesn't trust serena for post-edit verification. (Add this step to a project's
    `pre-spawn.sh` hook via `A9` to make it automatic for every spawn.)
-5. Write spawn prompt with: `label`, `model`, `effort`, `worktree_path`,
-   `base_commit`, `worker_branch`, `files_touched[]`, `scope_body`,
+5. Write spawn prompt with: `label`, `model`, `effort`, `base_commit`,
+   `worker_branch`, `files_touched[]`, `scope_body`,
    `termination_template`, `required_skills[]`.
+   Add `worktree_path` **only for worktree-using roles** (`implementer`,
+   `test-writer`, `doc-writer`); omit for root-cwd roles (`reviewer`,
+   `investigator`, `migrator`). For `migrator`, also `git checkout
+   <worker_branch>` in root cwd **before** handing off the spawn
+   prompt.
 6. After worker emits artifact: read `findings` + `evidence[]` +
    `validation` + `open_questions[]` before integrating.
 

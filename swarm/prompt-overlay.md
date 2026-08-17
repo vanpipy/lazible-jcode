@@ -47,9 +47,17 @@ You operate a **star topology**:
   - `worker <-> worker`: never direct. If a worker needs another worker's
     output, it surfaces the gap in `open_questions[]`; the root merges
     and re-spawns as needed.
-- **Workspace isolation**: root owns the main worktree. Each worker gets
-  a dedicated worktree at `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`.
-  Workers never touch the main worktree or each other's worktrees.
+- **Workspace isolation** (role-dependent):
+  - **Worktree-using roles** (3 of 6: `implementer`, `test-writer`, `doc-writer`) get a
+    dedicated git worktree at
+    `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`. Workers in this category
+    never touch the main worktree or each other's worktrees.
+  - **Root-cwd roles** (3 of 6: `reviewer`, `investigator`, `migrator`) operate from the
+    root session's cwd. `reviewer` and `investigator` are read-only and use
+    `git show <branch>:<file>` / `git diff main..<branch>` / `git log` / `rg` /
+    running tests from root cwd. `migrator` owns file changes but operates
+    serially — root checks out `<worker_branch>` in root cwd and the migrator
+    commits directly to that branch.
 
 This architecture is the invariant that all subsequent sections assume.
 
@@ -349,45 +357,65 @@ missing commit SHA or `files_changed`.
 
 Swarms above ~2 concurrent workers collide on shared working trees
 (silent `git add` loss, `git status` cross-contamination, half-baked
-mixed reads). The fix: each worker gets a dedicated git worktree.
+mixed reads). The fix: file-changing workers get dedicated git
+worktrees; read-only workers and the serial migrator use root cwd.
+
+**Worktree-using roles** (3 of 6: `implementer`, `test-writer`,
+`doc-writer`) — each gets a dedicated worktree. `1 worker : 1 worktree,
+no sharing, no nesting`.
+
+**Root-cwd roles** (3 of 6: `reviewer`, `investigator`, `migrator`) —
+share the root session's cwd. Root never enters a worker worktree.
+Cross-role reading still happens via `git show <branch>:<file>` or
+`git diff main..<branch>`.
 
 **Two layers of cleanup cover worker residue at different scopes; they
 are not interchangeable.** The engine's session-level reaper (M3 §3.4)
 closes idle spawned-worker processes automatically. The
 worktree-level cleanup (`swarm-sweep`, see AGENTS.md "Cleanup: stale
 swarm worktrees") deletes the git worktree + branch residue left
-behind. Workers' responsibility ends at "stay in your own worktree";
+behind. Workers' responsibility ends at "stay in your own workspace";
 root's responsibility includes both.
 
 ### 4.1 Worktree discipline
 
-Your responsibility as root:
+Your responsibility as root, role-dependent:
 
-- **Place project worktrees under the system temp dir** (`$TMPDIR`,
-  typically `/tmp`). The canonical layout is:
-  ```
-  $TMPDIR/jcode/<repo-name>-<short-sha>/wt-<label>/   # git worktrees
-  $TMPDIR/jcode/<repo-name>-<short-sha>/scratch/      # misc scratch files
-  ```
-  `<repo-name>` is the basename of the repo directory; `<short-sha>`
-  is the first 8 hex chars of `git rev-parse HEAD` (or a stable
-  per-machine identifier if HEAD is unborn). Use
-  `scripts/extension.sh scratch-dir` to print the canonical path for
-  the current project. This keeps worktrees OFF the user's home
-  filesystem and OUT of the repo itself — both important on macOS
-  where home may be on a slow drive and `/tmp` may be RAM-backed.
-  Distinct from jcode's `$JCODE_SCRATCH_DIR` (global, defaults to
-  `~/.jcode/scratch/`) — that's NOT per-project. The bundle's
-  `$TMPDIR/jcode/<repo>-<short-sha>/` is per-project-scoped.
-- Build the worktree + branch + dep symlinks **before** handing off the
-  spawn prompt.
+- **For worktree-using roles** (`implementer`, `test-writer`, `doc-writer`):
+  - **Place project worktrees under the system temp dir** (`$TMPDIR`,
+    typically `/tmp`). The canonical layout is:
+    ```
+    $TMPDIR/jcode/<repo-name>-<short-sha>/wt-<label>/   # git worktrees
+    $TMPDIR/jcode/<repo-name>-<short-sha>/scratch/      # misc scratch files
+    ```
+    `<repo-name>` is the basename of the repo directory; `<short-sha>`
+    is the first 8 hex chars of `git rev-parse HEAD` (or a stable
+    per-machine identifier if HEAD is unborn). Use
+    `scripts/extension.sh scratch-dir` to print the canonical path for
+    the current project. This keeps worktrees OFF the user's home
+    filesystem and OUT of the repo itself — both important on macOS
+    where home may be on a slow drive and `/tmp` may be RAM-backed.
+    Distinct from jcode's `$JCODE_SCRATCH_DIR` (global, defaults to
+    `~/.jcode/scratch/`) — that's NOT per-project. The bundle's
+    `$TMPDIR/jcode/<repo>-<short-sha>/` is per-project-scoped.
+  - Build the worktree + branch + dep symlinks **before** handing off the
+    spawn prompt.
+  - Workers **never run package managers** (pnpm/yarn/cocoapods may be
+    missing in their environment). Symlink heavy in-repo deps from
+    main; rely on user-level caches for the rest. New dep needed: worker
+    reports via `open_questions[]`, you install in main, worker re-links.
+- **For root-cwd roles** (`reviewer`, `investigator`, `migrator`):
+  - No worktree to allocate. The worker shares root cwd.
+  - For `migrator`: `git checkout -b <worker_branch>` in root cwd
+    (typically `refactor/<name>_<short-sha>` or `feat/<name>_<short-sha>`)
+    **before** handing off the spawn prompt. The migrator commits
+    directly to that branch in root cwd; root inspects/squashes/merges
+    after the artifact lands.
+  - For `reviewer` / `investigator`: no setup beyond the artifact —
+    they read from root cwd.
 - **Never enter a worker worktree** yourself. Cross-worker reading
   happens via `git show <branch>:<file>` or
   `git diff main..<branch>`.
-- Workers **never run package managers** (pnpm/yarn/cocoapods may be
-  missing in their environment). Symlink heavy in-repo deps from
-  main; rely on user-level caches for the rest. New dep needed: worker
-  reports via `open_questions[]`, you install in main, worker re-links.
 
 ### 4.2 Spawn prompt contract (mandatory fields)
 
@@ -398,19 +426,32 @@ the load-bearing pieces from root's workspace perspective:
   enumerate it, the worker has no scope boundary, and you cannot
   blame the worker for expanding scope when you did not give one.
   Always include this list; never let the worker infer it.
-- `base_commit` — the SHA the worktree was cut from. The worker uses
-  this as the diff anchor when emitting `evidence[].commits`.
-  Without it, artifact↔branch correlation is impossible.
-- `worktree_path` — absolute path. Worker enters this as `cwd`.
-- `worker_branch` — branch the worker commits to. Convention:
-  `feat/<name>_<short-sha>` or `fix/<name>_<short-sha>`.
+- `base_commit` — the SHA the worktree (or root cwd branch) was cut
+  from. The worker uses this as the diff anchor when emitting
+  `evidence[].commits`. Without it, artifact↔branch correlation is
+  impossible.
+- `worktree_path` — absolute path. **Required for worktree-using
+  roles** (`implementer`, `test-writer`, `doc-writer`): worker enters
+  this as `cwd`. **Omitted for root-cwd roles** (`reviewer`,
+  `investigator`, `migrator`): worker uses the root session's cwd.
+- `worker_branch` — branch the worker commits to (or reads against,
+  for read-only roles). **Required for ALL roles** (even root-cwd
+  ones) — root needs to know which branch to merge or which branch's
+  diff to inspect. Convention: `feat/<name>_<short-sha>`,
+  `fix/<name>_<short-sha>`, `test/<name>_<short-sha>`,
+  `docs/<name>_<short-sha>`, or `refactor/<name>_<short-sha>`.
 
 ### 4.3 Worktree and branch lifecycle per status
 
-The root session owns worktree and branch lifecycle. After a worker
-emits its typed artifact, root acts on the worktree and branch
-according to the table below. Do NOT delete a worktree or branch
-until the artifact's outcome has been acted on.
+The root session owns worktree and branch lifecycle. **The worktree
+column only applies to worktree-using roles** (`implementer`,
+`test-writer`, `doc-writer`). For root-cwd roles (`reviewer`,
+`investigator`, `migrator`) the worktree column is a no-op — they
+share the root cwd, and `migrator`'s branch sits on the root cwd as
+a checked-out branch. After a worker emits its typed artifact, root
+acts on the worktree and branch according to the table below. Do NOT
+delete a worktree or branch until the artifact's outcome has been
+acted on.
 
 | Worker status + root decision | Worktree | Branch | Why |
 |---|---|---|---|
@@ -425,6 +466,9 @@ A re-spawn on a kept worktree (the `partial` + re-spawn row) MUST
 rebase onto the current integration base before resuming:
 `git rebase <new_base>` inside the worktree. Stale commits from
 prior sessions can otherwise leak into the final merge.
+
+For root-cwd roles, the only "lifecycle" actions are branch merge
+(`migrator`) or none (`reviewer` / `investigator`, who read-only).
 
 > **Note**: the §3 zero-work rule means "blocked with partial work"
 > should be reported as `partial` (with `[BLOCKER]` in

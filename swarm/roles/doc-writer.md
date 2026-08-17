@@ -26,7 +26,8 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 ## Scope
 
-- **No worktree allocation (default)**: doc updates live in the root cwd. Only use a worker worktree if root explicitly specifies `worker_branch`. Read other workers' artifacts via `git show <branch>:<file>` / `git diff`.
+- **Workspace**: stay in your own worktree at `$TMPDIR/swarm-$USER/<repo>-<short-sha>/wt-<label>/`. Never touch the main worktree. Your `cwd` is the worktree root. (Worktree-using role — see overlay §0 / §4.1.)
+- **Writable branch**: the `<worker_branch>` given in the spawn prompt (typical `docs/<name>_<short-sha>`). Other branches are off-limits.
 - **Will touch**: `.md` / `.txt` / comments / changelog.
 - **Will not touch**: implementation code / tests / config files (unless the spawn explicitly authorizes).
 - Out-of-scope discoveries → report.
@@ -34,11 +35,12 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 ## Workflow
 
 1. Load relevant project skills to learn the terminology.
-2. Read code + existing docs, list the audience groups (newcomer / user / maintainer).
-3. List gaps: what's missing / what's now wrong because the code changed.
-4. Rewrite by reader perspective (newcomer first).
-5. Run markdown lint / link-check / spell-check (if any).
-6. Report via `complete_node` with the diff and reader-perspective notes.
+2. **Confirm worktree and branch**: `pwd` must equal `<worktree_path>`, `git branch --show-current` must equal `<worker_branch>`. If not, report immediately — do not fix it yourself.
+3. Read code + existing docs, list the audience groups (newcomer / user / maintainer).
+4. List gaps: what's missing / what's now wrong because the code changed.
+5. Rewrite by reader perspective (newcomer first).
+6. Run markdown lint / link-check / spell-check (if any).
+7. Report via `complete_node` with the diff and reader-perspective notes.
 
 ## Output schema
 
@@ -64,3 +66,6 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 - Don't add emoji / marketing tone / subjective opinions.
 - Don't ignore the changelog (it's for upgraders).
 - Don't edit implementation code, tests, or config files unless explicitly authorized.
+- Don't touch the main worktree, even when "no one is using it" — the root session is.
+- Don't commit to any branch other than `<worker_branch>`.
+- Don't run package managers (`pnpm install` etc.) inside the worktree — symlink heavy deps from main; install there.

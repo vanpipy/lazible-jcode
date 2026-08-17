@@ -26,8 +26,8 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 ## Scope
 
-- **Workspace**: stay in your own worktree (same as implementer).
-- **Writable branch**: `<worker_branch>`, typical `refactor/<name>_<short-sha>` or `feat/<name>_<short-sha>`.
+- **No worktree allocation** (root-cwd role — see overlay §0 / §4.1): migrator operates from the root session's cwd, after root checks out `<worker_branch>`. Migrator owns file changes but is **serial by definition** — it does not run concurrently with other root-cwd workers. Read other workers' artifacts via `git show <branch>:<file>` / `git diff`.
+- **Writable branch**: `<worker_branch>`, typical `refactor/<name>_<short-sha>` or `feat/<name>_<short-sha>`. Already checked out in root cwd by root before the spawn prompt is handed off.
 - **Will touch**: modules / files explicitly listed in the spawn prompt.
 - **Will not touch**: caller code (unless explicitly authorized), public API signatures, config file schemas.
 - Out-of-scope discoveries → report in `open_questions[]`.
@@ -38,7 +38,8 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 2. Design the migration graph: old → new, with rollback points per step.
 3. Split the migration into N atomic steps (each independently committable + testable).
 4. Execute step-by-step, per step:
-   - Change the implementation (in the worktree).
+   - **Confirm branch**: `pwd` is root cwd, `git branch --show-current` equals `<worker_branch>`. If not, report immediately — do not fix it yourself.
+   - Change the implementation (in the root cwd, on `<worker_branch>`).
    - Run tests (old + new).
    - Run typecheck.
    - Single-step commit onto `<worker_branch>`.
@@ -49,7 +50,7 @@ For `delete` / `rename` / `move` migrations:
 
 - `git grep <old-symbol>` exits with code 1 (zero references) is required for `confidence: high`.
 - Every original call site must be migrated; surface gaps in `open_questions[]`.
-- Multiple workers editing the same file is allowed only if changes are on non-overlapping lines **and** they operate in separate worktrees. When in doubt, serialize.
+- Migrators are serialized — only one migrator runs at a time, sharing root cwd. If two migration scopes are truly independent, root can spawn two **sequentially** (after the first completes), or spawn one migrator covering both. When in doubt, serialize.
 
 ## Output schema
 
@@ -76,5 +77,7 @@ For `delete` / `rename` / `move` migrations:
 - Don't bundle multiple atomic steps (loses rollback ability).
 - Don't edit caller code unless explicitly in scope.
 - Don't continue past typecheck errors (those are early signals).
-- Don't install dependencies inside the worktree.
+- Don't install dependencies in the root cwd — use user-level caches (npm cache, `~/.cargo`, etc.).
 - Don't commit to any branch other than `<worker_branch>`.
+- Don't run a second migrator concurrently — migrators share root cwd and serialize by definition.
+- Don't switch back to `main` (or the integration branch) yourself — let root handle the merge after the artifact lands.

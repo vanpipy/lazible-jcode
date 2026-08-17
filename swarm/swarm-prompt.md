@@ -107,8 +107,15 @@ Every spawn call **must** include:
   project". An idle agent with no task wastes resources and confuses
   the swarm UI.
 - `model` + `effort` — explicit unless inheritance is intentional.
-- Worktree context — `worktree_path`, base commit SHA, worker branch
-  (`feat/<name>_<short-sha>` / `fix/<name>_<short-sha>` / etc.).
+- Worktree context — **for worktree-using roles** (`implementer`,
+  `test-writer`, `doc-writer`) include `worktree_path` plus base
+  commit SHA and worker branch (`feat/<name>_<short-sha>` /
+  `fix/<name>_<short-sha>` / `test/<name>_<short-sha>` /
+  `docs/<name>_<short-sha>` / `refactor/<name>_<short-sha>`). **For
+  root-cwd roles** (`reviewer`, `investigator`, `migrator`) omit
+  `worktree_path`; still pass `worker_branch` (root checks it out in
+  root cwd for `migrator`) and `base_commit` (the SHA the worker's
+  branch was cut from).
 
 Workers must **never** spawn their own children. If a worker thinks it
 needs help, it reports back to the root with a `follow_up` listing the
@@ -176,16 +183,30 @@ Each spawned worker owns a **tight, named scope**:
   the artifact's `open_questions[]` rather than editing it.
 - Conflicts with another in-flight worker → do not stomp. Report the
   conflict with file paths and let the root session arbitrate.
-- **Workspace isolation**: each worker operates in its own git worktree
-  at `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`. The root
-  session **never** enters a worker worktree. Cross-worker reading
-  happens via `git show <branch>:<file>` or
-  `git diff main..<branch>`. Spawn prompts MUST include the worktree
-  path, base commit SHA, and worker branch.
+- **Workspace isolation** (role-dependent — see overlay §0 for the full
+  picture):
+  - **Worktree-using roles** (`implementer`, `test-writer`, `doc-writer`):
+    each operates in its own git worktree at
+    `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`. The root
+    session **never** enters a worker worktree. Cross-worker reading
+    happens via `git show <branch>:<file>` or
+    `git diff main..<branch>`.
+  - **Root-cwd roles** (`reviewer`, `investigator`, `migrator`):
+    operate from the root session's cwd. `reviewer` and `investigator`
+    are read-only. `migrator` commits directly to `<worker_branch>`
+    in root cwd. Workers in either category do not write to other workers'
+    worktrees (N/A for root-cwd; for worktree-using, do not enter
+    peer worktrees).
+  - For worktree-using roles, spawn prompts MUST include worktree
+    path, base commit SHA, and worker branch. For root-cwd roles,
+    spawn prompts MUST include `worker_branch` (root checks out the
+    branch for `migrator`; reviewers/investigators use it as the
+    diff anchor) and `base_commit`. `worktree_path` is omitted.
 
-Multiple workers editing the same file is allowed **only** if their
-changes are on non-overlapping lines **and** they operate in separate
-worktrees. When in doubt, serialize.
+For worktree-using roles, multiple workers editing the same file is
+allowed **only** if their changes are on non-overlapping lines **and**
+they operate in separate worktrees. Root-cwd roles (`migrator`) are
+serialized by definition — never concurrent. When in doubt, serialize.
 
 ---
 
@@ -286,8 +307,20 @@ Facts that do **not** belong in memory:
 
 Swarms above ~2 concurrent workers collide on shared working trees
 (silent `git add` loss, `git status` cross-contamination, half-baked
-mixed reads). Each worker gets a dedicated git worktree. Root
-integrates. 1 worker : 1 worktree, no sharing, no nesting.
+mixed reads). Workers that own file changes get a dedicated git
+worktree. Root integrates. 1 worktree-using worker : 1 worktree, no
+sharing, no nesting.
+
+**Worktree-using roles** (3 of 6): `implementer`, `test-writer`,
+`doc-writer`. They write files and need isolation from each other and
+from the root cwd.
+
+**Root-cwd roles** (3 of 6): `reviewer`, `investigator`, `migrator`.
+Reviewer and investigator are read-only — they use git commands
+(`git show`, `git diff`, `git log`) from the root cwd. Migrator owns
+file changes but operates serially; it checks out `<worker_branch>`
+directly in the root cwd so root can quickly inspect/squash/merge
+without a separate worktree directory.
 
 **Canonical layout + per-status lifecycle + root responsibilities**:
 see `~/.jcode/prompt-overlay.md` §4.1 + §4.3. Worker perspective

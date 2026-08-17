@@ -57,8 +57,14 @@ graph TD
   help (`follow_up`)
 - Root-to-worker: scope prompt at spawn, follow-up (`dm`), control
   (`stop` / `assign_task`)
-- Workspace: root owns the main worktree; each worker owns a dedicated
-  worktree at `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`
+- Workspace (role-dependent):
+  - **Worktree-using roles** (`implementer`, `test-writer`, `doc-writer`) own a
+    dedicated worktree at
+    `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`.
+  - **Root-cwd roles** (`reviewer`, `investigator`, `migrator`) operate from the
+    root session's cwd. `reviewer` / `investigator` are read-only;
+    `migrator` is read-write but serial — root checks out `<worker_branch>`
+    in root cwd before handing off the spawn prompt.
 
 ---
 
@@ -144,7 +150,10 @@ Run these questions in order. Only proceed when the answers converge.
    re-spawn.
 
 Two `spawn` answers + no dependency = spawn. Always pass `label`,
-`model`, `effort`, worktree path, base SHA, and worker branch.
+`model`, `effort`, base SHA, and worker branch. Include `worktree_path`
+**only for worktree-using roles** (`implementer`, `test-writer`,
+`doc-writer`); omit it for root-cwd roles (`reviewer`, `investigator`,
+`migrator`).
 
 ---
 

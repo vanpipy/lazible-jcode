@@ -79,7 +79,8 @@ jcode-native `read`/`grep`/`edit`.
 
 ### Serena and worktrees
 
-jcode spawns workers into per-project worktrees
+jcode spawns worktree-using workers (`implementer`, `test-writer`,
+`doc-writer`) into per-project worktrees
 (`$TMPDIR/jcode/<repo>-<short-sha>/wt-<label>/`) but **inherits the
 project's MCP config** (extension point A4) into those workers — serena
 starts with the same `--project <main-repo>` path it had in the main
@@ -88,6 +89,13 @@ tree-sitter index is **anchored to the main repo HEAD**, not the
 worker's branch. `find_symbol` / `find_referencing_symbols` /
 `rename_symbol` will return results from main, silently missing the
 worker's edits.
+
+The `migrator` root-cwd role also benefits from serena but its caveat
+is different: migrator edits in root cwd on `<worker_branch>`, so
+serena sees the same files as the working tree, but its structural
+views (call graph, references) may reflect the `main` branch state
+rather than the migrator's branch. Apply the same "post-edit, re-read
+via `read`/`agentgrep`, do not trust serena" rule.
 
 Worker pattern:
 
