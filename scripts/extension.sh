@@ -61,6 +61,15 @@
 #     (prints skip message + rm hint, exit 0). Used by users/agents
 #     entering a new project that hasn't set up MCP yet.
 #
+#   scripts/extension.sh mcp init-global [--project=PATH]
+#     One-time global bootstrap: copy the bundle-shipped
+#     config/mcp.json.example into ~/.jcode/mcp.json — the global
+#     location matching every other bundle config (prompt-overlay.md,
+#     swarm-prompt.md, config.toml, roles/*.md). Default project is
+#     the bundle's own repo; --project=PATH overrides. install.sh
+#     runs this unconditionally on every install. Idempotent — same
+#     skip-when-present semantics as `mcp init`.
+#
 #   scripts/extension.sh mcp worktree-hint <wt-path>
 #     Worker-side serena staleness detector. jcode inherits the
 #     project's MCP config (A4) into spawned workers, but serena's
@@ -797,6 +806,59 @@ cmd_mcp() {
       echo "  project:  $project (substituted for /workspace)"
       echo ""
       echo "next: review $proj_mcp, then start a jcode session — servers register automatically"
+      ;;
+    init-global)
+      # One-time global bootstrap: copy the bundle's mcp.json template
+      # into ~/.jcode/mcp.json — the global location matching every other
+      # bundle config (prompt-overlay.md, swarm-prompt.md, config.toml,
+      # roles/*.md). Substitutes the /workspace placeholder with the
+      # target project root so the filesystem server scope is sane out
+      # of the box.
+      #
+      # Per-project overrides at <project>/.jcode/mcp.json still take
+      # precedence when present (jcode merges them over the global at
+      # session start), but they are no longer required for the default
+      # install — install.sh now creates ~/.jcode/mcp.json for every run.
+      #
+      # Usage: extension.sh mcp init-global [--project=PATH]
+      local project="$BUNDLE_ROOT"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project=*) project="${1#*=}" ;;
+          *) echo "extension.sh mcp init-global: unknown option: $1" >&2; return 2 ;;
+        esac
+        shift
+      done
+
+      if [[ ! -d "$project" ]]; then
+        echo "extension.sh mcp init-global: $project does not exist" >&2
+        return 2
+      fi
+
+      local jcode_home="${JCODE_HOME:-$HOME/.jcode}"
+      local target_mcp="$jcode_home/mcp.json"
+      local template="$BUNDLE_ROOT/config/mcp.json.example"
+
+      if [[ -e "$target_mcp" ]]; then
+        echo "extension.sh mcp init-global: $target_mcp already exists — not overwriting"
+        echo "  to re-bootstrap: rm $target_mcp && extension.sh mcp init-global"
+        return 0
+      fi
+      if [[ ! -e "$template" ]]; then
+        echo "extension.sh mcp init-global: template not found at $template" >&2
+        echo "  bundle may be incomplete; expected: <bundle>/config/mcp.json.example" >&2
+        return 3
+      fi
+
+      mkdir -p "$jcode_home"
+      sed "s|/workspace|$project|g" "$template" > "$target_mcp"
+
+      echo "extension.sh mcp init-global: installed"
+      echo "  template: $template"
+      echo "  target:   $target_mcp"
+      echo "  project:  $project (substituted for /workspace)"
+      echo ""
+      echo "next: review $target_mcp, then start a jcode session — servers register automatically"
       ;;
     worktree-hint)
       # Worker-side serena staleness detector. jcode spawns workers into

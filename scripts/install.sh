@@ -52,34 +52,36 @@ overwrites an existing file):
      for cleaning up stale swarm worktrees.
   2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md,
      and swarm/roles/*.md into ~/.jcode/.
-  3. Auto-init <project>/.jcode/mcp.json from the bundle's template
+  3. Auto-init ~/.jcode/mcp.json from the bundle's template
      (config/mcp.json.example), substituting the actual project root for
-     the /workspace placeholder. Skips with a message if the file already
+     the /workspace placeholder. Mirrors the "all config in ~/.jcode/"
+     pattern of steps 1-2. With --project=PATH where PATH is not the
+     bundle's own repo, also writes a per-project override at
+     <PATH>/.jcode/mcp.json. Skips with a message if either file already
      exists — never overwrites.
 
-Existing files at any destination (steps 1-3) are backed up to <dst>.bak.<ts>
+Existing files at any destination (steps 1-2) are backed up to <dst>.bak.<ts>
 before being replaced. A destination that is already a symlink to the source
 target is left unchanged (no backup, no recreate).
 
 Options:
   -h, --help          Show this help.
-  --project=PATH       Init .jcode/mcp.json for PATH (default: the bundle's
-                       own checkout at $repo_root). Use this when setting
-                       up the bundle for a target project other than the
-                       bundle itself — the bundle install still goes to
-                       ~/.jcode/, but the MCP template lands in
-                       <PATH>/.jcode/mcp.json.
+  --project=PATH       Substitute PATH for /workspace when generating
+     ~/.jcode/mcp.json (default: the bundle's own checkout at
+     $repo_root). When PATH is not the bundle's own repo, also writes
+     a per-project override at <PATH>/.jcode/mcp.json so multi-project
+     hosts can scope filesystem/git/serena to the right repo.
 
 Examples:
-  # Default: install bundle + init .jcode/mcp.json for the bundle's own repo.
+  # Default: install bundle + init ~/.jcode/mcp.json (scope = bundle's own repo).
   $0
 
-  # Install bundle AND init MCP for another project (e.g. your app).
+  # Install bundle AND init a per-project override for another project (e.g. your app).
   $0 --project=/path/to/your/project
 EOF
 }
 
-# Default project for step 4 = the bundle's own checkout. --project=PATH
+# Default project for step 3 = the bundle's own checkout. --project=PATH
 # overrides this for users setting up the bundle in a different repo.
 TARGET_PROJECT="$repo_root"
 while [[ $# -gt 0 ]]; do
@@ -265,15 +267,29 @@ for role_file in "$repo_root/swarm/roles/"*.md; do
   overwrite_link "$role_file" "$JCODE_HOME/roles/$role_name" "roles/$role_name"
 done
 
-# ── step 3: auto-init <project>/.jcode/mcp.json ──────────────────────────────
-# .jcode/mcp.json is gitignored (the bundle keeps the template in
-# config/mcp.json.example and lets each clone create its own). Without this
-# step, a fresh clone has no MCP servers and jcode's session start fails
-# silently. We delegate to `extension.sh mcp init` which handles the template
-# copy, path substitution, and idempotent skip-when-present logic. Default
-# project is the bundle's own checkout; --project=PATH overrides for users
-# setting up the bundle in a different repo.
-info "step 3/3: initializing .jcode/mcp.json for $TARGET_PROJECT"
-bash "$repo_root/scripts/extension.sh" mcp init "--project=$TARGET_PROJECT"
+# ── step 3: auto-init ~/.jcode/mcp.json (global, like every other bundle config) ──
+# The bundle installs ALL its config to ~/.jcode/ — prompt-overlay.md,
+# swarm-prompt.md, config.toml, roles/*.md — so mcp.json belongs there too.
+# This is the single source of truth for MCP server registration after install.
+#
+# Per-project override at <project>/.jcode/mcp.json remains available for users
+# with multiple projects that need different MCP server scopes, but is opt-in
+# (only when --project=PATH was given AND PATH != bundle repo). jcode merges
+# per-project over global at session start, so the override still takes effect
+# when present.
+#
+# Both initializations delegate to `extension.sh mcp {init,init-global}`,
+# which handle template copy, /workspace → $PROJECT substitution, and the
+# idempotent skip-when-present semantics.
+info "step 3a/3: initializing ~/.jcode/mcp.json (global, matches every other bundle config)"
+bash "$repo_root/scripts/extension.sh" mcp init-global "--project=$TARGET_PROJECT"
 
-info "done — jcode + lazible-jcode overlay installed, .jcode/mcp.json initialized"
+# Opt-in per-project: only when the user explicitly targeted a different repo.
+# Skipping this on default install keeps the install pattern uniform ("all
+# config in ~/.jcode/") and avoids a redundant copy in the bundle's own repo.
+if [[ "$TARGET_PROJECT" != "$repo_root" ]]; then
+  info "step 3b/3: also initializing per-project override at $TARGET_PROJECT/.jcode/mcp.json"
+  bash "$repo_root/scripts/extension.sh" mcp init "--project=$TARGET_PROJECT"
+fi
+
+info "done — jcode + lazible-jcode overlay installed, ~/.jcode/mcp.json initialized"

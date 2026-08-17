@@ -58,10 +58,10 @@ lazible-jcode/
 git clone https://github.com/vanpipy/lazible-jcode.git
 cd lazible-jcode
 
-# 2. Install jcode + overlay + swarm config + .jcode/mcp.json (3 steps, overwrite-by-default; step 3 idempotent)
+# 2. Install jcode + overlay + swarm config + ~/.jcode/mcp.json (3 steps, overwrite-by-default; step 3 idempotent)
 ./scripts/install.sh
 
-# 2b. Or, set up the bundle for a different project (installs bundle + inits that project's .jcode/mcp.json)
+# 2b. Or, set up the bundle for a different project (installs bundle + inits that project's .jcode/mcp.json override)
 ./scripts/install.sh --project=/path/to/your/project
 
 # 3. Verify
@@ -84,7 +84,7 @@ The accepted flags are:
 | Flag | Effect |
 |---|---|
 | `-h`, `--help` | Show usage |
-| `--project=PATH` | Init `.jcode/mcp.json` for PATH (default: the bundle's own checkout). Use when setting up the bundle for another project.
+| `--project=PATH` | Substitute `PATH` for `/workspace` in the global `~/.jcode/mcp.json` (default: the bundle's own checkout). When `PATH` is not the bundle's own repo, install additionally writes a per-project override at `<PATH>/.jcode/mcp.json` so multi-project hosts can scope filesystem/git/serena to the right repo. |
 
 See `docs/INSTALL.md` for full install / uninstall / troubleshooting
 detail, including the `--purge`, `--yes`, and `--keep-binary` flags on

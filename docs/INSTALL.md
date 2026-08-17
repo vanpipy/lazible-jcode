@@ -24,6 +24,10 @@ time and overwrites the destination without prompting:
    and `swarm/roles/*.md` into their canonical locations under `~/.jcode/`.
    `swarm/ARCHITECTURE.md` and `docs/ARCHITECTURE.md` are reference docs
    and are not installed.
+3. Auto-init `~/.jcode/mcp.json` from `config/mcp.json.example` so jcode
+   has MCP servers (filesystem / git / serena) on first session start.
+   Idempotent — skips if the file already exists. See "Step 3" below for
+   the per-project override semantics.
 
 Existing files at any destination are backed up to `<dst>.bak.<timestamp>`
 before being replaced.
@@ -52,29 +56,41 @@ reviewable.
 | Flag | Effect |
 |---|---|
 | `-h`, `--help` | Show usage |
-| `--project=PATH` | Init `.jcode/mcp.json` for PATH (default: the bundle's own checkout). Use this when setting up the bundle for a target project other than the bundle itself — the bundle install still goes to `~/.jcode/`, but the MCP template lands in `<PATH>/.jcode/mcp.json`. |
+| `--project=PATH` | Default target for the MCP config substitution. The bundle always installs `~/.jcode/mcp.json` (with `PATH` substituted for `/workspace` in the filesystem server scope). When `PATH` is not the bundle's own repo, install additionally inits a per-project override at `<PATH>/.jcode/mcp.json` so multi-project hosts can scope filesystem/git/serena to the right repo. |
 
-The installer runs **4 steps** every time and overwrites every step 1-3 destination (with `.bak.<ts>` backup first). Step 4 is idempotent — skips with a message if `.jcode/mcp.json` already exists, never overwrites.
+The installer runs **3 steps** every time. Steps 1-2 overwrite their
+destinations (`.bak.<ts>` backup first); step 3 is idempotent — skips with a
+message if either target already exists, never overwrites.
 
-## Step 4: auto-init `.jcode/mcp.json`
+## Step 3: auto-init `~/.jcode/mcp.json`
 
-`.jcode/mcp.json` is gitignored, so a fresh clone of any project (including
-this one) doesn't ship one. Without step 4, jcode's session start would
-have no MCP servers and silently lose filesystem/git/serena tooling.
+`.jcode/mcp.json` is gitignored, so a fresh install never ships one.
+Without this step, jcode's session start would have no MCP servers and
+silently lose filesystem/git/serena tooling. Step 3 mirrors the
+"all-config-in-`~/.jcode/`" install pattern (same as `prompt-overlay.md`,
+`swarm-prompt.md`, `config.toml`, `roles/*.md`):
 
-Step 4 calls `scripts/extension.sh mcp init --project=PATH`, which:
+1. **3a (always)** — calls `scripts/extension.sh mcp init-global
+   --project=$TARGET_PROJECT`. Copies `config/mcp.json.example` to
+   `~/.jcode/mcp.json`, substituting the `/workspace` placeholder with
+   the target project root. Idempotent — skips if `~/.jcode/mcp.json`
+   already exists.
 
-1. Skips if `<PATH>/.jcode/mcp.json` already exists (idempotent, exit 0)
-2. Otherwise, copies `config/mcp.json.example` (the bundle-shipped template) to `<PATH>/.jcode/mcp.json`, substituting the `/workspace` placeholder with the actual project root
+2. **3b (only when `--project=PATH` was given AND `PATH` != bundle repo)**
+   — calls `scripts/extension.sh mcp init --project=PATH`. Adds a
+   per-project override at `<PATH>/.jcode/mcp.json` so jcode's
+   session-start merge picks up project-specific MCP scopes. Skipped
+   on default install (where `PATH` is the bundle's own repo) — the
+   global config already covers it.
 
-So after `install.sh`, both the bundle (in `~/.jcode/`) and the target
-project's MCP config are set up. For using the bundle in another project:
+So after `install.sh`, the bundle's MCP config is set up alongside every
+other bundle config. For using the bundle in another project:
 
 ```bash
-# Default: install bundle + init .jcode/mcp.json in the bundle's own checkout
+# Default: install bundle + init ~/.jcode/mcp.json (scope = bundle's own repo)
 ./scripts/install.sh
 
-# Install bundle AND init MCP for your app
+# Install bundle AND init per-project override for your app
 ./scripts/install.sh --project=/path/to/your/app
 ```
 
