@@ -212,21 +212,79 @@ serialized by definition — never concurrent. When in doubt, serialize.
 
 ## 7. Verification before claiming done
 
-A worker must run the project's actual gates on its slice, not
-hand-wave:
+Workers run **slice-scoped gates** on the `files_touched[]` they
+committed. Full-suite regression is **root's responsibility** (see
+overlay §5.2), or — for projects with expensive suites — a dedicated
+**reviewer worker** operating in "regression auditor" mode. The
+worker who produced the diff is the wrong place to run a 30-minute
+end-to-end suite: the worktree sits idle, the model context sits
+idle, and the same gate gets re-run anyway at integration time.
 
-- Type checks (`tsc --noEmit` / equivalent for the language).
-- Linter (project's actual linter, not generic ESLint).
-- Tests (run the project's test runner against changed files).
-- Build (when changes touch build config, native deps, or asset
-  pipeline).
+Three layers. Each owns a different scope:
 
-Report results verbatim in the artifact's `validation` field. "Looks
-good" is not validation. If a gate cannot be run (e.g. env missing),
-say so explicitly and downgrade `confidence` accordingly.
+- **Layer 1 — slice-scoped gates (worker, mandatory).** Run the
+  minimum set of gates that catch breakage in your diff. Must run
+  before you emit your artifact. Detailed below.
+- **Layer 2 — full-suite gates (root, at integration time).** Root
+  runs the full suite once per merge in overlay §5.2. The worker's
+  Layer 1 result is **evidence**, not a substitute: it answers "did
+  this worker break what they touched?", while root's full result
+  answers "did the merge break anything anywhere?"
+- **Layer 3 — audit regression (optional, dedicated reviewer).**
+  When the project has a heavy suite (>2 min) or root's machine is
+  busy, delegate the full regression to a `reviewer` worker spawned
+  in regression-auditor mode (see `roles/reviewer.md`). The auditor
+  runs `<project> test` / `<project> typecheck` / `<project> lint`
+  from root cwd against the merged branch and emits the standard
+  reviewer artifact. Spawn it after root's merge, before push.
 
-For changes to shared infrastructure (build, CI, deps), require an
-end-to-end verification — not just "tests pass on my slice".
+### Layer 1 — slice-scoped gates (the worker's job)
+
+Scope every gate to your `files_touched[]`. The slice guarantee: if
+your changes broke typecheck / lint / the targeted tests, the gate
+catches it. Cross-file breakage is caught one layer up.
+
+| Gate | Slice-scoped form | What it catches |
+|---|---|---|
+| Type check | `tsc --noEmit <files>` / `mypy <files>` / `go build ./<pkg>` (Go is module-scoped) | Type errors in your diff |
+| Lint | `eslint <files>` / `ruff check <files>` / `golangci-lint run --new-from-rev=<base> <files>` | Style / safety violations in your diff |
+| Tests | Run the test files that import your touched files. For TS: `jest <test-file>`. For Python: `pytest <test-file>`. For Go: `go test ./<pkg>` in the package you touched. | Behavior regression in your slice |
+| Build | Only when `files_touched[]` includes build config / native deps / asset pipeline (e.g. `package.json`, `Cargo.toml`, `webpack.config.js`, `tsconfig.json`) | Build pipeline breakage |
+
+When a tool doesn't accept scoped invocation (e.g. a black-box
+`<project> test` script), pass `<files>` via the project's mechanism
+(filter file, test-name pattern, `--testPathPattern`, etc.). If no
+scoped form exists, run the smallest subset you can — **never** the
+full suite if it takes >2 minutes. Full suite is root's job.
+
+### Layer 1: exceptions
+
+- **Shared infra.** When `files_touched[]` touches build config,
+  package manifests, CI, or other shared infrastructure, slice
+  typecheck / lint are not sufficient — types and styles in unrelated
+  files can break too. Run the smallest meaningful superset: for a
+  `tsconfig.json` change, run `tsc --noEmit` on the whole project;
+  for a `package.json` change, run `npm run build` even if only one
+  dev dep changed. Mark this in `validation` explicitly so root's
+  Layer 2 sees the broadened scope.
+- **Env-missing gates.** If a gate cannot be run (pnpm missing, no
+  network, broken cache), say so explicitly and downgrade
+  `confidence: medium` or `low`. "Looks good" is not validation.
+- **Trivial slices.** For a 1-line typo fix in one file, the slice
+  gate is `cat <file>` + a `git diff` review. State that.
+
+### Reporting
+
+Report results verbatim in the artifact's `validation` field:
+
+```
+validation: "tsc --noEmit src/foo.ts: 0 errors; eslint src/foo.ts: clean; jest src/foo.test.ts: 3/3 pass"
+```
+
+`what_i_did_not_check[]` must list what you did **not** run (the full
+suite, e2e, browser smoke, cross-file typecheck, etc.). "Nothing" is
+only valid when truly exhaustive. The reader uses this list to
+decide whether to schedule a Layer 3 regression audit.
 
 ---
 
@@ -272,7 +330,14 @@ coordination debt.
   to the main repo) — it does NOT re-index per worktree. Post-edit
   `find_symbol` / `find_referencing_symbols` return main-repo HEAD
   results, silently missing your edits. Use `read` + `agentgrep` for
-  post-edit verification. See §12.
+  post-edit verification. See §14.
+- **Running the project's full test suite from the worker worktree.**
+  The full suite belongs to root (overlay §5.2 Layer 2) or a dedicated
+  `regression-auditor` reviewer (Layer 3). Running it from a worker
+  worktree pins the worktree + the model's context for minutes and
+  produces zero additional signal — root will re-run the same gate at
+  integration time. The worker runs only the slice-scoped gates that
+  catch breakage in its `files_touched[]` (see §7 Layer 1).
 
 ---
 

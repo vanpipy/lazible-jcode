@@ -43,7 +43,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
    - Run tests (old + new).
    - Run typecheck.
    - Single-step commit onto `<worker_branch>`.
-5. After all steps, run the full CI gate suite.
+5. After all steps, run the full suite (Layer 2 of the layered gate model — `swarm-prompt.md` §7). The migrator runs in root cwd (serialized, no worktree pinning), so the full suite is acceptable here as the final pre-artifact check. Root's integration gates in `prompt-overlay.md` §5.2 still apply before merge — this is the migrator's pre-handoff check, not a substitute.
 6. Report via `complete_node` with the migration graph and step-by-step commit SHAs.
 
 For `delete` / `rename` / `move` migrations:

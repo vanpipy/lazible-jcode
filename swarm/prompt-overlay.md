@@ -506,9 +506,23 @@ See §3 "Root's action per status."
 
 ### 5.2 Cross-worker gates (run at integration time)
 
-The worker runs its own per-slice gates (typecheck, lint, unit test
-on the touched files). The root runs cross-cutting gates before
-merging any worker branch:
+Verification is **layered** (full model in `swarm-prompt.md` §7). The
+worker (Layer 1) runs **slice-scoped** gates on its `files_touched[]`
+and reports them in `validation`. Root (Layer 2) owns the **full
+suite** at integration time — the worker is the wrong place to run a
+30-minute end-to-end suite because the worktree and model context sit
+idle while it runs. When the full suite is expensive or root's machine
+is busy, root can also **delegate Layer 2 to a `reviewer` worker** in
+regression-auditor mode (Layer 3 — see `roles/reviewer.md`).
+
+| Layer | Owner | Scope | When | Purpose |
+|---|---|---|---|---|
+| 1 | the producer worker | `files_touched[]` only | before the artifact is emitted | "Did this worker break what they touched?" Slice-scoped typecheck / lint / targeted tests. |
+| 2 | root (or via pre-merge hook) | full integration base | after merge, before push | "Did the merge break anything anywhere?" Full typecheck / lint / unit suite / e2e. |
+| 3 | dedicated `reviewer` worker (optional) | full integration base | when Layer 2 is expensive (>2 min) or root's machine is busy | Same as Layer 2, but the gate runs in a worker harness so root's attention is free. |
+
+**Default Layer 2 commands** (run on every merge — these are root's
+job, not the producer worker's):
 
 | Gate | Default command | Purpose |
 |---|---|---|
@@ -525,6 +539,29 @@ If any gate fails, do not merge. Either:
   same scope + the gate failure in the prompt.
 - Or amend the worker's branch (root-side fixup commit) and re-run
   the gates before merging.
+
+**Layer 3 — auditing via a reviewer worker.** When the project's full
+suite is expensive (e.g. >2 min) or root's machine is busy with other
+work, spawn a `reviewer` worker in regression-auditor mode. The spawn
+prompt should declare:
+
+- `label: "regression auditor"` (or similar).
+- `worker_branch:` the merged branch — read-only, no commit.
+- `scope_body:` the full suite command(s) + the branch under test.
+- `termination_template:` the standard reviewer artifact, with
+    `validation` carrying the raw gate output.
+- `mode: regression-auditor` (recognized in `roles/reviewer.md`).
+
+The auditor uses root cwd (no worktree — see overlay §0 for the
+role's workspace discipline). Spawn it after the merge and before
+push. Treat a `blocker` finding as a hard reject of the merge; treat
+`major` / `minor` findings as candidates for follow-up work.
+
+**Do not run the producer worker's full suite as a substitute for
+Layer 2.** The producer worker is fired and forgotten; root is the
+one integrating the merge and is the only one with the full picture
+at that point. Re-running the full suite at integration is the cost
+of safe merging.
 
 ### 5.3 Push policy
 

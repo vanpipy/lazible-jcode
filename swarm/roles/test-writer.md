@@ -42,8 +42,8 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
    - `async` catch paths.
    - Callback / event-handler exception paths.
 3. Write orthogonal cases for each path.
-4. Run coverage (`jest --coverage` etc.), compute the "covered / total paths" ratio.
-5. If ratio < 90%, add cases until you hit it.
+4. Run coverage **scoped to the files you added tests for** (`jest --coverage <file>` or equivalent). The 90% threshold applies to the slice you wrote, not the whole project — full project coverage is root's job (overlay §5.2 Layer 2). Compute the "covered / total paths in your slice" ratio.
+5. If ratio < 90% on your slice, add cases until you hit it. Do NOT run the full project's coverage from the worktree (long, blocks the swarm — root will run the full sweep at integration).
 6. Report via `complete_node` with coverage numbers + list of uncovered paths.
 
 ## Output schema

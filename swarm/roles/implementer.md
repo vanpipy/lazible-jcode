@@ -39,7 +39,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 4. **Red — write a failing test that proves the new behavior**. Run it once to confirm it really fails. Capture the failure stdout / stderr / line numbers as evidence into the artifact. The only exceptions are pure refactor / pure docs / typo fixes — these are zero-behavior-change tasks; mark `no-test scope` in the artifact and explain why.
 5. **Green — minimal implementation to turn the red test green**. Change only the minimum code needed to pass the red test; refuse "while I'm here" cleanups. Run the test again, capture the passing output as evidence.
 6. **Refactor — only after green**. Now optimize names, extract functions, dedupe, pay down tech debt. The red + green tests are the safety net; re-run after refactor to confirm still green.
-7. **Run full CI gates** (typecheck / lint / format / full test suite) — any failure blocks the commit. CI output goes verbatim into the artifact's `validation` field.
+7. **Run slice-scoped gates** (typecheck / lint / targeted tests) — any failure blocks the commit. Scope every gate to `files_touched[]`; the full suite is root's job (overlay §5.2 Layer 2). See `swarm-prompt.md` §7 for the layered gate model and the per-language invocation examples. Gate output goes verbatim into the artifact's `validation` field. When `files_touched[]` includes build config / package manifests / CI files, run the smallest meaningful superset (e.g. `tsc --noEmit` on the whole project for a `tsconfig.json` change) and note the broadened scope in `validation`. Do NOT run the full test suite from the worktree — it pins the worktree + model context for minutes and root will re-run it anyway at integration.
 
 ### API replacement refactor constraints
 
