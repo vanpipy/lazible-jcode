@@ -67,7 +67,9 @@ ${LAZIBLE_TMPDIR:-/tmp}/jcode/<repo>-<short-sha>/wt-<label>/
   using `git worktree` from a detached state). The non-git fallback
   uses python3 / jq / sha256sum / cksum — last-resort cksum warns
   because collisions are easier.
-- `wt-<label>` is one per worker; see swarm-prompt.md §4.
+- `wt-<label>` is one per worktree-using worker (3 of 6 roles:
+  `implementer`, `test-writer`, `doc-writer`; see
+  `swarm-prompt.md` §11).
 
 ### `~/.local/bin`
 
