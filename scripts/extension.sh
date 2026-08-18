@@ -604,19 +604,22 @@ cmd_preflight() {
 # ---------- subcommand: scratch-dir ----------
 # Print the canonical per-project scratch root under $TMPDIR.
 # Layout: $TMPDIR/jcode/<repo-name>-<short-sha>/
-#   ├── wt-<label>/    # git worktrees (one per worker)
-#   └── scratch/       # misc scratch files
+#   ├── ws-<label>/           # workspaces (one per logical task; backing = worktree | folder)
+#   ├── .jcode-workspaces/    # workspace manifests (one JSON per workspace)
+#   └── scratch/              # misc scratch files
 #
-# Used by root when constructing the spawn prompt's worktree_path arg.
+# Used by root when constructing the spawn prompt's workspace_path arg.
 # The convention is documented in swarm/prompt-overlay.md §4.1 and
-# keeps worktrees OFF the user's home filesystem and OUT of the repo
+# keeps workspaces OFF the user's home filesystem and OUT of the repo
 # itself — both important on macOS where home may be slow and /tmp
 # may be RAM-backed.
 #
 # Args:
 #   (none)             print the scratch root only
-#   wt <label>         print $root/wt-<label>
+#   ws <label>         print $root/ws-<label>
+#   wt <label>         alias for `ws <label>` (deprecated; warns to stderr)
 #   scratch            print $root/scratch
+#   clean [--yes]      remove the entire scratch root (dry-run by default)
 #
 # If cwd is not inside a git repo, fall back to a synthetic key from
 # the absolute path (stable per-machine, deterministic).
@@ -671,7 +674,15 @@ cmd_scratch_dir() {
   root="$tmpdir/jcode/${repo_name}-${short_sha}"
   case "$kind" in
     root)    echo "$root" ;;
-    wt)      echo "$root/wt-${2:?usage: extension.sh scratch-dir wt <label>}" ;;
+    ws)      echo "$root/ws-${2:?usage: extension.sh scratch-dir ws <label>}" ;;
+    wt)
+      # Deprecated alias for `ws <label>`. The old worktree-only layout
+      # used wt-<label>; the new workspace layer uses ws-<label>. For
+      # backward compatibility we keep emitting the ws- path but warn
+      # so callers update.
+      echo "extension.sh: scratch-dir wt is deprecated; use 'ws'" >&2
+      echo "$root/ws-${2:?usage: extension.sh scratch-dir ws <label>}"
+      ;;
     scratch) echo "$root/scratch" ;;
     clean)
       # Remove the entire scratch root for the current project.
@@ -705,10 +716,443 @@ cmd_scratch_dir() {
       echo "removed: $root"
       ;;
     *)
-      echo "usage: extension.sh scratch-dir [root|wt <label>|scratch|clean [--yes]]" >&2
+      echo "usage: extension.sh scratch-dir [root|ws <label>|wt <label>|scratch|clean [--yes]]" >&2
       return 2
       ;;
   esac
+}
+
+# ---------- subcommand: workspace ----------
+# Workspace lifecycle for spawn coordination. A workspace is the unit
+# of file allocation; multiple slots may share one workspace when
+# their `files_touched[]` is disjoint (root enforces disjointness on
+# `add-slot`). Replaces the old "1 worker : 1 worktree" rule.
+#
+# Workspace identity = (repo, short-sha, label). Path:
+#   $TMPDIR/jcode/<repo-name>-<short-sha>/ws-<label>/
+# Manifest at:
+#   $TMPDIR/jcode/<repo-name>-<short-sha>/.jcode-workspaces/<label>.json
+#
+# Backing auto-detected:
+#   - worktree (project has .git/) — `git worktree add -b ws-<label>`,
+#     all slots commit to the shared ws-<label> branch.
+#   - folder (no .git/) — plain directory; `git init` + empty initial
+#     commit if git available, otherwise raw fs. Slots write files but
+#     do not commit; root copies contents at integration time.
+#
+# Usage:
+#   extension.sh workspace init <label> [--backing=worktree|folder]
+#     Create a workspace + manifest. Prints path + branch + manifest.
+#     Exit 0 on success, 1 if already exists, 3 on hard fail (git
+#     missing for worktree backing, .git missing for folder backing
+#     + git init requested, etc.).
+#
+#   extension.sh workspace add-slot <label> --role=<r> --files=<f1,f2,...>
+#                                    [--slot-id=<id>]
+#     Register a slot in the manifest. Validates role + disjointness.
+#     Auto-assigns slot id if not given: `<role>-<n>` where n is
+#     (existing slots with same role) + 1.
+#     Exit 0 on success, 1 on overlap, 3 on missing workspace, 2 on usage.
+#
+#   extension.sh workspace ls
+#     List workspaces in current project's scratch dir. Prints label,
+#     backing, slot count, status.
+#
+#   extension.sh workspace show <label>
+#     Pretty-print the manifest for <label>.
+#
+#   extension.sh workspace destroy <label> [--keep-branch]
+#     Remove the workspace directory. Default: also delete ws-<label>
+#     branch (worktree backing) via `git branch -D`.
+#     --keep-branch: leave the branch; root will handle merge.
+#     Marks manifest status="destroyed".
+#
+#   extension.sh workspace clean [--yes]
+#     Remove all "completed" or "destroyed" workspaces. Dry-run by default.
+cmd_workspace() {
+  local action="${1:-}"
+  shift || true
+  case "$action" in
+    init)        cmd_workspace_init "$@" ;;
+    add-slot)    cmd_workspace_add_slot "$@" ;;
+    ls)          cmd_workspace_ls "$@" ;;
+    show)        cmd_workspace_show "$@" ;;
+    destroy)     cmd_workspace_destroy "$@" ;;
+    clean)       cmd_workspace_clean "$@" ;;
+    *)
+      echo "usage: extension.sh workspace {init|add-slot|ls|show|destroy|clean} ..." >&2
+      return 2
+      ;;
+  esac
+}
+
+# Helper: get the per-project scratch root + manifests dir.
+# Defined here so all workspace subcommands share one source of truth.
+_workspace_dirs() {
+  WS_ROOT="$(cmd_scratch_dir root 2>/dev/null || true)"
+  if [[ -z "$WS_ROOT" ]]; then
+    echo "extension.sh workspace: cannot derive scratch root (no repo + no fallback)" >&2
+    return 3
+  fi
+  WS_MANIFESTS_DIR="$WS_ROOT/.jcode-workspaces"
+}
+
+# Helper: read manifest path for <label>, fail with exit code if missing.
+_workspace_manifest_path() {
+  local label="$1"
+  _workspace_dirs || return $?
+  echo "$WS_MANIFESTS_DIR/$label.json"
+}
+
+cmd_workspace_init() {
+  local label="${1:?usage: workspace init <label> [--backing=worktree|folder]}"
+  shift
+  local backing=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --backing=*) backing="${1#*=}" ;;
+      *) echo "extension.sh workspace init: unknown flag '$1'" >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  # Auto-detect backing if not specified.
+  if [[ -z "$backing" ]]; then
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      backing="worktree"
+    else
+      backing="folder"
+    fi
+  fi
+  if [[ "$backing" != "worktree" && "$backing" != "folder" ]]; then
+    echo "extension.sh workspace init: --backing must be 'worktree' or 'folder' (got '$backing')" >&2
+    return 2
+  fi
+
+  _workspace_dirs || return $?
+  local ws_path="$WS_ROOT/ws-$label"
+  local manifest="$WS_MANIFESTS_DIR/$label.json"
+
+  if [[ -e "$ws_path" || -e "$manifest" ]]; then
+    echo "extension.sh workspace init: '$label' already exists at $ws_path or $manifest" >&2
+    return 1
+  fi
+
+  local branch="ws-$label"
+  local base_commit=""
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+  local short_sha
+  short_sha="$(git rev-parse --short=8 HEAD 2>/dev/null || echo "unborn")"
+
+  if [[ "$backing" == "worktree" ]]; then
+    if ! command -v git >/dev/null 2>&1; then
+      echo "extension.sh workspace init: git required for worktree backing" >&2
+      return 3
+    fi
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+      echo "extension.sh workspace init: cwd is not a git repo; cannot use worktree backing" >&2
+      echo "  pass --backing=folder for non-git projects" >&2
+      return 3
+    fi
+    base_commit="$(git rev-parse HEAD 2>/dev/null || echo "")"
+    git worktree add -b "$branch" "$ws_path" || {
+      echo "extension.sh workspace init: git worktree add failed" >&2
+      return 3
+    }
+  else
+    mkdir -p "$ws_path" || return 3
+    if command -v git >/dev/null 2>&1; then
+      # Optional: git init inside the folder so workers can `git add` etc.
+      # Workers still do NOT commit to a shared workspace branch — root
+      # integrates by copying files. branch stays empty for folder backing.
+      (cd "$ws_path" && git init -q && git -c user.name=j -c user.email=j@localhost commit --allow-empty -q -m "workspace init" 2>/dev/null) || true
+      base_commit=""
+    else
+      base_commit=""
+    fi
+    branch=""
+  fi
+
+  mkdir -p "$WS_MANIFESTS_DIR"
+  # Write manifest via python3 for safe JSON (paths may contain special chars).
+  LABEL="$label" REPO="$repo_root" SHORT_SHA="$short_sha" BACKING="$backing" \
+  BASE_COMMIT="$base_commit" BRANCH="$branch" WS_PATH="$ws_path" \
+  MANIFEST_PATH="$manifest" \
+  python3 - <<'PY' || {
+import json, os
+m = {
+  "label": os.environ["LABEL"],
+  "repo": os.environ["REPO"],
+  "short_sha": os.environ["SHORT_SHA"],
+  "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "backing": os.environ["BACKING"],
+  "base_commit": os.environ["BASE_COMMIT"],
+  "branch": os.environ["BRANCH"],
+  "path": os.environ["WS_PATH"],
+  "status": "active",
+  "slots": [],
+}
+os.makedirs(os.path.dirname(os.environ["MANIFEST_PATH"]), exist_ok=True)
+json.dump(m, open(os.environ["MANIFEST_PATH"], "w"), indent=2)
+PY
+      echo "extension.sh workspace init: failed to write manifest" >&2
+      return 3
+    }
+
+  echo "workspace initialized: $label"
+  echo "  backing:     $backing"
+  echo "  path:        $ws_path"
+  if [[ -n "$branch" ]]; then
+    echo "  branch:      $branch"
+    echo "  base_commit: ${base_commit:-(unknown)}"
+  fi
+  echo "  manifest:    $manifest"
+}
+
+cmd_workspace_add_slot() {
+  local label="${1:?usage: workspace add-slot <label> --role=<r> --files=<f1,f2,...> [--slot-id=<id>]}"
+  shift
+  local role="" files_csv="" slot_id=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --role=*) role="${1#*=}" ;;
+      --files=*) files_csv="${1#*=}" ;;
+      --slot-id=*) slot_id="${1#*=}" ;;
+      *) echo "extension.sh workspace add-slot: unknown flag '$1'" >&2; return 2 ;;
+    esac
+    shift
+  done
+  if [[ -z "$role" ]]; then
+    echo "usage: workspace add-slot <label> --role=<r> --files=<f1,f2,...> [--slot-id=<id>]" >&2
+    return 2
+  fi
+  if [[ ! "$role" =~ ^(reviewer|implementer|investigator|migrator|test-writer|doc-writer)$ ]]; then
+    echo "extension.sh workspace add-slot: role '$role' is not one of the 6" >&2
+    return 2
+  fi
+  if [[ -z "$files_csv" ]]; then
+    echo "extension.sh workspace add-slot: --files=<f1,f2,...> is required" >&2
+    return 2
+  fi
+
+  local manifest
+  manifest="$(_workspace_manifest_path "$label")" || return $?
+  if [[ ! -f "$manifest" ]]; then
+    echo "extension.sh workspace add-slot: workspace '$label' not found (no manifest at $manifest)" >&2
+    return 3
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "extension.sh workspace add-slot: python3 required for manifest updates" >&2
+    return 3
+  fi
+
+  LABEL="$label" ROLE="$role" FILES_CSV="$files_csv" SLOT_ID="$slot_id" \
+  MANIFEST_PATH="$manifest" \
+  python3 - <<'PY' || exit $?
+import json, os, sys
+m = json.load(open(os.environ["MANIFEST_PATH"]))
+files = [f.strip() for f in os.environ["FILES_CSV"].split(",") if f.strip()]
+if not files:
+    print("extension.sh workspace add-slot: --files is empty", file=sys.stderr)
+    sys.exit(2)
+
+# Disjoint check across existing slots.
+existing = set()
+for s in m.get("slots", []):
+    for f in s.get("files_touched", []):
+        existing.add(f)
+overlap = [f for f in files if f in existing]
+if overlap:
+    print(f"extension.sh workspace add-slot: files overlap with existing slots: {overlap}", file=sys.stderr)
+    sys.exit(1)
+
+# Auto-assign slot id if not given: <role>-<n> where n is the count of
+# existing slots with the same role + 1.
+slot_id = os.environ.get("SLOT_ID", "")
+if not slot_id:
+    n = sum(1 for s in m.get("slots", []) if s.get("role") == os.environ["ROLE"]) + 1
+    slot_id = f"{os.environ['ROLE']}-{n}"
+
+# Reject duplicate slot id (idempotency hint).
+for s in m.get("slots", []):
+    if s.get("slot_id") == slot_id:
+        print(f"extension.sh workspace add-slot: slot id '{slot_id}' already exists", file=sys.stderr)
+        sys.exit(1)
+
+m.setdefault("slots", []).append({
+    "slot_id": slot_id,
+    "role": os.environ["ROLE"],
+    "files_touched": files,
+    "status": "active",
+    "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+})
+json.dump(m, open(os.environ["MANIFEST_PATH"], "w"), indent=2)
+print(slot_id)
+PY
+}
+
+cmd_workspace_ls() {
+  _workspace_dirs || return $?
+  if [[ ! -d "$WS_MANIFESTS_DIR" ]]; then
+    echo "(no workspaces yet)"
+    return 0
+  fi
+  local any=0
+  for mf in "$WS_MANIFESTS_DIR"/*.json; do
+    [[ -e "$mf" ]] || continue
+    any=1
+    python3 - "$mf" <<'PY' 2>/dev/null || echo "(parse error: $mf)"
+import json, sys
+m = json.load(open(sys.argv[1]))
+slots = m.get("slots", [])
+print(f"{m.get('label','?'):<32} backing={m.get('backing','?'):<8} "
+      f"status={m.get('status','?'):<10} slots={len(slots)} "
+      f"path={m.get('path','?')}")
+PY
+  done
+  [[ $any -eq 0 ]] && echo "(no workspaces yet)"
+}
+
+cmd_workspace_show() {
+  local label="${1:?usage: workspace show <label>}"
+  local manifest
+  manifest="$(_workspace_manifest_path "$label")" || return $?
+  if [[ ! -f "$manifest" ]]; then
+    echo "extension.sh workspace show: '$label' not found" >&2
+    return 3
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    cat "$manifest"
+    return 0
+  fi
+  python3 - "$manifest" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+print(f"label:       {m.get('label')}")
+print(f"backing:     {m.get('backing')}")
+print(f"status:      {m.get('status')}")
+print(f"path:        {m.get('path')}")
+print(f"branch:      {m.get('branch') or '(none — folder backing)'}")
+print(f"base_commit: {m.get('base_commit') or '(none)'}")
+print(f"created_at:  {m.get('created_at')}")
+print(f"slots:       {len(m.get('slots', []))}")
+for s in m.get("slots", []):
+    files = ", ".join(s.get("files_touched", []))
+    print(f"  - {s.get('slot_id'):<24} role={s.get('role'):<12} "
+          f"status={s.get('status','?'):<10} files=[{files}]")
+PY
+}
+
+cmd_workspace_destroy() {
+  local label="${1:?usage: workspace destroy <label> [--keep-branch]}"
+  shift
+  local keep_branch=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --keep-branch) keep_branch=1; shift ;;
+      *) echo "extension.sh workspace destroy: unknown flag '$1'" >&2; return 2 ;;
+    esac
+  done
+
+  local manifest
+  manifest="$(_workspace_manifest_path "$label")" || return $?
+  if [[ ! -f "$manifest" ]]; then
+    echo "extension.sh workspace destroy: '$label' not found" >&2
+    return 3
+  fi
+
+  local ws_path branch backing
+  ws_path="$(python3 -c "import json; print(json.load(open('$manifest'))['path'])" 2>/dev/null)"
+  branch="$(python3 -c "import json; print(json.load(open('$manifest')).get('branch',''))" 2>/dev/null)"
+  backing="$(python3 -c "import json; print(json.load(open('$manifest')).get('backing',''))" 2>/dev/null)"
+
+  if [[ -z "$ws_path" ]]; then
+    echo "extension.sh workspace destroy: manifest has no path" >&2
+    return 3
+  fi
+
+  if [[ -d "$ws_path" ]]; then
+    if [[ "$backing" == "worktree" ]]; then
+      # Use `git worktree remove` (cleaner than rm -rf) when possible.
+      if command -v git >/dev/null 2>&1 && git -C "$ws_path" rev-parse --git-dir >/dev/null 2>&1; then
+        git worktree remove --force "$ws_path" 2>/dev/null || rm -rf "$ws_path"
+      else
+        rm -rf "$ws_path"
+      fi
+    else
+      rm -rf "$ws_path"
+    fi
+  fi
+
+  # Delete branch unless --keep-branch or branch empty (folder backing).
+  if [[ -n "$branch" && "$keep_branch" -eq 0 ]]; then
+    if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+      git branch -D "$branch" 2>/dev/null || true
+    fi
+  fi
+
+  # Mark manifest destroyed (keep for audit).
+  if command -v python3 >/dev/null 2>&1; then
+    MANIFEST_PATH="$manifest" python3 - <<'PY' 2>/dev/null || true
+import json, os
+m = json.load(open(os.environ["MANIFEST_PATH"]))
+m["status"] = "destroyed"
+m["destroyed_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+json.dump(m, open(os.environ["MANIFEST_PATH"], "w"), indent=2)
+PY
+  fi
+
+  echo "workspace destroyed: $label"
+  if [[ -n "$branch" && "$keep_branch" -eq 0 ]]; then
+    echo "  branch removed: $branch"
+  elif [[ -n "$branch" ]]; then
+    echo "  branch kept: $branch (--keep-branch)"
+  fi
+}
+
+cmd_workspace_clean() {
+  local confirm=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes|-y) confirm="yes"; shift ;;
+      *) echo "extension.sh workspace clean: unknown flag '$1'" >&2; return 2 ;;
+    esac
+  done
+  _workspace_dirs || return $?
+  if [[ ! -d "$WS_MANIFESTS_DIR" ]]; then
+    echo "(no workspaces to clean)"
+    return 0
+  fi
+  local to_clean=()
+  for mf in "$WS_MANIFESTS_DIR"/*.json; do
+    [[ -e "$mf" ]] || continue
+    local status
+    status="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('status',''))" "$mf" 2>/dev/null)"
+    if [[ "$status" == "completed" || "$status" == "destroyed" ]]; then
+      to_clean+=("$mf")
+    fi
+  done
+  if [[ ${#to_clean[@]} -eq 0 ]]; then
+    echo "(no completed/destroyed workspaces to clean)"
+    return 0
+  fi
+  echo "workspaces to clean:"
+  for mf in "${to_clean[@]}"; do
+    local label
+    label="$(basename "$mf" .json)"
+    echo "  - $label"
+  done
+  if [[ "$confirm" != "yes" ]]; then
+    echo ""
+    echo "DRY-RUN. Pass --yes to actually delete:"
+    echo "  extension.sh workspace clean --yes"
+    return 0
+  fi
+  for mf in "${to_clean[@]}"; do
+    rm -f "$mf"
+  done
+  echo "removed ${#to_clean[@]} manifest(s)"
 }
 
 # ---------- subcommand: mcp ----------
@@ -1159,8 +1603,8 @@ cmd_doctor() {
   esac
   printf '%-30s %-50s %s\n' "AXIS" "FILE" "STATUS"
   printf '%-30s %-50s %s\n' "----" "----" "------"
-  # A10 scratch dir (derived from cwd; works even without .jcode/)
-  printf '%-30s %-50s %s\n' "A10 scratch dir" "$(cmd_scratch_dir root 2>/dev/null || echo '?')" "(derived from cwd)"
+  # A11 scratch dir (derived from cwd; works even without .jcode/)
+  printf '%-30s %-50s %s\n' "A11 scratch dir" "$(cmd_scratch_dir root 2>/dev/null || echo '?')" "(derived from cwd)"
   if [[ -z "$PROJ_DIR" ]]; then
     printf '%-30s %-50s %s\n' "(no .jcode/ in cwd ancestors)" "" "(none)"
     return 0
@@ -1224,8 +1668,20 @@ cmd_doctor() {
     fi
     printf '%-30s %-50s %s\n' "$axis" "$file" "$s"
   done
-  # A10 scratch dir (derived path, not a file)
-  printf '%-30s %-50s %s\n' "A10 scratch dir" "$(cmd_scratch_dir root 2>/dev/null || echo '?')" "(derived from cwd)"
+  # A10 workspace (manifest in scratch dir)
+  local wsdir ws_count="0"
+  wsdir="$(cmd_scratch_dir root 2>/dev/null)/.jcode-workspaces"
+  if [[ -d "$wsdir" ]]; then
+    for _f in "$wsdir"/*.json; do
+      [[ -e "$_f" ]] || continue
+      ws_count=$((ws_count+1))
+    done
+  fi
+  if [[ "$ws_count" -gt 0 ]]; then
+    printf '%-30s %-50s %s\n' "A10 workspace" "$wsdir/" "per-project ($ws_count workspaces)"
+  else
+    printf '%-30s %-50s %s\n' "A10 workspace" "$wsdir/" "(none active)"
+  fi
   echo ""
   echo "Run 'extension.sh help' for invocation details on each axis."
 }
@@ -1287,6 +1743,7 @@ case "$cmd" in
   notify)      cmd_notify "$@" ;;
   pre-spawn)   cmd_pre_spawn "$@" ;;
   skills)      cmd_skills "$@" ;;
+  workspace)   cmd_workspace "$@" ;;
   mcp)         cmd_mcp "$@" ;;
   models)      cmd_models "$@" ;;
   preflight)   cmd_preflight "$@" ;;
@@ -1304,11 +1761,16 @@ Subcommands:
   pre-spawn <label> <role> <count>     Run pre-spawn hook if present
      [--exports FILE]                  Emit KEY=VALUE exports to FILE for caller to source
   skills list                          Enumerate per-project skills (jcode-native)
+  workspace init <label> [--backing=worktree|folder]
+                                       Allocate a workspace (path + manifest)
+  workspace add-slot <label> --role=<r> --files=<f1,f2,...>
+                                       Register a slot in the workspace (disjoint enforced)
+  workspace ls|show|destroy|clean      Manage workspace lifecycle
   mcp info                             Show per-project MCP config status (jcode-native)
   mcp worktree-hint <wt-path>          Worker-side serena staleness detector (use at spawn start)
   models [list|probe <name>]           List jcode-known models; probe auth for one
   preflight [--worktree P] [--project P]  Pre-spawn env gate (auth, install, paths)
-  scratch-dir [root|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
+  scratch-dir [root|ws <label>|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
   artifact validate <path>                Validate a typed-artifact JSON file (8-field contract)
   doctor [--env]                       Per-axis status table (default) or environment probe (--env)
 
@@ -1316,6 +1778,7 @@ Per-project hooks live at <repo>/.jcode/{pre-merge,verify,notify,pre-spawn}.sh
 Per-project role overrides live at <repo>/.jcode/roles/<name>.md
 Per-project skills live at <repo>/.jcode/skills/<name>/SKILL.md (jcode-native)
 Per-project MCP servers live at <repo>/.jcode/mcp.json (jcode-native)
+Workspace manifests live at \$TMPDIR/jcode/<repo>-<sha>/.jcode-workspaces/<label>.json
 See docs/EXTENSIONS.md for the full 10×10 boundary-behavior walkthrough.
 EOF
     ;;
