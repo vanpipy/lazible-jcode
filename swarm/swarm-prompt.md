@@ -183,30 +183,37 @@ Each spawned worker owns a **tight, named scope**:
   the artifact's `open_questions[]` rather than editing it.
 - Conflicts with another in-flight worker → do not stomp. Report the
   conflict with file paths and let the root session arbitrate.
-- **Workspace isolation** (role-dependent — see overlay §0 for the full
-  picture):
-  - **Worktree-using roles** (`implementer`, `test-writer`, `doc-writer`):
-    each operates in its own git worktree at
-    `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`. The root
-    session **never** enters a worker worktree. Cross-worker reading
-    happens via `git show <branch>:<file>` or
-    `git diff main..<branch>`.
-  - **Root-cwd roles** (`reviewer`, `investigator`, `migrator`):
-    operate from the root session's cwd. `reviewer` and `investigator`
-    are read-only. `migrator` commits directly to `<worker_branch>`
-    in root cwd. Workers in either category do not write to other workers'
-    worktrees (N/A for root-cwd; for worktree-using, do not enter
-    peer worktrees).
-  - For worktree-using roles, spawn prompts MUST include worktree
-    path, base commit SHA, and worker branch. For root-cwd roles,
-    spawn prompts MUST include `worker_branch` (root checks out the
-    branch for `migrator`; reviewers/investigators use it as the
-    diff anchor) and `base_commit`. `worktree_path` is omitted.
+- **Workspace discipline** (role-dependent — see overlay §0 for the
+  full picture):
+  - **Workspace-using roles** (`implementer`, `test-writer`,
+    `doc-writer`, `migrator`): each slot operates inside a workspace
+    at `$TMPDIR/jcode/<repo-name>-<short-sha>/ws-<label>/`. The
+    workspace may hold 1 slot (legacy shape) or N slots (collaborative
+    shape — disjoint `files_touched[]` per slot). For worktree
+    backing, all slots commit to the shared workspace branch
+    `ws-<label>`. The root session **never** enters a worker
+    workspace; cross-slot reading happens via
+    `git show ws-<label>:<file>` or `git diff main..ws-<label>` from
+    root cwd. For folder backing, root reads via `cat <ws-path>/<file>`
+    from root cwd.
+  - **Root-cwd roles** (`reviewer`, `investigator`): operate from the
+    root session's cwd. They are read-only — they use `git show`,
+    `git diff`, `git log`, `rg`, running tests from root cwd. They
+    do NOT enter any workspace directory.
+  - For workspace-using roles, spawn prompts MUST include
+    `workspace_path`, `workspace_slot`, `base_commit` (the SHA the
+    workspace was cut from), and `worker_branch` (for worktree
+    backing this is the workspace branch; for folder backing omit).
+    For root-cwd roles, spawn prompts MUST include `worker_branch`
+    (root's diff anchor) and `base_commit`. `workspace_path` is
+    omitted.
 
-For worktree-using roles, multiple workers editing the same file is
-allowed **only** if their changes are on non-overlapping lines **and**
-they operate in separate worktrees. Root-cwd roles (`migrator`) are
-serialized by definition — never concurrent. When in doubt, serialize.
+Multiple slots editing the same file is allowed **only if** their
+changes are on non-overlapping lines **and** they operate in the same
+workspace under disjoint `files_touched[]`. The disjoint guarantee is
+root's responsibility at `workspace add-slot` time — the slot just
+stays inside its own slice. When in doubt, serialize or expand
+workspace boundaries.
 
 ---
 
@@ -368,57 +375,88 @@ Facts that do **not** belong in memory:
 
 ---
 
-## 11. Workspace isolation via git worktree
+## 11. Workspace topology
 
-Swarms above ~2 concurrent workers collide on shared working trees
-(silent `git add` loss, `git status` cross-contamination, half-baked
-mixed reads). Workers that own file changes get a dedicated git
-worktree. Root integrates. 1 worktree-using worker : 1 worktree, no
-sharing, no nesting.
+Workers operate as **slots** inside **workspaces**. A workspace is the
+unit of file allocation; multiple slots may share one workspace when
+their `files_touched[]` is disjoint, but every slot must have its own
+allow-list and its own branch commits (when git backing applies).
 
-**Worktree-using roles** (3 of 6): `implementer`, `test-writer`,
-`doc-writer`. They write files and need isolation from each other and
-from the root cwd.
+### Workspace identity
 
-**Root-cwd roles** (3 of 6): `reviewer`, `investigator`, `migrator`.
-Reviewer and investigator are read-only — they use git commands
-(`git show`, `git diff`, `git log`) from the root cwd. Migrator owns
-file changes but operates serially; it checks out `<worker_branch>`
-directly in the root cwd so root can quickly inspect/squash/merge
-without a separate worktree directory.
+- Workspace = `(repo, short-sha, label)`. Path:
+  `$TMPDIR/jcode/<repo-name>-<short-sha>/ws-<label>/`
+- Backing (chosen by root, default = auto-detect):
+  - **`worktree`** — `git worktree add -b ws-<label>`; one workspace
+    branch shared by all slots.
+  - **`folder`** — plain directory; no commits; root copies contents
+    into the destination at integration time.
+- Manifest lives at
+  `$TMPDIR/jcode/<repo-name>-<short-sha>/.jcode-workspaces/<label>.json`.
+  Records slots, role per slot, `files_touched[]` per slot, status.
+- Print or inspect via `scripts/extension.sh workspace {init|add-slot|ls|show|destroy|clean}`.
 
-**Canonical layout + per-status lifecycle + root responsibilities**:
-see `~/.jcode/prompt-overlay.md` §4.1 + §4.3. Worker perspective
-below.
+### Slot semantics (per worker)
+
+A **slot** = one role assignment inside one workspace. A slot:
+
+- Owns a disjoint `files_touched[]` (root enforces disjointness across
+  slots at `workspace add-slot` time).
+- Commits to the workspace branch `ws-<label>` (worktree backing) or
+  just writes files (folder backing).
+- Emits the standard 8-field typed artifact on completion. The
+  `evidence[].commits[]` array lists **only** the SHAs this slot
+  authored, not peer slots' commits.
+- Can read sibling slots' commits in the same workspace via
+  `git log ws-<label>` (worktree backing) — visibility is a workspace
+  benefit, used for in-process iteration. Do NOT `dm` sibling slots.
+
+### Role classification
+
+- **Workspace-using roles** (4 of 6): `implementer`, `test-writer`,
+  `doc-writer`, `migrator`. Operate as slots inside workspaces.
+- **Root-cwd roles** (2 of 6): `reviewer`, `investigator`. Operate
+  from the root session's cwd. They are read-only; they use
+  `git show`, `git diff`, `git log`, `rg`, running tests from root
+  cwd. They do NOT enter any workspace directory.
+
+The root session **never** enters a worker workspace. Cross-slot
+reading happens via `git show <branch>:<file>` or
+`git diff main..<branch>` from root cwd. For folder-backing
+workspaces, root reads via `cat <ws-path>/<file>` from root cwd.
 
 ### Dependency link (manual, not install)
 
 Workers **never run package managers** (pnpm / yarn / cocoapods may
-be missing). Symlink heavy in-repo deps from main worktree; rely on
-user-level caches for the rest.
+be missing). Symlink heavy in-repo deps from main; rely on user-level
+caches for the rest.
 
 - `node_modules`, `ios/Pods`, similar heavy in-repo dirs: symlink
   from main
 - `~/.gradle`, npm cache, `~/.cargo`: already shared, no action
 - New dep needed: worker reports via `open_questions[]`, root
   installs in main, worker re-links. **Never** install inside worker
-  worktree.
+  workspace.
 
-### Cross-worker visibility
+### Cross-slot visibility
 
-Default: invisible. Workers see only base commit state.
+Default within a workspace: visible to read. Slots see sibling
+commits via `git log ws-<label>` (worktree backing) — use this for
+in-process iteration. Do NOT use this as a back-channel to coordinate:
+peer edges are forbidden by invariant 2.
 
-When worker A needs worker B's output: A reports `open_questions[]`,
-root decides to merge B → base → rebase A, or serialize.
+When slot A needs slot B's output ACROSS workspaces: A reports
+`open_questions[]`, root decides to merge B → base → rebase A, or
+serialize.
 
 Workers **never merge each other directly** — that pollutes history
 with noise commits.
 
-### Fallback
+### Fallback (no `.git/`)
 
-Spawn context without `.git/`: skip worktree allocation, worker uses
-root cwd. swarm-prompt must flag this fallback explicitly, never
-pretend a worktree exists.
+Workspace backing drops to `folder`. Workers do not commit (no branch
+to commit to). Root copies workspace contents into the destination at
+integration time. Workers MUST NOT pretend a branch exists.
 
 ---
 
