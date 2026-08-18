@@ -107,8 +107,9 @@ prompt + persona content jcode reads.
   `~/.jcode/prompt-overlay.md`.
 - `swarm/swarm-prompt.md` — project-agnostic coordination policy for
   the root session and every spawned worker: model routing, when to
-  spawn, communication discipline, verification gates, worktree
-  topology. Installed as `~/.jcode/swarm-prompt.md`.
+  spawn, communication discipline, verification gates, workspace
+  topology (worktree vs folder backing, multi-slot collaboration).
+  Installed as `~/.jcode/swarm-prompt.md`.
 - `swarm/ARCHITECTURE.md` — the goals, star topology diagram, and
   contracts (invariants + output contract + cross-worker handoff) for
   this overlay bundle. Not installed — human reference only.
@@ -133,11 +134,26 @@ bundle convention, what is MCP — see `docs/ARCHITECTURE.md`.
 
 ### Coordination rules at a glance
 
-The overlay enforces a star topology and a typed-artifact contract
+The overlay enforces a star topology and a 2-level allocation model
+(root + workspaces + worker slots), with a typed-artifact contract
 across every spawned worker. The headline rules:
 
 - **One root per session**, exactly one coordinator. Workers never
   talk to each other; all handoffs are worker → root → worker.
+- **Workspaces are the unit of allocation.** A workspace has a
+  backing (`worktree` for git repos, `folder` otherwise) and holds 1+
+  worker slots. Multiple slots in one workspace collaborate under
+  disjoint `files_touched[]` partitions, all committing to a shared
+  `ws-<label>` branch (worktree backing) or sharing a plain folder
+  (folder backing). Allocated via `extension.sh workspace init` +
+  `add-slot`.
+- **Q-1 decompose-first**: before spawning, look for ≥2 independent
+  slices. If yes, dispatch as parallel slots in one workspace rather
+  than one worker per task.
+- **In-flight tracking via todo**: root creates a todo per spawned
+  slot and glances at the list during its natural turn cycle. Stale
+  slots get a `dm` ping; critically stale slots escalate to `stop` +
+  `salvage`. Event-driven on root's turns, not a poll-based watchdog.
 - **8-field typed artifact** per completion: `status`, `findings`,
   `evidence[]`, `edge_cases_considered[]`, `validation`,
   `open_questions[]`, `confidence`, `what_i_did_not_check[]`. Status
@@ -146,12 +162,13 @@ across every spawned worker. The headline rules:
 - **Scope owns files**: workers stage only the files the spawn
   prompt lists. Anything outside goes to `open_questions[]`, never to
   a commit.
-- **M3 (silent worker disappearance) is a known limitation**. Two
+- **M3 (silent worker disappearance) is a known limitation**. Three
   layers of cleanup cover the residue at different scopes: a
   session-level reaper (engine-side, automatic) for spawned workers
-  that reported back and sat idle, and `swarm-sweep` (manual) for
-  the git worktree + branch residue they leave behind. See
-  `AGENTS.md` "Cleanup: stale swarm worktrees".
+  that reported back and sat idle, `extension.sh workspace destroy` /
+  `clean` for individual workspace directories + branches, and the
+  legacy `swarm-sweep` helper for bulk residue. See `AGENTS.md`
+  "Cleanup: stale workspaces".
 - **Push to `main` requires a verbatim "yes"** in chat, no matter
   what the original task said. Local commits and feature-branch
   pushes are free; the user can `git push` themselves.

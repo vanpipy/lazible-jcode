@@ -31,7 +31,7 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/`, and `swarm-sweep` into `~/.local/bin/` | yes |
 | `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
 | `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `~/.local/bin/swarm-sweep` by install.sh | yes |
-| `scripts/extension.sh` | Single entry point for per-project extension conventions (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn` subcommands) | yes |
+| `scripts/extension.sh` | Single entry point for per-project extension conventions + workspace lifecycle (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn`, `workspace`, `scratch-dir`, `mcp`, `models`, `preflight`, `artifact`, `doctor` subcommands) | yes |
 | `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
 | `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
 | `swarm/roles/<name>.md` | Worker persona templates. **Exactly 6 roles**: `reviewer`, `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer` | yes |
@@ -98,11 +98,11 @@ the three — point at the canonical location.
 
 ### Per-project customization (extension mechanisms)
 
-The bundle exposes nine per-project extension points — files at
+The bundle exposes ten per-project extension points — files at
 `<repo>/.jcode/<name>.{sh,md,json}/` that root invokes via
 `scripts/extension.sh` (the bundle convention entry point) or
 that jcode loads directly (jcode-native). Four are jcode-native;
-five are bundle conventions:
+six are bundle conventions:
 
 | Convention | File | Loader | Purpose |
 |---|---|---|---|
@@ -115,59 +115,68 @@ five are bundle conventions:
 | Pre-merge hook | `pre-merge.sh` | `extension.sh pre-merge <branch> <base> <role>` | Cross-worker integration gate before merging |
 | Notify hook | `notify.sh` | `extension.sh notify <status> <label> <artifact>` | Completion observability (bypass mode) |
 | Pre-spawn hook | `pre-spawn.sh` | `extension.sh pre-spawn <label> <role> <count>` | Per-spawn env setup + KEY=VALUE exports |
-| **Scratch dir** | (no file) | `extension.sh scratch-dir` | Canonical per-project worktree/scratch path under `$TMPDIR/jcode/<repo>-<short-sha>/` (not `~/.jcode/scratch/`) |
+| **Workspace** | (manifest: `$TMPDIR/jcode/<repo>-<short-sha>/.jcode-workspaces/<label>.json`) | `extension.sh workspace {init\|add-slot\|ls\|show\|destroy\|clean}` | Per-task workspace allocation (worktree or folder backing); disjoint `files_touched[]` per slot |
+| **Scratch dir** | (no file) | `extension.sh scratch-dir` | Canonical per-project scratch root under `$TMPDIR/jcode/<repo>-<short-sha>/` (not `~/.jcode/scratch/`) |
 
 Discovery helpers for jcode-native points:
 - `extension.sh skills list` — enumerate per-project skills
 - `extension.sh mcp info` — show per-project MCP config status
+- `extension.sh workspace ls|show <label>` — enumerate and inspect workspaces
 - `extension.sh scratch-dir` — print canonical `$TMPDIR/jcode/<repo>-<short-sha>/` path
 - `extension.sh scratch-dir clean [--yes]` — remove the per-project scratch dir (dry-run by default)
 - `extension.sh artifact validate <path>` — validate a typed-artifact JSON against the 8-field contract
 
 Pre-spawn gate (run before drafting a worker spawn prompt):
-- `extension.sh preflight [--worktree P] [--project P]` — verify jcode on PATH, daemon reachable, bundle installed, paths writable, default model auth OK. Exit 0 = green, 3 = hard fail, 1 = warnings.
+- `extension.sh preflight [--workspace P] [--project P]` — verify jcode on PATH, daemon reachable, bundle installed, paths writable, default model auth OK. Exit 0 = green, 3 = hard fail, 1 = warnings.
 
 Model selection helpers:
 - `extension.sh models list` — list jcode-known model names
 - `extension.sh models probe <name>` — 1-token auth probe (`jcode run --model X ok`); exit 0 = OK, 4 = auth fail, 3 = unknown. Use BEFORE spawning to avoid wasted spawns on unauth'd models.
 
-All ten live in `<repo>/.jcode/` (except the scratch dir which is
-in `$TMPDIR` by design). Absence of any of them is not a failure;
-root proceeds with the default behavior. Full 10×10 boundary-behavior
-walkthrough lives in `docs/EXTENSIONS.md`.
+All eleven live in `<repo>/.jcode/` (except the scratch dir + workspace
+manifest which are in `$TMPDIR` by design). Absence of any of them is
+not a failure; root proceeds with the default behavior. Full 11×11
+boundary-behavior walkthrough lives in `docs/EXTENSIONS.md`.
 
 ## Spawn workflow (gotchas to avoid)
 
 Before drafting a worker spawn prompt, run `extension.sh preflight`.
-It catches the three failure modes below BEFORE a worker is spawned
+It catches the four failure modes below BEFORE a worker is spawned
 (rather than after a wasted spawn prompt).
 
 | # | Failure | Detection | Avoidance |
 |---|---|---|---|
-| P1 | Model auth fail — worker spawns, immediately errors on first API call, dies. Wastes ~30s + a worktree. | `extension.sh models probe <name>` does a 1-token call; exit 4 = bad credentials. | Run probe before drafting. If 4, try a different model (per swarm-prompt, fallback = inherit from root). |
+| P1 | Model auth fail — worker spawns, immediately errors on first API call, dies. Wastes ~30s + a workspace. | `extension.sh models probe <name>` does a 1-token call; exit 4 = bad credentials. | Run probe before drafting. If 4, try a different model (per swarm-prompt, fallback = inherit from root). |
 | P2 | Scope ambiguity — worker `dm`s you with "what did you mean?", stalls waiting. | Pre-spawn checklist in §1 of overlay. | Write scope prompt tightly: enumerate `files_touched[]`, paste base SHA, state the gates explicitly. Worker emits `status: needs-info` if still ambiguous. |
-| P3 | Path confusion — worker writes into `$TMPDIR/jcode/.../wt-<label>/`, root thinks it'll land in `<repo>` directly. | `extension.sh preflight --worktree <path>` validates writable parent. | The bundle's `$TMPDIR/jcode/<repo>-<short-sha>/` is the worker scratch; integration root copies into `<repo>` after artifact acceptance. |
-| P4 | Serena stale — worker uses serena MCP for post-edit symbol lookups, gets main-repo HEAD results, silently misses its own edits. Worker emits `confidence: high` against wrong evidence. | `extension.sh mcp worktree-hint <wt-path>` reports `serena: stale (sees <main-repo> only; ...)`. | Include `mcp worktree-hint <wt-path>` in the spawn prompt's pre-flight steps (or in the per-project `pre-spawn.sh` hook via `A9` exports). Worker runs it at session start, plans verification accordingly: pre-edit serena OK, post-edit `read` + `agentgrep`. See `docs/INTEGRATIONS.md` §"Serena and worktrees" + `swarm/swarm-prompt.md` §14. |
+| P3 | Path confusion — worker writes into `$TMPDIR/jcode/.../ws-<label>/`, root thinks it'll land in `<repo>` directly. | `extension.sh preflight --workspace <path>` validates writable parent. | The bundle's `$TMPDIR/jcode/<repo>-<short-sha>/` is the worker scratch; integration root copies into `<repo>` after artifact acceptance. |
+| P4 | Serena stale — worker uses serena MCP for post-edit symbol lookups, gets main-repo HEAD results, silently misses its own edits. Worker emits `confidence: high` against wrong evidence. | `extension.sh mcp worktree-hint <ws-path>` reports `serena: stale (sees <main-repo> only; ...)`. | Include `mcp worktree-hint <ws-path>` in the spawn prompt's pre-flight steps (or in the per-project `pre-spawn.sh` hook via `A9` exports). Worker runs it at session start, plans verification accordingly: pre-edit serena OK, post-edit `read` + `agentgrep`. See `docs/INTEGRATIONS.md` §"Serena and worktrees" + `swarm/swarm-prompt.md` §14. |
 
 ### Quick spawn checklist
 
 1. `extension.sh preflight` (exit 0).
 2. `extension.sh models probe <model>` (exit 0) — if your chosen model is non-default.
-3. `extension.sh scratch-dir` to print the canonical WT path.
-4. `extension.sh mcp worktree-hint <wt-path>` — verify serena's status against the worker's
-   worktree path. If `stale`, surface that pattern in the spawn prompt's scope body so the
-   worker doesn't trust serena for post-edit verification. (Add this step to a project's
-   `pre-spawn.sh` hook via `A9` to make it automatic for every spawn.)
-5. Write spawn prompt with: `label`, `model`, `effort`, `base_commit`,
+3. **Decompose-first (Q-1)**: before spawning, ask: can this task split into ≥2
+   independent slices? If yes, dispatch as parallel slots in one workspace.
+4. `extension.sh workspace init <label>` — create the workspace. Prints path + branch.
+5. For each slot: `extension.sh workspace add-slot <label> --role=<r> --files=...`
+   (manifest enforces disjoint `files_touched[]` across slots).
+6. `extension.sh mcp worktree-hint <ws-path>` — verify serena's status against the
+   worker's workspace path. If `stale`, surface that pattern in the spawn prompt's
+   scope body so the worker doesn't trust serena for post-edit verification.
+7. **In-flight tracking**: after each spawn, create a todo like
+   `<slot_id>: await artifact (model=<m>, role=<r>, label=<user-label>)`.
+   On each root turn, glance at the todo list; ping stale workers via `dm`.
+   See overlay §4.4.
+8. Write spawn prompt with: `label`, `model`, `effort`, `base_commit`,
    `worker_branch`, `files_touched[]`, `scope_body`,
-   `termination_template`, `required_skills[]`.
-   Add `worktree_path` **only for worktree-using roles** (`implementer`,
-   `test-writer`, `doc-writer`); omit for root-cwd roles (`reviewer`,
-   `investigator`, `migrator`). For `migrator`, also `git checkout
-   <worker_branch>` in root cwd **before** handing off the spawn
-   prompt.
-6. After worker emits artifact: read `findings` + `evidence[]` +
-   `validation` + `open_questions[]` before integrating.
+   `termination_template`, `required_skills[]`, `workspace_path`,
+   `workspace_slot`. For root-cwd roles (`reviewer`, `investigator`)
+   omit `workspace_path` / `workspace_slot`.
+9. After worker emits artifact: read `findings` + `evidence[]` +
+   `validation` + `open_questions[]` before integrating. Update the todo
+   to completed. Mark the slot's status in the manifest.
+10. After all slots in a workspace are complete: `extension.sh workspace destroy <label>`
+    (or pass `--keep-branch` for root to merge manually).
 
 Skipping steps 1-2 is how you burn 5 minutes on a model that 401s on
 the first call.
@@ -331,11 +340,23 @@ exists; absence is not a failure.
 - Worker liveness, sessions, telemetry, and auth all live in
   `~/.jcode/`, not here.
 
-## Cleanup: stale swarm worktrees
+## Cleanup: stale workspaces
 
 When a worker disappears (M3 silent disappearance) or forgets to emit
-its artifact (M2), the worktree and branch it created sit in the repo
-indefinitely. `swarm-sweep` cleans them up:
+its artifact (M2), the workspace directory + branch it created sit in
+the repo / `$TMPDIR` indefinitely. Two cleanup paths:
+
+**Per-workspace**: `extension.sh workspace destroy <label>` — removes
+the workspace directory + branch for a specific label.
+
+**Bulk**: `extension.sh workspace clean [--yes]` — removes all
+manifests marked `status: destroyed` or `status: completed`. Dry-run by
+default.
+
+**Legacy `swarm-sweep`** still works for the old worktree convention
+(`$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`). New projects
+use the workspace convention (`ws-<label>`) and should prefer the
+`workspace` subcommands above.
 
 ```bash
 swarm-sweep              # dry-run, lists stale worktrees
@@ -344,7 +365,8 @@ swarm-sweep --max-age=3  # threshold in days (default: 7)
 ```
 
 The script only touches worktrees whose path matches the swarm
-convention `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`.
+convention `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/` or
+the workspace convention `$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/`.
 The main worktree and any manual feature worktrees are NEVER touched.
 
 `swarm-sweep` is installed into `~/.local/bin/swarm-sweep` by

@@ -57,14 +57,20 @@ graph TD
   help (`follow_up`)
 - Root-to-worker: scope prompt at spawn, follow-up (`dm`), control
   (`stop` / `assign_task`)
-- Workspace (role-dependent):
-  - **Worktree-using roles** (`implementer`, `test-writer`, `doc-writer`) own a
-    dedicated worktree at
-    `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`.
-  - **Root-cwd roles** (`reviewer`, `investigator`, `migrator`) operate from the
-    root session's cwd. `reviewer` / `investigator` are read-only;
-    `migrator` is read-write but serial — root checks out `<worker_branch>`
-    in root cwd before handing off the spawn prompt.
+- Workspace (role-dependent — see overlay §0 for the full picture):
+  - **Workspace-using roles** (`implementer`, `test-writer`,
+    `doc-writer`, `migrator`) operate as slots inside a **workspace**
+    at `$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/`. The workspace
+    may contain 1 slot (legacy single-worker shape) or N slots
+    (collaborative shape), all sharing cwd and committing to the
+    same `ws-<label>` branch (worktree backing) or sharing a plain
+    folder (folder backing). Default backing = worktree when the
+    project has `.git/`, folder otherwise.
+  - **Root-cwd roles** (`reviewer`, `investigator`) operate from
+    the root session's cwd. They are read-only; use `git show
+    <branch>:<file>` / `git diff main..<branch>` / `git log` /
+    `rg` / running tests from root cwd. They do **not** enter any
+    workspace directory.
 
 ---
 
@@ -150,10 +156,13 @@ Run these questions in order. Only proceed when the answers converge.
    re-spawn.
 
 Two `spawn` answers + no dependency = spawn. Always pass `label`,
-`model`, `effort`, base SHA, and worker branch. Include `worktree_path`
-**only for worktree-using roles** (`implementer`, `test-writer`,
-`doc-writer`); omit it for root-cwd roles (`reviewer`, `investigator`,
-`migrator`).
+`model`, `effort`, base SHA, and worker branch. Include
+`workspace_path` + `workspace_slot` **only for workspace-using roles**
+(`implementer`, `test-writer`, `doc-writer`, `migrator` — default
+workspace with 1 slot); omit them for root-cwd roles (`reviewer`,
+`investigator`). For workspace-using roles, also include the
+disjoint `files_touched[]` per slot when multiple slots share one
+workspace (Q-1 decompose path).
 
 ---
 
