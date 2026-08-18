@@ -161,6 +161,61 @@ The rule of thumb: **structured and batched** -> MCP, **small and
 one-off** -> jcode-native. MCP is the wrong tool when you would use it
 once and then never again.
 
+## Serena usage example (refactor log: extracting `_scratch_root`)
+
+The bundle's own refactor log gives a concrete before/after of how
+serena compares to native tools on a real task. Recorded 2026-08-18.
+
+### Task
+
+Pull the per-project scratch-root path-computation (git toplevel +
+non-git hashed-abs-path fallback chain, ~50 lines) out of
+`cmd_scratch_dir` and into a dedicated `_scratch_root` helper, leaving
+`cmd_scratch_dir` as a thin `case` dispatcher.
+
+### Steps with serena
+
+| Step | Serena call | Native equivalent | Difference |
+| --- | --- | --- | --- |
+| Locate function | `find_symbol cmd_scratch_dir` | `grep -n 'cmd_scratch_dir() {'` | serena gives `kind`, 0-based line range, 1 JSON line; grep gives one line per match with false positives from `cmd_scratch_dir root` call sites |
+| List callers | `find_referencing_symbols cmd_scratch_dir` | `grep -n 'cmd_scratch_dir'` | serena groups by symbol (3 `Variable` + 1 `Function` + 1 `File`), 0 false positives, snippets around each; grep returns 6 lines + self + comments |
+| File overview | `get_symbols_overview scripts/extension.sh` | `sed -n 620,800p` (180 lines) | serena lists all 24 top-level functions in the file with locations; sed shows raw text |
+| Insert new function | `insert_before_symbol cmd_scratch_dir --body …` | `edit_file` with anchor line numbers | serena resolves symbol location internally; `edit_file` needs the line number maintained by hand |
+| Replace function body | `replace_symbol_body cmd_scratch_dir --body …` | `sed` large-block replace or `apply_patch` | serena replaces the body span (lines 626–723) atomically; sed needs exact `old_string`/`new_string` quoting |
+
+### Outcome
+
+- **Net diff**: +13 / −5 = +8 lines, clean separation of concerns.
+- **AST verified**: `get_symbols_overview` after the edit lists
+  `_scratch_root` as a distinct `Function` symbol with exactly one
+  caller (`cmd_scratch_dir` at line 682).
+- **Behavior verified**: `bash -n`, `preflight`, workspace E2E
+  (init / add-slot / overlap-reject / destroy / clean), and
+  `scratch-dir clean` (dry-run + `--yes`) all pass.
+- **One caught regression**: a body-literal backslash escape (JSON
+  `\$` decoding into the file as `\$` instead of `$`) turned a benign
+  awk regex into one that would match a literal `$`. Caught by
+  `od -c` byte-level comparison against the pre-edit file before
+  commit. Fixed with one `replace_content` call. **serena validates
+  structure, not shell semantics — stay alert to special characters
+  when writing bodies.**
+
+### When serena did **not** help
+
+- **Awk-regex escaping**: same issue as above. serena moves text but
+  does not parse shell.
+- **Cross-file fan-out for tiny edits**: 1-character changes in a
+  single file are cheaper via `edit` than via `find_symbol` →
+  `replace_symbol_body`.
+- **Initial discovery of "what to refactor"**: serena surfaces
+  structure but does not decide whether a function should be split.
+  That's the engineer's call.
+
+The lesson is not "always serena" but "**serena for the 30-second
+symbolic edit; native for the 5-second line edit**." Reach for serena
+when the change is structural and you can name the symbol; reach for
+native when the change is local and you can name the line.
+
 ## Verification
 
 After editing the MCP config, run:
