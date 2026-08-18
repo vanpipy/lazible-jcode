@@ -49,7 +49,7 @@ Rules:
   `model`** on the next spawn — the worker inherits the coordinator's
   working model. One probed attempt, then default. Silent iteration is
   the most expensive anti-pattern in spawn hygiene: each failed spawn
-  costs ~30s + a worktree.
+  costs ~30s + a workspace.
 - `effort: "max"` only when the user explicitly asked — it's
   expensive.
 - If a previously unavailable route becomes available, update the
@@ -107,15 +107,17 @@ Every spawn call **must** include:
   project". An idle agent with no task wastes resources and confuses
   the swarm UI.
 - `model` + `effort` — explicit unless inheritance is intentional.
-- Worktree context — **for worktree-using roles** (`implementer`,
-  `test-writer`, `doc-writer`) include `worktree_path` plus base
-  commit SHA and worker branch (`feat/<name>_<short-sha>` /
-  `fix/<name>_<short-sha>` / `test/<name>_<short-sha>` /
-  `docs/<name>_<short-sha>` / `refactor/<name>_<short-sha>`). **For
-  root-cwd roles** (`reviewer`, `investigator`, `migrator`) omit
-  `worktree_path`; still pass `worker_branch` (root checks it out in
-  root cwd for `migrator`) and `base_commit` (the SHA the worker's
-  branch was cut from).
+- Workspace context — **for workspace-using roles** (`implementer`,
+  `test-writer`, `doc-writer`, `migrator`) include `workspace_path` +
+  `workspace_slot` plus base commit SHA and worker branch
+  (`feat/<name>_<short-sha>` / `fix/<name>_<short-sha>` /
+  `test/<name>_<short-sha>` / `docs/<name>_<short-sha>` /
+  `refactor/<name>_<short-sha>` / `chore/<name>_<short-sha>`). For
+  worktree-backing workspaces, `worker_branch` is the shared
+  `ws-<label>` branch; for folder backing, omit it. **For root-cwd
+  roles** (`reviewer`, `investigator`) omit `workspace_path` /
+  `workspace_slot`; still pass `worker_branch` (root's diff anchor)
+  and `base_commit` (the SHA the worker's branch was cut from).
 
 Workers must **never** spawn their own children. If a worker thinks it
 needs help, it reports back to the root with a `follow_up` listing the
@@ -224,7 +226,7 @@ committed. Full-suite regression is **root's responsibility** (see
 overlay §5.2), or — for projects with expensive suites — a dedicated
 **reviewer worker** operating in "regression auditor" mode. The
 worker who produced the diff is the wrong place to run a 30-minute
-end-to-end suite: the worktree sits idle, the model context sits
+end-to-end suite: the workspace sits idle, the model context sits
 idle, and the same gate gets re-run anyway at integration time.
 
 Three layers. Each owns a different scope:
@@ -334,14 +336,14 @@ coordination debt.
   turn.
 - **Trusting serena's symbol index for files you have just modified.**
   Serena's MCP server inherits the project's `--project` path (anchored
-  to the main repo) — it does NOT re-index per worktree. Post-edit
+  to the main repo) — it does NOT re-index per workspace. Post-edit
   `find_symbol` / `find_referencing_symbols` return main-repo HEAD
   results, silently missing your edits. Use `read` + `agentgrep` for
   post-edit verification. See §14.
-- **Running the project's full test suite from the worker worktree.**
+- **Running the project's full test suite from the worker workspace.**
   The full suite belongs to root (overlay §5.2 Layer 2) or a dedicated
   `regression-auditor` reviewer (Layer 3). Running it from a worker
-  worktree pins the worktree + the model's context for minutes and
+  workspace pins the workspace + the model's context for minutes and
   produces zero additional signal — root will re-run the same gate at
   integration time. The worker runs only the slice-scoped gates that
   catch breakage in its `files_touched[]` (see §7 Layer 1).
@@ -469,7 +471,7 @@ get to choose it — you must discover it.
 
 1. **Do not fabricate.** Never invent a name or email.
 2. **Git config.** Run `git config user.name` and `git config user.email`
-   in the repo root (or worktree root for workers). If both return
+   in the repo root (or workspace root for slots). If both return
    non-empty values, use them.
 3. **Project memory.** If git config is absent or empty, run
    `memory recall` with a query like `"author"`. If a `project`-scope
@@ -490,9 +492,9 @@ When creating a commit, pass the discovered `name` and `email` to the
 { "author": { "name": "Alice Chen", "email": "alice@example.com" } }
 ```
 
-Root session and every worker: the same rule applies. Each worker's
-worktree may have a different last-commit author (if cut from a shared
-base); run the fallback command inside the worktree's directory, not
+Root session and every worker: the same rule applies. Each workspace
+may have a different last-commit author (if cut from a shared
+base); run the fallback command inside the workspace's directory, not
 from the root session's cwd.
 
 ### Storing for next time
@@ -515,12 +517,12 @@ memory remember content="author: Alice Chen <alice@example.com>"
 
 ---
 
-## 14. Code intelligence in worktrees (serena caveat)
+## 14. Code intelligence in workspaces (serena caveat)
 
 The serena MCP server, when registered (A4 axis), starts with
 `--project <main-repo-path>` taken from `mcpServers.serena.args`. That
 path is fixed for the lifetime of the jcode session — it is NOT
-re-bound per worktree. Consequence:
+re-bound per workspace. Consequence:
 
 - **Before editing**: serena is correct for code-intelligence
   exploration of the main repo (reading the call graph you are about
@@ -529,16 +531,16 @@ re-bound per worktree. Consequence:
   fresh as of your last commit on main.
 - **After editing**: do **not** trust serena's symbol index for files
   you have just modified. Its index is anchored to main; your
-  worktree edits are invisible. Use jcode-native `read <file>` and
-  `agentgrep <pattern> <worktree-path>/<glob>` instead.
+  workspace edits are invisible. Use jcode-native `read <file>` and
+  `agentgrep <pattern> <workspace-path>/<glob>` instead.
 - **Verification of intent** ("did my edit land the way I expect?"):
   re-read the file via `read`, or grep via `agentgrep` against the
-  absolute worktree path. Do not ask serena.
+  absolute workspace path. Do not ask serena.
 
 The bundle ships a deterministic detector:
 
 ```bash
-scripts/extension.sh mcp worktree-hint "$WORKTREE_PATH"
+scripts/extension.sh mcp worktree-hint "$WORKSPACE_PATH"
 # Output is line-oriented; grep for the status:
 #   serena: live (project=...)                          ← editing in main repo
 #   serena: stale (sees <main-repo> only; worktree edits invisible)
@@ -549,7 +551,7 @@ scripts/extension.sh mcp worktree-hint "$WORKTREE_PATH"
 Run this at spawn start. If the line says `stale`, plan your
 verification accordingly: pre-edit use serena, post-edit use
 `read` + `agentgrep`. Mark `confidence: low` on the artifact if a
-gate relied on serena results against worktree files; that is
+gate relied on serena results against workspace files; that is
 honest reporting, not failure — see §5.
 
 This caveat is bundle-level, not engine-level. The jcode engine does
