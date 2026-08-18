@@ -208,3 +208,60 @@ Allocated via `extension.sh workspace {init,add-slot,ls,show,destroy,clean}`.
 2. `extension.sh artifact validate <file>` — 验证 typed artifact 有 8 个 contract fields
 
 跳过 G3-G5（不是 immediate 痛点，且 G3 需要读取 server config schema，复杂度高）。
+
+### Terminology drift check (extension convention, not a per-project axis)
+
+Beyond the 11 axes, the bundle exposes a **terminology-check**
+subcommand (`scripts/extension.sh terminology-check`) for catching
+cross-file drift after refactors that rename functions, flags, or
+roles. It is **not** an extension axis — there is no per-project
+hook. It is a self-audit tool: the bundle reads its own glossary
+(`scripts/terminology-glossary.txt`) and reports lines in the repo
+that still match a deprecated pattern.
+
+```bash
+scripts/extension.sh terminology-check --list    # show glossary entries
+scripts/extension.sh terminology-check            # scan tracked + untracked
+scripts/extension.sh terminology-check --staged   # scan only staged files
+scripts/extension.sh terminology-check --all      # scan entire filesystem
+```
+
+**Glossary format** (`scripts/terminology-glossary.txt`):
+
+```
+# Topic comment explaining why these terms are wrong
+OLD_PATTERN [| NEW_PATTERN]    # trailing comments after | are stripped
+```
+
+Lines without `|` are detect-only (no replacement candidate); lines
+with `|` are replace candidates. Matches are reported as
+`file:line: [pattern -> replacement]` so the user can review context
+before any replacement.
+
+**What it catches**: literal string matches across `.md`, `.sh`,
+`.json`, `.toml`, etc. Used after the workspace-layer refactor
+(commits `bcb1c32`–`9435018`) to verify the rename from
+`wt-<label>`/`worktree-using roles` to `ws-<label>`/`workspace-using
+roles` propagated everywhere.
+
+**What it does NOT catch**:
+- AST-level renames (use serena's `rename_symbol` for those)
+- False positives: when a legacy `wt-<label>` reference appears in a
+  comment that **intentionally** documents the legacy jcode path
+  convention (e.g. `scripts/swarm-sweep.sh` comments, `docs/INSTALL.md`
+  legacy alias section). The tool reports them; the user decides.
+
+**Exit codes**: `0` when no matches found, `1` when matches found.
+Wire it into pre-commit or CI by piping to a threshold check.
+
+**Trade-offs vs serena**:
+- `terminology-check` (grep-based): fast, zero dependencies, scans
+  any text file. Cannot distinguish a "rename candidate" from a
+  "documented legacy alias". Best for: repo-wide sweeps, post-refactor
+  audits, pre-commit hooks.
+- serena's `rename_symbol` (AST-based): scope-aware, distinguishes
+  the symbol from its references, applies the rename atomically.
+  Best for: the actual rename operation itself.
+
+Use `terminology-check` to verify your refactor was complete; use
+serena's `rename_symbol` to do the refactor.

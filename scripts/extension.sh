@@ -1595,6 +1595,173 @@ cmd_models() {
 #   A1 overlay         <repo>/.jcode/prompt-overlay.md   per-project (active)
 #   A2 worker policy   <repo>/.jcode/swarm-prompt.md     (not configured)
 #   ...
+# terminology-check — scan the repo for stale terminology based on
+# scripts/terminology-glossary.txt. Each entry in the glossary is either
+# "OLD" (detect-only) or "OLD | NEW" (replace candidate). Matched lines
+# are reported as `file:line: [pattern -> replacement]` so the user can
+# review context before any replacement. The tool is grep-based (literal
+# match) and intentionally NOT AST-aware — use serena's `rename_symbol`
+# for that. Catches cross-file drift that individual refactors missed.
+#
+# Args (all optional):
+#   --staged            Scan git diff --staged only (default: working tree)
+#   --all               Scan entire repo (including untracked, ignoring .git/)
+#   --glossary FILE     Override glossary (default: ./terminology-glossary.txt)
+#   --list              Print glossary entries and exit
+#
+# Exits 0 if no matches found, 1 if matches found (so callers can wire it
+# into pre-commit / CI without parsing stdout).
+cmd_terminology_check() {
+  local scan_mode="working_tree"
+  local glossary_file=""
+  local list_only=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --staged|--all|--working-tree)
+        case "$1" in
+          --staged) scan_mode="staged" ;;
+          --all) scan_mode="all" ;;
+        esac
+        ;;
+      --glossary) glossary_file="$2"; shift ;;
+      --list) list_only=1 ;;
+      *)
+        echo "extension.sh terminology-check: unknown flag '$1'" >&2
+        echo "  try: --staged | --all | --working-tree | --glossary FILE | --list" >&2
+        return 2
+        ;;
+    esac
+    shift
+  done
+
+  # Resolve glossary path. Default lives next to this script.
+  local glossary_abs=""
+  if [[ -z "$glossary_file" ]]; then
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    glossary_file="$script_dir/terminology-glossary.txt"
+    glossary_abs="$glossary_file"
+  else
+    glossary_abs="$(cd "$(dirname "$glossary_file")" && pwd)/$(basename "$glossary_file")"
+  fi
+  if [[ ! -f "$glossary_file" ]]; then
+    echo "extension.sh terminology-check: glossary not found: $glossary_file" >&2
+    return 1
+  fi
+
+  # --list: print glossary entries and exit.
+  if [[ $list_only -eq 1 ]]; then
+    echo "Glossary: $glossary_file"
+    echo "---"
+    awk -F'|' '
+      /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+      {
+        # Strip surrounding whitespace per field
+        for (i=1; i<=NF; i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)
+        printf "  %-45s -> %s\n", $1, ($2 == "" ? "(detect-only)" : $2)
+      }
+    ' "$glossary_file"
+    return 0
+  fi
+
+  # Build the file list based on scan_mode.
+  local -a files=()
+  case "$scan_mode" in
+    working_tree)
+      # Tracked files + untracked text files (respects .gitignore).
+      while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files 2>/dev/null
+        git ls-files --others --exclude-standard 2>/dev/null
+      )
+      ;;
+    staged)
+      while IFS= read -r f; do files+=("$f"); done < <(git diff --name-only --cached 2>/dev/null | grep -v '^$')
+      ;;
+    all)
+      # Whole filesystem, ignoring .git/, node_modules/, .jcode-workspaces/.
+      while IFS= read -r f; do
+        files+=("${f#./}")
+      done < <(find . -type f \
+        -not -path './.git/*' \
+        -not -path '*/.git/*' \
+        -not -path './node_modules/*' \
+        -not -path '*/.jcode-workspaces/*' \
+        -not -path '*/__pycache__/*' \
+        2>/dev/null)
+      ;;
+  esac
+
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "no files to scan (scan_mode=$scan_mode)"
+    return 0
+  fi
+
+  # For each glossary entry, scan.
+  local total=0
+  # Read glossary, strip comments/blanks, split on first '|'.
+  while IFS= read -r line; do
+    # Skip comments and blank lines.
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${line// }" ]] && continue
+
+    # Split on FIRST '|' only.
+    local old new
+    if [[ "$line" == *"|"* ]]; then
+      old="${line%%|*}"
+      new="${line#*|}"
+      # Drop trailing # comment from new.
+      new="${new%%#*}"
+    else
+      old="$line"
+      new=""
+    fi
+    # Trim surrounding whitespace.
+    old="${old#"${old%%[![:space:]]*}"}"; old="${old%"${old##*[![:space:]]}"}"
+    new="${new#"${new%%[![:space:]]*}"}"; new="${new%"${new##*[![:space:]]}"}"
+
+    [[ -z "$old" ]] && continue
+
+    # Scan files for this pattern.
+    local entry_hits=0
+    for f in "${files[@]}"; do
+      [[ -f "$f" ]] || continue
+      # Skip the glossary file itself (its patterns are self-references).
+      local f_abs
+      f_abs="$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")"
+      if [[ "$f_abs" == "$glossary_abs" ]]; then continue; fi
+      # Skip binary heuristically.
+      if file -b --mime-encoding "$f" 2>/dev/null | grep -q '^binary$'; then
+        continue
+      fi
+
+      while IFS= read -r hit; do
+        [[ -z "$hit" ]] && continue
+        local lineno="${hit%%:*}"
+        local rest="${hit#*:}"
+        if [[ -n "$new" ]]; then
+          printf '%s:%s: [%s -> %s]\n  %s\n' "$f" "$lineno" "$old" "$new" "$rest"
+        else
+          printf '%s:%s: [%s]\n  %s\n' "$f" "$lineno" "$old" "$rest"
+        fi
+        entry_hits=$((entry_hits + 1))
+        total=$((total + 1))
+      done < <(grep -n -F -- "$old" "$f" 2>/dev/null || true)
+    done
+  done < <(grep -v '^[[:space:]]*#' "$glossary_file" | grep -v '^[[:space:]]*$')
+
+  if [[ $total -eq 0 ]]; then
+    echo "OK: 0 stale terminology matches (scan_mode=$scan_mode, files=${#files[@]})"
+    return 0
+  fi
+  echo "---"
+  echo "TOTAL: $total match(es) across $scan_mode (${#files[@]} files)"
+  echo "Review each match manually — terminology-check does NOT auto-replace."
+  echo "False positives are expected when the legacy wt-* path or worktree"
+  echo "BACKING-TYPE references appear in comments documenting both"
+  echo "bundle (workspace) and legacy jcode (worktree) conventions."
+  return 1
+}
+
 cmd_doctor() {
   local mode="${1:-axes}"
   case "$mode" in
@@ -1757,6 +1924,7 @@ case "$cmd" in
   models)      cmd_models "$@" ;;
   preflight)   cmd_preflight "$@" ;;
   scratch-dir) cmd_scratch_dir "$@" ;;
+  terminology-check) cmd_terminology_check "$@" ;;
   doctor)      cmd_doctor "$@" ;;
   help|--help|-h|"")
     cat <<EOF
@@ -1780,6 +1948,7 @@ Subcommands:
   models [list|probe <name>]           List jcode-known models; probe auth for one
   preflight [--workspace P] [--project P]  Pre-spawn env gate (auth, install, paths)
   scratch-dir [root|ws <label>|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
+  terminology-check [--staged|--all|--working-tree] [--glossary FILE] [--list]   Scan repo for stale terminology (per scripts/terminology-glossary.txt)
   artifact validate <path>                Validate a typed-artifact JSON file (8-field contract)
   doctor [--env]                       Per-axis status table (default) or environment probe (--env)
 

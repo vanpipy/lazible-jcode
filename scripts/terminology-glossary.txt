@@ -1,0 +1,64 @@
+# Bundle terminology glossary
+#
+# Source of truth for terminology-check. Each non-comment, non-blank
+# line is a single entry in one of two formats:
+#
+#   OLD_PATTERN                          (detect-only — no replacement)
+#   OLD_PATTERN | NEW_PATTERN            (replace candidate)
+#
+# Trailing # comments after a | separator are allowed (stripped on read).
+# Patterns are matched literally (grep -F), not as regex. Surrounding
+# whitespace is trimmed.
+#
+# Keep this file sorted by topic. When you add an entry, add a one-line
+# comment above the topic explaining WHY the old form is wrong (so future
+# maintainers don't re-introduce it). Remove the entry only when the
+# replacement has propagated everywhere and a full-repo scan finds zero
+# matches.
+#
+# ============================================================
+# Workspace layer (PR #bcb1c32..9435018 — 9435018)
+# ============================================================
+# After commit 9435018 the workspace layer replaced the "1 worker : 1
+# worktree" shape. The new model is workspaces with N slots. Old
+# "wt-<label>" / "worktree" terminology is correct only when referring
+# to the worktree BACKING TYPE (e.g. --backing=worktree); for the
+# workspace CONCEPT itself, use ws-<label> / workspace.
+
+# legacy wt- prefix in workspace paths (only legitimate in jcode-path docs
+# that explicitly contrast bundle's ws- vs jcode's wt- conventions)
+wt-<label>/                                       | ws-<label>/
+
+# ============================================================
+# Pre-merge hook / preflight flag (commit 6c87c72)
+# ============================================================
+# --worktree was renamed to --workspace; --worktree remains as legacy alias.
+
+--worktree P                                       | --workspace P
+
+# ============================================================
+# Role classification (commit 9435018 + d3d7540)
+# ============================================================
+# worktree-using roles was renamed to workspace-using roles in
+# commit 9435018. Catches any leftover prose mention.
+
+worktree-using roles                               | workspace-using roles
+
+# ============================================================
+# Function refactors
+# ============================================================
+# After c09fc0f, _scratch_root is the path-computation helper; the
+# user-facing dispatcher is cmd_scratch_dir. Catches stale references
+# to the old internal name in docs / comments.
+
+_scratch_root_internal                             | _scratch_root
+
+# ============================================================
+# Generic terminology: "worktree" used in user-facing text
+# ============================================================
+# When describing the CONCEPT in user-facing prose, prefer "workspace"
+# unless the surrounding text is specifically about the worktree
+# backing type. These entries are detection-only — too context-sensitive
+# for blind replacement.
+
+worktree path                                      | workspace path

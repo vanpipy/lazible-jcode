@@ -118,7 +118,7 @@ prompt + persona content jcode reads.
   as `~/.jcode/roles/*.md`. The root session prepends the appropriate
   role template to the spawn prompt when constructing a worker.
 
-Worker-only concerns (worktree paths, output schema, per-role
+Worker-only concerns (workspace paths, output schema, per-role
 workflow) belong in `swarm-prompt.md` and `roles/*.md`, not in the
 main overlay.
 
