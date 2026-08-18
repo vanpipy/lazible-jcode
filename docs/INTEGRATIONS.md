@@ -73,6 +73,21 @@ to be installed. Supported out of the box: Python, TypeScript, Java, Go,
 and a few others. For Rust or other less-covered languages, fall back to
 `read` + targeted `agentgrep`.
 
+### Silent startup (no browser)
+
+By default serena opens a web dashboard in the default browser every
+time the MCP server starts. The bundle's `config/mcp.json.example`
+passes `--open-web-dashboard false` to suppress the auto-open while
+keeping the dashboard reachable on `http://127.0.0.1:24282/dashboard/`
+for manual inspection. To re-enable the auto-open (e.g. during local
+debugging), drop the flag from the serena `args` list in
+`~/.jcode/mcp.json` or `<project>/.jcode/mcp.json`.
+
+If you prefer the dashboard entirely disabled (no port listening at
+all), swap `--open-web-dashboard false` for `--enable-web-dashboard
+false`. Both flags override the equivalent setting in
+`~/.serena/serena_config.yml`.
+
 A serena usage skill lives at `~/.jcode/skills/serena/SKILL.md` (optional,
 per-user). It encodes the when-to-use rules and the boundary with
 jcode-native `read`/`grep`/`edit`.

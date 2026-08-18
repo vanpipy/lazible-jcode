@@ -40,9 +40,16 @@
       "shared": true
     },
     "serena": {
-      "_comment": "Code intelligence via tree-sitter (oraios/serena). No external LSP install needed for Python/TS/Java/Go. See docs/INTEGRATIONS.md.",
+      "_comment": "Code intelligence via tree-sitter (oraios/serena). --open-web-dashboard=false keeps startup silent (dashboard still serves on http://127.0.0.1:24282 for manual access). No external LSP install needed for Python/TS/Java/Go. See docs/INTEGRATIONS.md.",
       "command": "uvx",
-      "args": ["serena-agent", "start-mcp-server", "--project", "/workspace"],
+      "args": [
+        "serena-agent",
+        "start-mcp-server",
+        "--project",
+        "/workspace",
+        "--open-web-dashboard",
+        "false"
+      ],
       "env": {},
       "shared": true
     }
