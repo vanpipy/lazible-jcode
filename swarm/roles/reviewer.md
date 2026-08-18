@@ -42,7 +42,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 ## Scope
 
 - Read-only: read diffs, read relevant implementations, read tests.
-- **No worktree allocation**: the reviewer uses `git show <branch>:<file>` / `git diff main..<branch>` / `git log main..<branch>` to read worker artifacts from the root cwd.
+- **No workspace allocation**: the reviewer is a root-cwd role — uses `git show <branch>:<file>` / `git diff main..<branch>` / `git log main..<branch>` to read worker artifacts from the root cwd. See overlay §0 / §4.1.
 - **Will not touch**: any file (including tests / docs / config).
 - Out-of-scope discoveries (e.g. "this should be refactored") → report in `open_questions[]`, let the root session decide.
 

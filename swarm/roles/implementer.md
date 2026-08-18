@@ -25,7 +25,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 ## Scope
 
-- **Workspace**: stay in your own worktree at `$TMPDIR/swarm-$USER/<repo>-<short-sha>/wt-<label>/`. Never touch the main worktree. Your `cwd` is the worktree root.
+- **Workspace**: enter the workspace at `$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/` (worktree backing) or `$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/` (folder backing). Your `cwd` is the workspace root. Multiple slots may share this workspace under disjoint `files_touched[]`; respect the partition. (Workspace-using role — see overlay §0 / §4.1.)
 - **Writable branch**: the `<worker_branch>` given in the spawn prompt (typical `feat/<name>_<short-sha>`). Other branches are off-limits.
 - **Will touch**: files explicitly listed in the spawn prompt.
 - **Will not touch**: any file outside the spawn prompt's list (even if you think "this should also be fixed").
@@ -35,11 +35,11 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 1. Load relevant project skills (e.g. `/rn-dev`, `/pi-agent-rust`).
 2. Read the spec + existing implementation, list tasks via the `todo` tool.
-3. **Confirm worktree and branch**: `pwd` must equal `<worktree_path>`, `git branch --show-current` must equal `<worker_branch>`. If not, report immediately — do not fix it yourself.
+3. **Confirm workspace and branch**: `pwd` must equal `<workspace_path>`, `git branch --show-current` must equal `<worker_branch>` (worktree backing) — or for folder backing, `pwd` is the workspace dir without a branch. If not, report immediately — do not fix it yourself.
 4. **Red — write a failing test that proves the new behavior**. Run it once to confirm it really fails. Capture the failure stdout / stderr / line numbers as evidence into the artifact. The only exceptions are pure refactor / pure docs / typo fixes — these are zero-behavior-change tasks; mark `no-test scope` in the artifact and explain why.
 5. **Green — minimal implementation to turn the red test green**. Change only the minimum code needed to pass the red test; refuse "while I'm here" cleanups. Run the test again, capture the passing output as evidence.
 6. **Refactor — only after green**. Now optimize names, extract functions, dedupe, pay down tech debt. The red + green tests are the safety net; re-run after refactor to confirm still green.
-7. **Run slice-scoped gates** (typecheck / lint / targeted tests) — any failure blocks the commit. Scope every gate to `files_touched[]`; the full suite is root's job (overlay §5.2 Layer 2). See `swarm-prompt.md` §7 for the layered gate model and the per-language invocation examples. Gate output goes verbatim into the artifact's `validation` field. When `files_touched[]` includes build config / package manifests / CI files, run the smallest meaningful superset (e.g. `tsc --noEmit` on the whole project for a `tsconfig.json` change) and note the broadened scope in `validation`. Do NOT run the full test suite from the worktree — it pins the worktree + model context for minutes and root will re-run it anyway at integration.
+7. **Run slice-scoped gates** (typecheck / lint / targeted tests) — any failure blocks the commit. Scope every gate to `files_touched[]`; the full suite is root's job (overlay §5.2 Layer 2). See `swarm-prompt.md` §7 for the layered gate model and the per-language invocation examples. Gate output goes verbatim into the artifact's `validation` field. When `files_touched[]` includes build config / package manifests / CI files, run the smallest meaningful superset (e.g. `tsc --noEmit` on the whole project for a `tsconfig.json` change) and note the broadened scope in `validation`. Do NOT run the full test suite from the workspace — it pins the workspace + model context for minutes and root will re-run it anyway at integration.
 
 ### API replacement refactor constraints
 
@@ -70,7 +70,7 @@ For any `fold` / `replace` / `rename` / `move` / `delete`:
 }
 ```
 
-**`dependencies` field (optional).** When your work needs another worker's commit before you can complete, declare it as a list of `{branch, commit, why}` objects. Root will merge the named branch first, rebase your worktree onto the merged result, and resume you. Most commits have no deps; leave the field out when your work is independent.
+**`dependencies` field (optional).** When your work needs another worker's commit before you can complete, declare it as a list of `{branch, commit, why}` objects. Root will merge the named branch first, rebase the workspace onto the merged result, and resume you. Most commits have no deps; leave the field out when your work is independent.
 
 ## Anti-patterns
 
@@ -83,7 +83,7 @@ For any `fold` / `replace` / `rename` / `move` / `delete`:
 - Don't skip the red step because "I can already see the code in my head" — even if your mental model says green, you must write the test to file, run it, and see it fail.
 - Don't write assertion-less "placeholder" tests — passing a placeholder proves nothing.
 - Don't edit tests outside the project's equivalent test directory.
-- Don't run `pnpm install` / `pod install` / `cargo add` inside the worktree — symlink from the main worktree, install there.
+- Don't run `pnpm install` / `pod install` / `cargo add` inside the workspace — symlink from the main repo, install there.
 - Don't commit to any branch other than `<worker_branch>`.
 - Don't `git push` — the root session owns integration + push.
 - Don't treat any single signal as "done" — typed artifact via `complete_node` with all required fields is what closes the work.

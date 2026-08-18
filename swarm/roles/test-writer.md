@@ -26,7 +26,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 ## Scope
 
-- **Workspace**: stay in your own worktree at `$TMPDIR/swarm-$USER/<repo>-<short-sha>/wt-<label>/`. Never touch the main worktree. Your `cwd` is the worktree root. (Worktree-using role — see overlay §0 / §4.1. Same allocation rule as `implementer`.)
+- **Workspace**: enter the workspace at `$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/` (worktree backing) or `$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/` (folder backing). Your `cwd` is the workspace root. Multiple slots may share this workspace under disjoint `files_touched[]`; respect the partition. (Workspace-using role — see overlay §0 / §4.1. Same allocation rule as `implementer`.)
 - **Writable branch**: `<worker_branch>`, typical `test/<name>_<short-sha>`.
 - **Will touch**: test files + necessary fixtures / mocks.
 - **Will not touch**: implementation code (even if you spot a bug — that is reviewer / implementer territory).
@@ -34,7 +34,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 ## Workflow
 
-1. Read the implementation (source + type signatures) and confirm the worktree (`pwd` == `<worktree_path>`). List all logical paths.
+1. Read the implementation (source + type signatures) and confirm the workspace (`pwd` == `<workspace_path>`). List all logical paths.
 2. **Hidden-path sweep**:
    - `if (a && b)`: cover `a=true/b=false` and `a=false/b=true` separately.
    - `switch` default branches.
@@ -43,7 +43,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
    - Callback / event-handler exception paths.
 3. Write orthogonal cases for each path.
 4. Run coverage **scoped to the files you added tests for** (`jest --coverage <file>` or equivalent). The 90% threshold applies to the slice you wrote, not the whole project — full project coverage is root's job (overlay §5.2 Layer 2). Compute the "covered / total paths in your slice" ratio.
-5. If ratio < 90% on your slice, add cases until you hit it. Do NOT run the full project's coverage from the worktree (long, blocks the swarm — root will run the full sweep at integration).
+5. If ratio < 90% on your slice, add cases until you hit it. Do NOT run the full project's coverage from the workspace (long, blocks the swarm — root will run the full sweep at integration).
 6. Report via `complete_node` with coverage numbers + list of uncovered paths.
 
 ## Output schema
@@ -74,5 +74,5 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 - Don't write duplicate cases just to chase the coverage number.
 - Don't skip catch / error paths.
 - Don't mock dependencies you don't understand (mock = contract).
-- Don't install new test deps inside the worktree — report to root.
+- Don't install new test deps inside the workspace — report to root.
 - Don't commit to any branch other than `<worker_branch>`.

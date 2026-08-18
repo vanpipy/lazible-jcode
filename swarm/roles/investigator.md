@@ -27,7 +27,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 ## Scope
 
-- **No worktree allocation**: the investigator uses `git show` / `git diff` / `git log` / `git blame` / `rg` / running tests, all from the root cwd — no independent workspace needed.
+- **No workspace allocation**: the investigator is a root-cwd role — it uses `git show` / `git diff` / `git log` / `git blame` / `rg` / running tests, all from the root cwd — no independent workspace needed. See overlay §0 / §4.1.
 - Read-only + run-commands only (`git log`, `rg`, tests, debug prints).
 - **Will not touch**: any file (including adding `console.log`).
 - After finding the root cause: describe the fix direction, let the root session decide whether to open an implementer.

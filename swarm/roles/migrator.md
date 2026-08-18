@@ -26,7 +26,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
 
 ## Scope
 
-- **No worktree allocation** (root-cwd role — see overlay §0 / §4.1): migrator operates from the root session's cwd, after root checks out `<worker_branch>`. Migrator owns file changes but is **serial by definition** — it does not run concurrently with other root-cwd workers. Read other workers' artifacts via `git show <branch>:<file>` / `git diff`.
+- **Workspace by default** (root-cwd role — see overlay §0 / §4.1): migrator operates from the root session's cwd after root checks out `<worker_branch>`. The default is now a workspace with 1 slot; the legacy root-cwd shape (`git checkout <worker_branch>` in main cwd) is retained for serial migrations. Migrator owns file changes but is **serial by definition** — it does not run concurrently with other root-cwd workers. Read other workers' artifacts via `git show <branch>:<file>` / `git diff`.
 - **Writable branch**: `<worker_branch>`, typical `refactor/<name>_<short-sha>` or `feat/<name>_<short-sha>`. Already checked out in root cwd by root before the spawn prompt is handed off.
 - **Will touch**: modules / files explicitly listed in the spawn prompt.
 - **Will not touch**: caller code (unless explicitly authorized), public API signatures, config file schemas.
@@ -43,7 +43,7 @@ Typed artifact per overlay invariant 4. `status: completed | partial | needs-inf
    - Run tests (old + new).
    - Run typecheck.
    - Single-step commit onto `<worker_branch>`.
-5. After all steps, run the full suite (Layer 2 of the layered gate model — `swarm-prompt.md` §7). The migrator runs in root cwd (serialized, no worktree pinning), so the full suite is acceptable here as the final pre-artifact check. Root's integration gates in `prompt-overlay.md` §5.2 still apply before merge — this is the migrator's pre-handoff check, not a substitute.
+5. After all steps, run the full suite (Layer 2 of the layered gate model — `swarm-prompt.md` §7). The migrator runs serially in root cwd (no workspace pinning by default), so the full suite is acceptable here as the final pre-artifact check. Root's integration gates in `prompt-overlay.md` §5.2 still apply before merge — this is the migrator's pre-handoff check, not a substitute.
 6. Report via `complete_node` with the migration graph and step-by-step commit SHAs.
 
 For `delete` / `rename` / `move` migrations:
