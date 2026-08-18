@@ -56,7 +56,7 @@ you should update.
 Bundle workers create scratch dirs under:
 
 ```
-${LAZIBLE_TMPDIR:-/tmp}/jcode/<repo>-<short-sha>/wt-<label>/
+${LAZIBLE_TMPDIR:-/tmp}/jcode/<repo>-<short-sha>/ws-<label>/
 ```
 
 - Default root is `/tmp`. Override with `LAZIBLE_TMPDIR=/some/path` for
@@ -67,9 +67,11 @@ ${LAZIBLE_TMPDIR:-/tmp}/jcode/<repo>-<short-sha>/wt-<label>/
   using `git worktree` from a detached state). The non-git fallback
   uses python3 / jq / sha256sum / cksum — last-resort cksum warns
   because collisions are easier.
-- `wt-<label>` is one per worktree-using worker (3 of 6 roles:
-  `implementer`, `test-writer`, `doc-writer`; see
-  `swarm-prompt.md` §11).
+- `ws-<label>` is one per workspace (4 of 6 workspace-using roles:
+  `implementer`, `test-writer`, `doc-writer`, `migrator`; see
+  `swarm-prompt.md` §11). Workspaces contain 1+ slots under disjoint
+  `files_touched[]`. For non-git projects, the workspace falls back to
+  a plain folder instead of a worktree (overlay §4.1).
 
 ### `~/.local/bin`
 
@@ -206,7 +208,7 @@ fix the listed dep and re-run.
 | install.sh: "/tmp not writable"                      | unusual fs layout                             | `export LAZIBLE_TMPDIR=/some/path && bash scripts/install.sh` |
 | install.sh: "neither curl nor wget"                  | no HTTP client                                | `apt install curl`                                     |
 | `extension.sh mcp info`: "no python3/jq"             | python3 missing                               | install python3 (preferred) or jq                      |
-| `swarm-sweep`: "no stale" but you have stale trees   | worktrees under `wt-<label>` but path doesn't match either regex | run `swarm-sweep --help` to confirm the matched patterns; paths must end in `/jcode/<repo>-<sha>/wt-<label>/` or `/swarm-<user>/<repo>/wt-<label>/` |
+| `swarm-sweep`: "no stale" but you have stale trees   | workspaces under `ws-<label>` but path doesn't match either regex | run `swarm-sweep --help` to confirm the matched patterns; paths must end in `/jcode/<repo>-<sha>/ws-<label>/` or `/swarm-<user>/<repo>/wt-<label>/` (legacy) |
 | New shells can't find `jcode`                        | `~/.local/bin` not on PATH                    | `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc` |
 | install.sh prints raw escape codes                   | `TERM=dumb` not set but terminal can't render | `export TERM=xterm-256color` or `unset NO_COLOR`     |
 | Behind corporate proxy: install fails on `curl`      | no HTTPS_PROXY                                | `export HTTPS_PROXY=http://proxy:port && bash scripts/install.sh` |

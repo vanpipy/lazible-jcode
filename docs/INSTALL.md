@@ -19,7 +19,7 @@ time and overwrites the destination without prompting:
 1. Install jcode binary via the standalone upstream installer if no
    `jcode` is on `PATH` yet. Existing binaries are left in place.
    Also installs the `swarm-sweep` helper into `~/.local/bin/` (see
-   "Stale swarm worktrees" below).
+   "Stale swarm workspaces" below).
 2. Symlink `swarm/prompt-overlay.md`, `swarm/swarm-prompt.md`,
    and `swarm/roles/*.md` into their canonical locations under `~/.jcode/`.
    `swarm/ARCHITECTURE.md` and `docs/ARCHITECTURE.md` are reference docs
@@ -146,25 +146,36 @@ It does **not** touch (without `--purge`):
 It never touches shell rc files. If you want to remove the PATH line
 the upstream installer added, edit the rc file by hand.
 
-## Stale swarm worktrees
+## Stale swarm workspaces
 
 When a spawned worker disappears mid-task (M3 silent failure) or
-finishes without cleanup, the git worktree and branch it created sit
-in the repo indefinitely. `swarm-sweep` cleans them up:
+finishes without cleanup, the workspace directory + branch it
+created sit in the repo / `$TMPDIR` indefinitely. Two cleanup paths:
 
 ```bash
-swarm-sweep              # dry-run, lists stale worktrees
+# Per-workspace: remove one workspace directory + branch
+scripts/extension.sh workspace destroy <label>
+
+# Bulk: sweep all manifests marked destroyed/completed
+scripts/extension.sh workspace clean --yes
+
+# Legacy: bulk for the old worktree convention
 swarm-sweep --yes        # actually remove them
 swarm-sweep --max-age=3  # threshold in days (default: 7)
 ```
 
-The script only touches worktrees whose path matches the swarm
-convention `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`.
-The main worktree and any manual feature worktrees are NEVER touched.
-This is the worktree-level cleanup layer — distinct from the
+The `swarm-sweep` script only touches paths matching the swarm
+convention `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/`
+(legacy worktree shape) or the new workspace shape
+`$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/`. The main worktree
+and any manual feature worktrees are NEVER touched. The
+`workspace destroy` / `clean` commands are the primary cleanup
+path for new projects; `swarm-sweep` remains for legacy residue.
+
+This is the workspace-level cleanup layer — distinct from the
 session-level reaper inside the orchestrator (which closes idle
 spawned workers automatically). See `AGENTS.md` "Cleanup: stale
-swarm worktrees" for the full description of both layers.
+workspaces" for the full description of both layers.
 
 `swarm-sweep` is installed into `~/.local/bin/swarm-sweep` by
 `scripts/install.sh` (step 1, alongside jcode). Removing it happens

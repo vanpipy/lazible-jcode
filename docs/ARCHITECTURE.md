@@ -7,8 +7,8 @@ How three layers cooperate to give lazible-jcode its working capability:
 │ Layer 3: MCP servers  (filesystem, git, serena, ...)            │
 │         → registered as mcp__<server>__<tool> tools             │
 ├─────────────────────────────────────────────────────────────────┤
-│ Layer 2: lazible-jcode  (10 axes: A1-A10)                       │
-│         → A1-A4 = jcode-native  /  A5-A9 = bundle convention    │
+│ Layer 2: lazible-jcode  (11 axes: A1-A11)                       │
+│         → A1-A4 = jcode-native  /  A5-A11 = bundle convention   │
 ├─────────────────────────────────────────────────────────────────┤
 │ Layer 1: jcode native  (built-in tools, prompt, hooks, swarm)    │
 │         → ~35 tool modules + 7 prompt layers + lifecycle hooks  │
@@ -102,14 +102,15 @@ no children of children; deep mode = recursive. Each spawned worker's
 `report_back_to_session_id` reconstructs the ancestry chain. The
 session-level reaper (engine-side, automatic, ~30 min idle threshold,
 configurable, `0` disables) handles M3 silent disappearance;
-`swarm-sweep` (bundle-shipped) handles the worktree-level residue.
+`extension.sh workspace destroy|clean` and the legacy `swarm-sweep`
+helper (bundle-shipped) handle the workspace-level residue.
 
 ---
 
 ## Layer 2: lazible-jcode extension mechanism
 
 Single entry point: `scripts/extension.sh <subcommand>`. Discovery:
-`extension.sh doctor` enumerates the A1-A10 surface in fixed columns.
+`extension.sh doctor` enumerates the A1-A11 surface in fixed columns.
 
 | Axis | File | Loaded by | Type |
 |---|---|---|---|
@@ -137,8 +138,8 @@ at `<repo>/.jcode/<name>.sh`; absence is not failure (all hooks
 return exit 0 when missing); bypass vs. strict semantics differ per
 axis (`notify` is bypass, `pre-merge` is strict).
 
-The full 10×10 boundary-behavior walkthrough (100 scenarios across
-A1-A10) is in `docs/EXTENSIONS.md`.
+The full 11×11 boundary-behavior walkthrough (121 scenarios across
+A1-A11) is in `docs/EXTENSIONS.md`.
 
 ---
 
@@ -213,7 +214,7 @@ but are **not** spawned or shown as connecting (issue #436).
 | 3 | Layer 1 | jcode loads `./.jcode/swarm-prompt.md` for spawned workers |
 | 4 | Layer 1 | jcode auto-discovers `./.jcode/skills/` |
 | 5 | Layer 1 | jcode auto-loads `./.jcode/mcp.json` → A4 axis (Layer 3 entry) |
-| 6 | Layer 2 | Root runs `extension.sh doctor` to see A1-A10 status |
+| 6 | Layer 2 | Root runs `extension.sh doctor` to see A1-A11 status |
 | 7 | Layer 3 | filesystem + git + serena connect; 71 tools registered |
 
 ### Scenario 2: Single-file typo (≤ 2 lines, **no MCP**)

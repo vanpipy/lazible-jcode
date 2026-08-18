@@ -14,7 +14,7 @@ Copy it to `~/.jcode/mcp.json` (global) or `<repo>/.jcode/mcp.json`
 | ------------ | ------------------------------------------------ | --------------------------------------------------- |
 | `filesystem` | Scoped file I/O, safer than unrestricted bash   | `npx -y @modelcontextprotocol/server-filesystem`    |
 | `git`        | Structured local git ops (log/blame/diff/branch) | `npx -y @cyanheads/git-mcp-server`                  |
-| `serena`     | Code intelligence (symbols, refs, rename) — see worktree caveat below | `uvx serena-agent start-mcp-server --project <path>` |
+| `serena`     | Code intelligence (symbols, refs, rename) — see workspace caveat below | `uvx serena-agent start-mcp-server --project <path>` |
 
 `puppeteer` (browser automation, local Chromium) is an optional add-on
 when you need e2e coverage. Drop it from the stack if you do not.
@@ -77,25 +77,24 @@ A serena usage skill lives at `~/.jcode/skills/serena/SKILL.md` (optional,
 per-user). It encodes the when-to-use rules and the boundary with
 jcode-native `read`/`grep`/`edit`.
 
-### Serena and worktrees
+### Serena and workspaces
 
-jcode spawns worktree-using workers (`implementer`, `test-writer`,
-`doc-writer`) into per-project worktrees
-(`$TMPDIR/jcode/<repo>-<short-sha>/wt-<label>/`) but **inherits the
+jcode spawns workspace-using workers (`implementer`, `test-writer`,
+`doc-writer`, `migrator`) into per-project workspaces
+(`$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/`) but **inherits the
 project's MCP config** (extension point A4) into those workers — serena
 starts with the same `--project <main-repo>` path it had in the main
-session. After a worker edits files in the worktree, serena's
+session. After a worker edits files in the workspace, serena's
 tree-sitter index is **anchored to the main repo HEAD**, not the
 worker's branch. `find_symbol` / `find_referencing_symbols` /
 `rename_symbol` will return results from main, silently missing the
-worker's edits.
+worker's edits. The same caveat applies to folder-backing workspaces
+(no git, but the worker cwd is still outside serena's project root).
 
-The `migrator` root-cwd role also benefits from serena but its caveat
-is different: migrator edits in root cwd on `<worker_branch>`, so
-serena sees the same files as the working tree, but its structural
-views (call graph, references) may reflect the `main` branch state
-rather than the migrator's branch. Apply the same "post-edit, re-read
-via `read`/`agentgrep`, do not trust serena" rule.
+The `reviewer` / `investigator` root-cwd roles also benefit from
+serena but the caveat is different: they read in root cwd without
+editing, so serena's structural views match what they see. They can
+trust serena's call graph and references directly.
 
 Worker pattern:
 
@@ -104,18 +103,19 @@ Worker pattern:
   finding all references pre-rename).
 - **After editing**: do **not** trust serena's symbol index for files
   you have just modified. Use jcode-native `read <file>` +
-  `agentgrep <pattern>` against the worktree path.
+  `agentgrep <pattern>` against the workspace path.
 - **Verification of intent**: when you need to confirm "did my edit land
   the way I expect?", re-read the file via `read` or grep via
-  `agentgrep <worktree-absolute-path>/<file>`. Do not ask serena.
+  `agentgrep <workspace-absolute-path>/<file>`. Do not ask serena.
 
-The bundle ships `scripts/extension.sh mcp worktree-hint <wt-path>` to
+The bundle ships `scripts/extension.sh mcp worktree-hint <ws-path>` to
 make the staleness check mechanical. Workers should run it at spawn
-start:
+start (output line still says `worktree` for backward compat, but
+accepts the workspace path):
 
 ```bash
-# Inside the worker worktree, or from root before drafting the spawn:
-scripts/extension.sh mcp worktree-hint "$WORKTREE_PATH"
+# Inside the worker workspace, or from root before drafting the spawn:
+scripts/extension.sh mcp worktree-hint "$WORKSPACE_PATH"
 # Output is line-oriented; grep for the status line:
 #   serena: live (project=...)                          ← editing in main repo
 #   serena: stale (sees <main-repo> only; worktree edits invisible)
@@ -149,8 +149,8 @@ Default to jcode-native when the operation is small or one-off:
 | Read a single file                   | `read` (jcode-native)                         |
 | Read 50+ files or a directory tree   | `filesystem` MCP                              |
 | Find a literal string across files   | `agentgrep` (jcode-native)                    |
-| Find a symbol and its references     | `serena` MCP (main repo only — see worktree caveat) |
-| Verify worktree edits match expectations | `read` + `agentgrep` (NOT serena — see worktree caveat) |
+| Find a symbol and its references     | `serena` MCP (main repo only — see workspace caveat) |
+| Verify workspace edits match expectations | `read` + `agentgrep` (NOT serena — see workspace caveat) |
 | Run a one-off `git log`              | `bash` (jcode-native)                         |
 | Run a structured batch of git ops    | `git` MCP                                     |
 | Edit a few lines in one file         | `edit` / `apply_patch` (jcode-native)         |

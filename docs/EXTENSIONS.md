@@ -1,4 +1,4 @@
-# 10×10 extension-mechanism walkthrough
+# 11×11 extension-mechanism walkthrough
 
 Each axis × 10 sub-cases. Convention: scenarios focus on **boundary
 behavior** (what root should do at the edge), not the happy path.
@@ -154,34 +154,54 @@ Total: 10 axes × 10 sub-cases = **100 boundary scenarios**.
 | 9.9 | 重复 KEY（pre-spawn 输出两次 FOO=bar） | 后写入覆盖前写入；最终 exports 文件含一个 export FOO=bar | ⚠️ (last-write-wins) |
 | 9.10 | pre-spawn.sh 引用未设置的 env var | bash 自己出错 → exit 非零 → spawn abort | ✅ (strict mode) |
 
-### A10: Per-project scratch dir
+### A10: Per-project workspace
+
+The workspace is the unit of file allocation and the unit of
+integration. A workspace has a backing (`worktree` or `folder`) and
+holds 1+ worker slots under disjoint `files_touched[]` partitions.
+Allocated via `extension.sh workspace {init,add-slot,ls,show,destroy,clean}`.
 
 | # | 场景 | 期望 | 状态 |
 |---|---|---|---|
-| 10.1 | cwd 在 git repo 内 | path 含 `<repo-name>-<short-sha>` | ✅ |
-| 10.2 | cwd 非 git repo | 退到 hash 化的稳定 key | ✅ |
-| 10.3 | `$LAZIBLE_TMPDIR` 已设置 | 覆盖默认 `/tmp` | ✅ |
-| 10.4 | `wt <label>` 子命令 | 输出 `$root/wt-<label>` | ✅ |
-| 10.5 | `scratch` 子命令 | 输出 `$root/scratch` | ✅ |
-| 10.6 | 跨子目录同 repo | path 相同（依赖 `git rev-parse --show-toplevel`） | ✅ |
-| 10.7 | cwd 在 jcode session 内（`$TMPDIR` 被 override） | bundle 强制 `/tmp` | ✅ |
-| 10.8 | scratch dir 已有上次残留 | bundle 不自动清理；提供 `scratch-dir clean` 子命令 | 🆕 — **待实现** |
-| 10.9 | 不同 repo 同名（`<basename>` 撞车） | 短 SHA 区分；hash 兜底（不同 cwd → 不同 SHA） | ✅ |
-| 10.10 | scratch dir 只读（权限问题） | bundle 不创建；root 报错 | ⚠️ (用户责任) |
+| 10.1 | cwd 在 git repo 内 + `workspace init <label>` | 创建 `ws-<label>` worktree + manifest | ✅ |
+| 10.2 | cwd 非 git repo + `workspace init <label>` | 创建 plain folder + manifest（folder backing） | ✅ |
+| 10.3 | `workspace add-slot` slot files 与已有 slot 不重叠 | 写入 manifest（exit 0） | ✅ |
+| 10.4 | `workspace add-slot` slot files 与已有 slot 重叠 | 拒绝（exit 1，stderr 列冲突文件） | ✅ |
+| 10.5 | `workspace init` 重复同 label | 拒绝（exit 1，提示 destroy 后再 init） | ✅ |
+| 10.6 | `workspace destroy <label>` 状态=active | 移除 ws-<label> 目录 + ws-<label> 分支；manifest 标记 destroyed | ✅ |
+| 10.7 | `workspace destroy <label> --keep-branch` | 移除目录，保留分支 | ✅ |
+| 10.8 | `workspace clean --yes` | 删除 status=destroyed/completed 的 manifest | ✅ |
+| 10.9 | slot 完成 slot status = completed 后 | root 触发 `workspace destroy` 释放资源 | ✅ |
+| 10.10 | `workspace show <unknown-label>` | 报错（exit 3，提示 manifest path） | ✅ |
+
+### A11: Per-project scratch dir
+
+| # | 场景 | 期望 | 状态 |
+|---|---|---|---|
+| 11.1 | cwd 在 git repo 内 | path 含 `<repo-name>-<short-sha>` | ✅ |
+| 11.2 | cwd 非 git repo | 退到 hash 化的稳定 key | ✅ |
+| 11.3 | `$LAZIBLE_TMPDIR` 已设置 | 覆盖默认 `/tmp` | ✅ |
+| 11.4 | `wt <label>` 子命令 | 输出 `$root/wt-<label>`（legacy alias for `ws <label>`） | ✅ |
+| 11.5 | `scratch` 子命令 | 输出 `$root/scratch` | ✅ |
+| 11.6 | 跨子目录同 repo | path 相同（依赖 `git rev-parse --show-toplevel`） | ✅ |
+| 11.7 | cwd 在 jcode session 内（`$TMPDIR` 被 override） | bundle 强制 `/tmp` | ✅ |
+| 11.8 | scratch dir 已有上次残留 | bundle 不自动清理；提供 `scratch-dir clean` 子命令 | ✅ |
+| 11.9 | 不同 repo 同名（`<basename>` 撞车） | 短 SHA 区分；hash 兜底（不同 cwd → 不同 SHA） | ✅ |
+| 11.10 | scratch dir 只读（权限问题） | bundle 不创建；root 报错 | ⚠️ (用户责任) |
 
 ---
 
 ## 第 2 步：识别 gap
 
-10×10 走查暴露的 bundle 缺口：
+11×11 走查暴露的 bundle 缺口：
 
 | Gap | 来源 | 优先级 |
 |---|---|---|
-| **G1**: `extension.sh scratch-dir clean` | A10.8 | HIGH（stale residue 是常见痛点） |
+| **G1**: `extension.sh scratch-dir clean` | A11.8 | HIGH（stale residue 是常见痛点） |
 | **G2**: `extension.sh artifact validate <file>` | A8.9 | HIGH（hook 收到缺字段 artifact 时 bundle 应能查） |
 | **G3**: `extension.sh mcp validate --env` | A4.8 | MEDIUM（mcp.json env var 检查） |
 | **G4**: `extension.sh verify` 加 timeout | A6.5 | MEDIUM（verify.sh 现在无 timeout，可能挂死） |
-| **G5**: `extension.sh scratch-dir clean` 跨 `<short-sha>` 清 | A10.10 + multi-machine | LOW（不是 immediate 痛点） |
+| **G5**: `extension.sh scratch-dir clean` 跨 `<short-sha>` 清 | A11.10 + multi-machine | LOW（不是 immediate 痛点） |
 
 **Top 2 实施**（G1 + G2）：
 1. `extension.sh scratch-dir clean` — 清当前项目的所有 wt-* + scratch 内容（dry-run by default）
