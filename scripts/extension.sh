@@ -624,9 +624,12 @@ cmd_preflight() {
 #
 # If cwd is not inside a git repo, fall back to a synthetic key from
 # the absolute path (stable per-machine, deterministic).
-cmd_scratch_dir() {
-  local kind="${1:-root}"
-  local repo_name short_sha root
+# Compute the per-project scratch root: $TMPDIR/jcode/<repo>-<short-sha>/
+# Auto-detects: git repo (basename + short SHA) vs non-git (hashed abs path).
+# Outputs a single line: the root path. Used by `cmd_scratch_dir` and any
+# other code that needs to know the project's scratch root.
+_scratch_root() {
+  local repo_name short_sha
   if git rev-parse --show-toplevel >/dev/null 2>&1; then
     local toplevel
     toplevel="$(git rev-parse --show-toplevel)"
@@ -671,8 +674,13 @@ cmd_scratch_dir() {
         ;;
     esac
   fi
-  local tmpdir="${LAZIBLE_TMPDIR:-/tmp}"
-  root="$tmpdir/jcode/${repo_name}-${short_sha}"
+  echo "${LAZIBLE_TMPDIR:-/tmp}/jcode/${repo_name}-${short_sha}"
+}
+
+cmd_scratch_dir() {
+  local kind="${1:-root}"
+  local root
+  root="$(_scratch_root)"
   case "$kind" in
     root)    echo "$root" ;;
     ws)      echo "$root/ws-${2:?usage: extension.sh scratch-dir ws <label>}" ;;
