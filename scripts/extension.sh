@@ -445,7 +445,7 @@ PY
 #   2. jcode --version runs (daemon reachable)
 #   3. Bundle install: ~/.jcode/prompt-overlay.md symlink resolves
 #   4. A model that works: probe a default candidate, report status
-#   5. Worktree path writable: if --worktree <path> given, check writable
+#   5. Workspace path writable: if --workspace <path> given, check writable
 #   6. Project root: if --project <path> given, check exists + .git (optional)
 #
 # Exit codes:
@@ -455,16 +455,17 @@ PY
 #   3 = hard failure (cannot spawn)
 cmd_preflight() {
   # Note: dispatcher already shifted off the subcommand name, so $@ here
-  # contains the user's flags (e.g. "--worktree /tmp/jcode/foo"). Don't
-  # shift again — that would drop --worktree.
-  local worktree=""
+  # contains the user's flags (e.g. "--workspace /tmp/jcode/foo"). Don't
+  # shift again — that would drop --workspace.
+  local workspace_path=""
   local project=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --worktree) worktree="${2:-}"; shift 2 ;;
+      --workspace) workspace_path="${2:-}"; shift 2 ;;
+      --worktree) workspace_path="${2:-}"; shift 2 ;;  # legacy alias
       --project)  project="${2:-}"; shift 2 ;;
       --help|-h)
-        echo "usage: extension.sh preflight [--worktree <path>] [--project <path>]" >&2
+        echo "usage: extension.sh preflight [--workspace <path>] [--project <path>]" >&2
         return 2
         ;;
       *) echo "extension.sh: unknown preflight flag '$1'" >&2; return 2 ;;
@@ -529,29 +530,29 @@ cmd_preflight() {
     check "bundle install (overlay)" "fail" "$overlay missing; run scripts/install.sh"
   fi
 
-  # 4. Worktree path writable (if given)
-  if [[ -n "$worktree" ]]; then
-    if [[ -e "$worktree" ]]; then
-      if [[ -d "$worktree" && -w "$worktree" ]]; then
-        check "worktree path writable" "ok" "$worktree"
+  # 4. Workspace path writable (if given)
+  if [[ -n "$workspace_path" ]]; then
+    if [[ -e "$workspace_path" ]]; then
+      if [[ -d "$workspace_path" && -w "$workspace_path" ]]; then
+        check "workspace path writable" "ok" "$workspace_path"
       else
-        check "worktree path writable" "fail" "$worktree exists but not writable dir"
+        check "workspace path writable" "fail" "$workspace_path exists but not writable dir"
       fi
     else
       # Try parent dir
       local parent
-      parent="$(dirname "$worktree")"
+      parent="$(dirname "$workspace_path")"
       if [[ -d "$parent" && -w "$parent" ]]; then
-        check "worktree path writable" "ok" "$worktree (parent $parent is writable, will be created)"
+        check "workspace path writable" "ok" "$workspace_path (parent $parent is writable, will be created)"
       else
-        check "worktree path writable" "fail" "$parent not writable"
+        check "workspace path writable" "fail" "$parent not writable"
       fi
     fi
   else
-    # No worktree given; print the canonical layout
+    # No workspace given; print the canonical layout
     local root
     root="$(cmd_scratch_dir root 2>/dev/null || echo '?')"
-    check "worktree path" "ok" "(not specified; default would be $root/wt-<label>)"
+    check "workspace path" "ok" "(not specified; default would be $root/ws-<label>)"
   fi
 
   # 5. Project root (if given)
@@ -1769,7 +1770,7 @@ Subcommands:
   mcp info                             Show per-project MCP config status (jcode-native)
   mcp worktree-hint <wt-path>          Worker-side serena staleness detector (use at spawn start)
   models [list|probe <name>]           List jcode-known models; probe auth for one
-  preflight [--worktree P] [--project P]  Pre-spawn env gate (auth, install, paths)
+  preflight [--workspace P] [--project P]  Pre-spawn env gate (auth, install, paths)
   scratch-dir [root|ws <label>|wt <label>|scratch|clean [--yes]] Print canonical per-project scratch path under \$TMPDIR
   artifact validate <path>                Validate a typed-artifact JSON file (8-field contract)
   doctor [--env]                       Per-axis status table (default) or environment probe (--env)

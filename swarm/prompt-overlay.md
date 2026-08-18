@@ -313,7 +313,9 @@ instead:
 If you find yourself adding `depends_on: <branch-or-SHA>` to a
 plain `spawn` prompt, you should be using `task_graph` instead.
 
-### Code implementation routing rule (hard)
+---
+
+## 2. Code implementation routing rule (hard)
 
 For any code-implementation work, the main agent **must not** edit code
 in the main session. Spawn an `implementer` worker and prepend the
