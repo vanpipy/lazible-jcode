@@ -404,17 +404,20 @@ cmd_artifact() {
       fi
       if [[ "$tool" == jq ]]; then
         # Simplified jq check: presence + basic type for each of the
-        # 8 contract fields. Rich per-field messages are python3-only;
-        # when only jq is available we report all problems at once.
+        # 8 contract fields + enum check for status/confidence. Rich
+        # per-field messages are python3-only; when only jq is
+        # available we report all problems at once.
         local jq_out
         if ! jq_out=$(jq -e '
           (.status|type=="string") and
+          (.status|inside({"completed","partial","needs-info","blocked"})) and
           (.findings|type=="array") and
           (.evidence|type=="array") and
           (.edge_cases_considered|type=="array") and
           (.validation|type=="string") and
           (.open_questions|type=="array") and
           (.confidence|type=="string") and
+          (.confidence|inside({"high","medium","low"})) and
           (.what_i_did_not_check|type=="array")
         ' "$path" 2>&1); then
           echo "artifact: validation failed (jq): $jq_out" >&2
@@ -458,8 +461,22 @@ if missing or wrong_type:
     if wrong_type:
         print(f"artifact: wrong-type fields: {', '.join(wrong_type)}", file=sys.stderr)
     sys.exit(1)
+# Enum checks — contract specifies fixed value sets for status + confidence.
+# See prompt-overlay.md §"Worker reporting discipline" and swarm-prompt.md §5.
+ALLOWED_STATUS = {"completed", "partial", "needs-info", "blocked"}
+ALLOWED_CONFIDENCE = {"high", "medium", "low"}
 status = obj.get("status", "?")
 confidence = obj.get("confidence", "?")
+bad_status = status not in ALLOWED_STATUS
+bad_confidence = confidence not in ALLOWED_CONFIDENCE
+if bad_status or bad_confidence:
+    msgs = []
+    if bad_status:
+        msgs.append(f"status {status!r} not in {sorted(ALLOWED_STATUS)}")
+    if bad_confidence:
+        msgs.append(f"confidence {confidence!r} not in {sorted(ALLOWED_CONFIDENCE)}")
+    print(f"artifact: invalid enum: {'; '.join(msgs)}", file=sys.stderr)
+    sys.exit(1)
 n_findings = len(obj["findings"])
 n_evidence = len(obj["evidence"])
 n_open = len(obj["open_questions"])
