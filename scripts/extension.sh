@@ -1010,12 +1010,18 @@ cmd_workspace_add_slot() {
       --role=*) role="${1#*=}" ;;
       --files=*) files_csv="${1#*=}" ;;
       --slot-id=*) slot_id="${1#*=}" ;;
+      # `--single` is the explicit single-slot shape (per overlay §4.1):
+      # it does NOT change behavior — every add-slot produces a single slot
+      # inside the named workspace. We accept and ignore it so old scripts
+      # that knew about the legacy "1 worker : 1 worktree" rule can still
+      # produce the equivalent shape. Documented at overlay line 90.
+      --single) : ;;  # no-op marker
       *) echo "extension.sh workspace add-slot: unknown flag '$1'" >&2; return 2 ;;
     esac
     shift
   done
   if [[ -z "$role" ]]; then
-    echo "usage: workspace add-slot <label> --role=<r> --files=<f1,f2,...> [--slot-id=<id>]" >&2
+    echo "usage: workspace add-slot <label> --role=<r> --files=<f1,f2,...> [--slot-id=<id>] [--single]" >&2
     return 2
   fi
   if [[ ! "$role" =~ ^(reviewer|implementer|investigator|migrator|test-writer|doc-writer)$ ]]; then
