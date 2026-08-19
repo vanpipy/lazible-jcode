@@ -65,7 +65,7 @@ otherwise cause (issue #206 Phase 2).
 
 ### System prompt (7 layers, ordered)
 
-From `docs/SYSTEM_PROMPT_CONFIG.md` and `prompt.rs::build_prompt`:
+From `prompt.rs::build_prompt`:
 
 1. **Base prompt** — `crates/jcode-base/src/prompt/system_prompt.md`,
    overridable by `./.jcode/system-prompt.md` or `~/.jcode/system-prompt.md`
@@ -86,23 +86,23 @@ prompt — only injected when the swarm tool spawns a worker.
 
 ### Lifecycle hooks
 
-From `docs/HOOKS.md`: `pre_tool`, `post_tool`, `session_start`,
-`session_end`, `turn_end`. Set in `~/.jcode/config.toml`
-`[hooks]` table or via `JCODE_HOOK_*` env. The hook contract is
-JSON-payload-over-env (`JCODE_HOOK_PAYLOAD`, capped 16 KB), with
-`pre_tool` gating and `post_tool` observing.
+Hooks: `pre_tool`, `post_tool`, `session_start`, `session_end`,
+`turn_end`. Set in `~/.jcode/config.toml` `[hooks]` table or via
+`JCODE_HOOK_*` env. The hook contract is JSON-payload-over-env
+(`JCODE_HOOK_PAYLOAD`, capped 16 KB), with `pre_tool` gating and
+`post_tool` observing.
 
 `pre_tool_timeout_ms` (default 5000) applies only to gate hooks.
 
 ### Swarm / spawn
 
-From `docs/SWARM_ARCHITECTURE.md`: star topology with **one
-coordinator per session**. Mode-gated spawning: light + ad hoc =
-no children of children; deep mode = recursive. Each spawned worker's
-`report_back_to_session_id` reconstructs the ancestry chain. The
-session-level reaper (engine-side, automatic, ~30 min idle threshold,
-configurable, `0` disables) handles M3 silent disappearance;
-`extension.sh workspace destroy|clean` and the legacy `swarm-sweep`
+Swarm coordination: star topology with **one coordinator per session**.
+Mode-gated spawning: light + ad hoc = no children of children; deep
+mode = recursive. Each spawned worker's `report_back_to_session_id`
+reconstructs the ancestry chain. The session-level reaper (engine-side,
+automatic, ~30 min idle threshold, configurable, `0` disables) handles
+M3 silent disappearance; `extension.sh workspace destroy|clean` and
+the legacy `swarm-sweep`
 helper (bundle-shipped) handle the workspace-level residue.
 
 ---
@@ -271,7 +271,7 @@ structured + batched → Layer 3; cross-cutting gate → Layer 2.
 | Advertise-early prevents first-call prompt-cache miss | `register_mcp_tools_for_dir()` proxies from on-disk schema cache before live connection; live re-registration is idempotent (#206 Phase 2) |
 | Per-project config overrides global by server name | `load_for_dir()` merges with `merge_servers_preferring_runnable()` |
 | Disabled MCP servers stay visible but do not spawn | `is_enabled()` filter in `register_mcp_tools_for_dir()` (#436) |
-| Lazy swarm-prompt loading — workers see edits on next spawn | `load_swarm_prompt()` reads at spawn time; running workers keep their captured prompt (per `docs/SYSTEM_PROMPT_CONFIG.md`) |
+| Lazy swarm-prompt loading — workers see edits on next spawn | `load_swarm_prompt()` reads at spawn time; running workers keep their captured prompt |
 | Skills live-reload without daemon restart | `skill.rs::load_from_dir` re-reads on access (per `docs/EXTENSIONS.md` A3.9) |
 | `preferred-tools.md` is a soft prompt addition | Plain text injected into the prompt — does not alter the registry or disable any tool |
 
