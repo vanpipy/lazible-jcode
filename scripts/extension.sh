@@ -155,7 +155,12 @@ project_jcode_dir() {
 # Always-available noop fallback: return non-zero without printing,
 # so callers can decide what to print.
 json_tool() {
-  if command -v python3 >/dev/null 2>&1; then
+  # Pick the JSON tool actually capable of running. python3 is preferred
+  # (richer error messages) but we must verify it works, not just that it
+  # exists — a broken python3 (corrupt install, version mismatch) used to
+  # return exit 1 with no message because the validator's heredoc failed
+  # silently. Now we run a no-op to confirm python3 actually executes.
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'pass' 2>/dev/null; then
     echo python3
     return 0
   fi
