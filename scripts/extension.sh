@@ -175,7 +175,11 @@ shift || true
 
 # ---------- subcommand: role ----------
 cmd_role() {
-  local name="${1:?usage: extension.sh role <name>}"
+  if [[ -z "${1-}" ]]; then
+    echo "usage: extension.sh role <name>" >&2
+    return 2
+  fi
+  local name="$1"
   if [[ ! "$name" =~ ^(reviewer|implementer|investigator|migrator|test-writer|doc-writer)$ ]]; then
     echo "extension.sh: role '$name' is not one of the 6 (red line)" >&2
     exit 2
@@ -196,9 +200,11 @@ cmd_role() {
 
 # ---------- subcommand: pre-merge ----------
 cmd_pre_merge() {
-  local branch="${1:?usage: extension.sh pre-merge <branch> <base> <role>}"
-  local base="${2:?usage: extension.sh pre-merge <branch> <base> <role>}"
-  local role="${3:?usage: extension.sh pre-merge <branch> <base> <role>}"
+  if [[ -z "${1-}" || -z "${2-}" || -z "${3-}" ]]; then
+    echo "usage: extension.sh pre-merge <branch> <base> <role>" >&2
+    return 2
+  fi
+  local branch="$1" base="$2" role="$3"
   if [[ -z "$PROJ_DIR" ]]; then
     echo "extension.sh: no .jcode/ in cwd ancestors; skipping pre-merge hook"
     return 0
@@ -239,9 +245,11 @@ cmd_verify() {
 # ---------- subcommand: notify ----------
 # Bypass mode: always exit 0, log hook failure to stderr.
 cmd_notify() {
-  local status="${1:?usage: extension.sh notify <status> <label> <artifact>}"
-  local label="${2:?usage: extension.sh notify <status> <label> <artifact>}"
-  local artifact="${3:?usage: extension.sh notify <status> <label> <artifact>}"
+  if [[ -z "${1-}" || -z "${2-}" || -z "${3-}" ]]; then
+    echo "usage: extension.sh notify <status> <label> <artifact>" >&2
+    return 2
+  fi
+  local status="$1" label="$2" artifact="$3"
   if [[ -z "$PROJ_DIR" ]]; then
     return 0
   fi
@@ -264,7 +272,13 @@ cmd_pre_spawn() {
   local label="" role="" count="" exports=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --exports) exports="${2:?--exports requires arg}"; shift 2 ;;
+      --exports)
+        if [[ -z "${2-}" ]]; then
+          echo "--exports requires arg" >&2
+          return 2
+        fi
+        exports="$2"; shift 2
+        ;;
       *) : "${label:=$1}"; shift; : "${role:=$1}"; shift; : "${count:=$1}"; shift ;;
     esac
   done
@@ -695,14 +709,24 @@ cmd_scratch_dir() {
   root="$(_scratch_root)"
   case "$kind" in
     root)    echo "$root" ;;
-    ws)      echo "$root/ws-${2:?usage: extension.sh scratch-dir ws <label>}" ;;
+    ws)
+      if [[ -z "${2-}" ]]; then
+        echo "usage: extension.sh scratch-dir ws <label>" >&2
+        return 2
+      fi
+      echo "$root/ws-$2"
+      ;;
     wt)
       # Deprecated alias for `ws <label>`. The old worktree-only layout
       # used wt-<label>; the new workspace layer uses ws-<label>. For
       # backward compatibility we keep emitting the ws- path but warn
       # so callers update.
+      if [[ -z "${2-}" ]]; then
+        echo "usage: extension.sh scratch-dir ws <label>" >&2
+        return 2
+      fi
       echo "extension.sh: scratch-dir wt is deprecated; use 'ws'" >&2
-      echo "$root/ws-${2:?usage: extension.sh scratch-dir ws <label>}"
+      echo "$root/ws-$2"
       ;;
     scratch) echo "$root/scratch" ;;
     clean)
@@ -826,7 +850,11 @@ _workspace_manifest_path() {
 }
 
 cmd_workspace_init() {
-  local label="${1:?usage: workspace init <label> [--backing=worktree|folder]}"
+  if [[ -z "${1-}" ]]; then
+    echo "usage: workspace init <label> [--backing=worktree|folder]" >&2
+    return 2
+  fi
+  local label="$1"
   shift
   local backing=""
   while [[ $# -gt 0 ]]; do
@@ -932,7 +960,11 @@ PY
 }
 
 cmd_workspace_add_slot() {
-  local label="${1:?usage: workspace add-slot <label> --role=<r> --files=<f1,f2,...> [--slot-id=<id>]}"
+  if [[ -z "${1-}" ]]; then
+    echo "usage: workspace add-slot <label> --role=<r> --files=<f1,f2,...> [--slot-id=<id>]" >&2
+    return 2
+  fi
+  local label="$1"
   shift
   local role="" files_csv="" slot_id=""
   while [[ $# -gt 0 ]]; do
@@ -1036,7 +1068,11 @@ PY
 }
 
 cmd_workspace_show() {
-  local label="${1:?usage: workspace show <label>}"
+  if [[ -z "${1-}" ]]; then
+    echo "usage: workspace show <label>" >&2
+    return 2
+  fi
+  local label="$1"
   local manifest
   manifest="$(_workspace_manifest_path "$label")" || return $?
   if [[ ! -f "$manifest" ]]; then
@@ -1066,7 +1102,11 @@ PY
 }
 
 cmd_workspace_destroy() {
-  local label="${1:?usage: workspace destroy <label> [--keep-branch]}"
+  if [[ -z "${1-}" ]]; then
+    echo "usage: workspace destroy <label> [--keep-branch]" >&2
+    return 2
+  fi
+  local label="$1"
   shift
   local keep_branch=0
   while [[ $# -gt 0 ]]; do
