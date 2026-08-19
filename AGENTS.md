@@ -346,9 +346,20 @@ exists; absence is not a failure.
   cleanup that produced them also rewrote `main`'s lineage. The
   commits themselves are also reachable via `refs/original/refs/heads/main`
   (a `git filter-branch -- --original` residue), but addressable as
-  branches is the canonical form. If you ever `git branch -D` these
-  by accident, recreate with `git branch backup/pre-clear-2026-08-16 7bdb611`
-  (the SHAs are stable in the object graph).
+  branches is the canonical form. Semantics:
+  - `backup/pre-clear-2026-08-16` (7bdb611) is the state with `skills/`
+    and `tick/` still present (BEFORE the cleanup that removed them).
+  - `backup/pre-rebuild-2026-08-16` (bcc0b72) is the state after the
+    cleanup but BEFORE the all-in-`~/.jcode/` rebuild (no `skills/`,
+    no `tick/`, no `scripts/extension.sh` install).
+  If you ever `git branch -D` these by accident, recreate with:
+  ```
+  git branch backup/pre-clear-2026-08-16 7bdb611
+  git branch backup/pre-rebuild-2026-08-16 bcc0b72
+  ```
+  (the SHAs are stable in the object graph; the branch names are
+  not — without both branches pointing at the right SHAs, the
+  safety-net guarantee is lost).
 - **Live `~/.jcode/` is shared across machines.** The install creates
   symlinks INTO `~/.jcode/`. If you rebase this repo, the symlinks
   automatically re-target. If you delete the repo checkout, the
