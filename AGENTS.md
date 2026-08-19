@@ -349,6 +349,16 @@ exists; absence is not a failure.
   already links to src) prevents accumulation on idempotent reruns.
   Old `.bak.<ts>` files left over from installs against user-edited
   destinations are intentional and can be removed by hand.
+- **Symlink-safe self-location.** `scripts/install.sh` and
+  `scripts/extension.sh` both walk a symlink chain (`BASH_SOURCE[0]` +
+  `readlink` loop) to resolve their own real location, so they keep
+  working when invoked via a symlink (e.g. `~/.jcode/extension.sh` →
+  `scripts/extension.sh`, or `~/.local/bin/install.sh` →
+  `scripts/install.sh`). The fragile `$(cd $(dirname $0)/..; pwd)`
+  pattern resolves the symlink path's parent, which is wrong when
+  `$0` is a symlink — install.sh silently picked `repo_root=/` from a
+  `/tmp/foo` symlink before the fix in commit `71f41f2`. Don't
+  reintroduce that pattern in any new script that needs its own path.
 
 ## Logs / state
 
