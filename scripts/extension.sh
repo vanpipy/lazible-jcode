@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/extension.sh — bundle's per-project extension mechanisms.
+# extension.sh — bundle's per-project extension mechanisms.
 #
 # The bundle defines a small set of conventions for projects that want
 # to customize behavior without forking the bundle. Each convention is
@@ -8,7 +8,7 @@
 # conventions. Five subcommands, one per convention.
 #
 # Usage:
-#   scripts/extension.sh role <name>
+#   extension.sh role <name>
 #     Print the role template body for <name>. Per-project file at
 #     <cwd-or-ancestor>/.jcode/roles/<name>.md wins; otherwise
 #     ~/.jcode/roles/<name>.md. Empty per-project file falls back to
@@ -16,24 +16,24 @@
 #     roles (reviewer, implementer, investigator, migrator,
 #     test-writer, doc-writer) — exit 2 otherwise.
 #
-#   scripts/extension.sh pre-merge <branch> <base_commit> <role>
+#   extension.sh pre-merge <branch> <base_commit> <role>
 #     Run the per-project pre-merge hook at <cwd>/.jcode/pre-merge.sh
 #     if present and executable. Exit 0 if absent / not executable
 #     (with a warning if not executable). Exit hook's exit code if
 #     it ran. 5-minute timeout (300s).
 #
-#   scripts/extension.sh verify
+#   extension.sh verify
 #     Run the per-project verify hook at <cwd>/.jcode/verify.sh if
 #     present and executable. Exit 0 if absent. Exit hook's exit
 #     code otherwise. Used by the bundle's verification suite
 #     step 6.
 #
-#   scripts/extension.sh notify <status> <label> <artifact_path>
+#   extension.sh notify <status> <label> <artifact_path>
 #     Run the per-project notify hook at <cwd>/.jcode/notify.sh if
 #     present. Bypass: notify failure does NOT block the workflow
 #     (exit 0 always, with a warning to stderr on hook failure).
 #
-#   scripts/extension.sh pre-spawn <label> <role> <files_count>
+#   extension.sh pre-spawn <label> <role> <files_count>
 #     Run the per-project pre-spawn hook at <cwd>/.jcode/pre-spawn.sh
 #     if present. Exit 0 if absent. Hook's stdout is parsed for
 #     KEY=VALUE lines (regex ^[A-Z_][A-Z0-9_]*=); each line is
@@ -46,14 +46,14 @@
 #   Anything else on stdout is silently dropped.
 #   stderr is passed through unchanged.
 #
-#   scripts/extension.sh mcp info
+#   extension.sh mcp info
 #     Print a summary of the per-project MCP config (file path +
 #     server count). Detects python3/jq availability and degrades
 #     gracefully if neither is present (prints "unavailable" instead
 #     of false-positive "invalid JSON syntax"). Exit 3 only if the
 #     file is genuinely malformed JSON.
 #
-#   scripts/extension.sh mcp init [--project=PATH]
+#   extension.sh mcp init [--project=PATH]
 #     One-time per-project bootstrap: copy the bundle-shipped
 #     config/mcp.json.example into <project>/.jcode/mcp.json,
 #     substituting the /workspace placeholder with the actual
@@ -61,7 +61,7 @@
 #     (prints skip message + rm hint, exit 0). Used by users/agents
 #     entering a new project that hasn't set up MCP yet.
 #
-#   scripts/extension.sh mcp init-global [--project=PATH]
+#   extension.sh mcp init-global [--project=PATH]
 #     One-time global bootstrap: copy the bundle-shipped
 #     config/mcp.json.example into ~/.jcode/mcp.json — the global
 #     location matching every other bundle config (prompt-overlay.md,
@@ -70,7 +70,7 @@
 #     runs this unconditionally on every install. Idempotent — same
 #     skip-when-present semantics as `mcp init`.
 #
-#   scripts/extension.sh mcp worktree-hint <wt-path>
+#   extension.sh mcp worktree-hint <wt-path>
 #     Worker-side serena staleness detector. jcode inherits the
 #     project's MCP config (A4) into spawned workers, but serena's
 #     --project is anchored to the MAIN repo path — its tree-sitter
@@ -96,8 +96,8 @@ set -euo pipefail
 # Resolve the bundle root from this script's path. Used by subcommands
 # that need to read bundle-shipped files (templates, schemas, etc.)
 # without hardcoding the path. The script may be invoked from either
-# <bundle>/scripts/extension.sh (in-repo use) or via a symlink such as
-# ~/.jcode/extension.sh → <bundle>/scripts/extension.sh (post-install
+# <bundle>/extension.sh (in-repo use) or via a symlink such as
+# ~/.jcode/extension.sh → <bundle>/extension.sh (post-install
 # global use). Walk the symlink chain so BUNDLE_ROOT always points at
 # the actual repo, not at the symlink's directory.
 SOURCE="${BASH_SOURCE[0]}"
@@ -1941,7 +1941,7 @@ case "$cmd" in
   doctor)      cmd_doctor "$@" ;;
   help|--help|-h|"")
     cat <<EOF
-scripts/extension.sh — bundle's per-project extension mechanisms.
+extension.sh — bundle's per-project extension mechanisms.
 
 Subcommands:
   role <name>                          Print role template (per-project → global fallback)
