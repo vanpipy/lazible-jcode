@@ -90,7 +90,7 @@ touched.
 
 ### Add a new role persona
 
-1. Create `swarm/roles/<name>.md` using the same 8-section template as the others: `Persona`, `Position in swarm`, `Output contract (mandatory)`, `Scope`, `Workflow`, `Output schema`, `Skills to load`, `Anti-patterns`.
+1. Create `swarm/roles/<name>.md` using the same 7-section template as the others: `Persona`, `Position in swarm`, `Output contract (mandatory)`, `Scope`, `Workflow`, `Output schema`, `Anti-patterns`. (The 8th section `Skills to load` was removed in `54e70d6 refactor(roles): drop Skills to load placeholder section` because it was empty boilerplate — the per-role skill loading happens through `prompt-overlay.md`'s `required_skills[]` instead, not through the role file.)
 2. The `Output contract (mandatory)` section **must** list all 7 fields: `findings`, `evidence[]`, `edge_cases_considered[]`, `validation`, `open_questions[]`, `confidence`, `what_i_did_not_check[]`. The `Output schema` JSON block must include all 7 keys (plus `status` as the 8th field that lives at the top of the schema).
 3. Update `swarm/prompt-overlay.md` (or `swarm-prompt.md`) as needed.
 4. Update `README.md` quick-start if install semantics change.
