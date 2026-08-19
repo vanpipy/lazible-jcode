@@ -40,7 +40,21 @@
 
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+# Symlink-safe self-location: walk the chain so repo_root always points at
+# the real lazible-jcode checkout, even when this script is invoked via a
+# symlink (e.g. ~/.local/bin/install.sh -> scripts/install.sh). Mirrors
+# the BUNDLE_ROOT logic in extension.sh. Without this, a symlinked
+# invocation yields repo_root=/ because $0 resolves to the symlink path.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" = /* ]]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(dirname "$SOURCE")/$TARGET"
+  fi
+done
+repo_root="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 
 print_help() {
   cat <<EOF
