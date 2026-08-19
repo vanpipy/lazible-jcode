@@ -32,8 +32,10 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes`. Cleans up legacy `~/.local/bin/swarm-sweep` symlinks left from older installs. | yes |
 | `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `~/.jcode/swarm-sweep` by install.sh | yes |
 | `scripts/extension.sh` | Single entry point for per-project extension conventions + workspace lifecycle (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn`, `workspace`, `scratch-dir`, `mcp`, `models`, `preflight`, `artifact`, `doctor`, `terminology-check`, `skills` subcommands). Symlinked to `~/.jcode/extension.sh` by install.sh; on PATH after install. | yes |
+| `scripts/terminology-glossary.txt` | Source-of-truth entry list for `extension.sh terminology-check`. Each line is `OLD_PATTERN [| NEW_PATTERN]`; matches are detected via grep, not auto-replaced. Lives next to `extension.sh` so the subcommand's `--glossary FILE` default (`$SCRIPT_DIR/terminology-glossary.txt`) finds it without a flag. | yes |
 | `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
 | `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
+| `swarm/ARCHITECTURE.md` | Human-reference architecture overview (goals + star-topology diagram + design intent). **Not installed** — kept in-repo for maintainers and as the deep-design companion to `docs/ARCHITECTURE.md`. Cross-referenced by `docs/ARCHITECTURE.md`, `docs/INSTALL.md`, `README.md`. | yes |
 | `swarm/roles/<name>.md` | Worker persona templates. **Exactly 6 roles**: `reviewer`, `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer` | yes |
 | `config/config.toml` | Sanitized live snapshot from a real `~/.jcode/config.toml`. Installed as `~/.jcode/config.toml`. | yes |
 | `config/config.toml.example` | Template for the above | yes |
