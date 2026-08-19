@@ -57,6 +57,13 @@ For any `fold` / `replace` / `rename` / `move` / `delete`:
 
 ## Output schema
 
+The JSON block below is the **schema definition**, not a copy-paste
+artifact. Enum-typed fields (`status`, `confidence`) show the allowed
+values as pipe-separated strings for compact documentation; replace them
+with actual enum members (`"completed"`, `"high"`) before emitting an
+artifact. `extension.sh artifact validate <path>` will reject anything
+else with `invalid enum: ...`.
+
 ```json
 {
   "status": "completed | partial | needs-info | blocked",
