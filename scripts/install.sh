@@ -162,45 +162,79 @@ ensure_path_entry() {
 
   # Detect existing entries across common rc files. Match either the dir
   # string OR our marker, so we don't double-add even if the user wrote
-  # the export themselves.
+  # the export themselves. We do NOT short-circuit after the first match —
+  # users frequently run in shells different from their login shell (e.g.
+  # SHELL=/bin/zsh but the current session is bash). Without checking all
+  # rc files, the bash session misses the entry and `extension.sh` won't
+  # be on PATH for bash child processes.
   local rc_file=""
+  local -a already_present=()
   for rc in "$HOME/.bashrc" "$HOME/.zshenv" "$HOME/.profile"; do
     [[ -f "$rc" ]] || continue
     if grep -qF "$dir" "$rc" || grep -qF "$marker" "$rc"; then
       info "$dir already exported in $rc"
-      return 0
+      already_present+=("$rc")
     fi
   done
 
-  # Pick the rc file based on the user's login shell.
-  case "${SHELL##*/}" in
-    zsh)
-      rc_file="$HOME/.zshenv"
-      mkdir -p "$(dirname "$rc_file")"
-      {
-        printf '\n%s\n' "$marker"
-        printf 'export PATH="%s:$PATH"\n' "$dir"
-      } >> "$rc_file"
-      info "added $dir to PATH in $rc_file (zsh)"
-      ;;
-    fish)
-      rc_file="$HOME/.config/fish/config.fish"
-      mkdir -p "$(dirname "$rc_file")"
-      {
-        printf '\n%s\n' "$marker"
-        printf 'set -gx PATH %s $PATH\n' "$dir"
-      } >> "$rc_file"
-      info "added $dir to PATH in $rc_file (fish)"
-      ;;
-    *)
-      rc_file="$HOME/.bashrc"
-      {
-        printf '\n%s\n' "$marker"
-        printf 'export PATH="%s:$PATH"\n' "$dir"
-      } >> "$rc_file"
-      info "added $dir to PATH in $rc_file (bash default)"
-      ;;
-  esac
+  # If ALL rc files already have the entry, nothing to do.
+  local present_rc_count=0
+  for rc in "$HOME/.bashrc" "$HOME/.zshenv" "$HOME/.profile"; do
+    [[ -f "$rc" ]] && present_rc_count=$((present_rc_count + 1))
+  done
+  if [[ "${#already_present[@]}" -ge "$present_rc_count" && "$present_rc_count" -gt 0 ]]; then
+    return 0
+  fi
+  # If at least one rc file already has the entry (e.g., .zshenv) but a
+  # sibling (.bashrc) doesn't, we still need to add to the missing ones.
+  # Pick the SHELL-based primary only if none of the existing rc files
+  # have the entry yet.
+  if [[ "${#already_present[@]}" -eq 0 ]]; then
+    case "${SHELL##*/}" in
+      zsh)
+        rc_file="$HOME/.zshenv"
+        mkdir -p "$(dirname "$rc_file")"
+        {
+          printf '\n%s\n' "$marker"
+          printf 'export PATH="%s:$PATH"\n' "$dir"
+        } >> "$rc_file"
+        info "added $dir to PATH in $rc_file (zsh)"
+        ;;
+      fish)
+        rc_file="$HOME/.config/fish/config.fish"
+        mkdir -p "$(dirname "$rc_file")"
+        {
+          printf '\n%s\n' "$marker"
+          printf 'set -gx PATH %s $PATH\n' "$dir"
+        } >> "$rc_file"
+        info "added $dir to PATH in $rc_file (fish)"
+        ;;
+      *)
+        rc_file="$HOME/.bashrc"
+        {
+          printf '\n%s\n' "$marker"
+          printf 'export PATH="%s:$PATH"\n' "$dir"
+        } >> "$rc_file"
+        info "added $dir to PATH in $rc_file (bash default)"
+        ;;
+    esac
+  fi
+
+  # Always also write to .bashrc + .zshenv + .profile if they exist and
+  # don't already have the entry. Users with SHELL=/bin/zsh who also run
+  # bash sessions (very common on Linux: zsh default in some configs, bash
+  # for jcode agent / scripts) need the entry in both. The marker check
+  # prevents duplicates on re-run.
+  for rc in "$HOME/.bashrc" "$HOME/.zshenv" "$HOME/.profile"; do
+    [[ -f "$rc" ]] || continue
+    if grep -qF "$dir" "$rc" || grep -qF "$marker" "$rc"; then
+      continue
+    fi
+    [[ "$rc" == *fish* ]] && continue  # belt-and-suspenders; already handled
+    printf '\n%s\n' "$marker" >> "$rc"
+    printf 'export PATH="%s:$PATH"\n' "$dir" >> "$rc"
+    info "added $dir to PATH in $rc (cross-shell parity)"
+  done
 }
 
 # ── env probe (step 0) ────────────────────────────────────────────────────────
