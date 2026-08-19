@@ -341,7 +341,14 @@ exists; absence is not a failure.
 - **Backup branches are safety nets, not stale branches.** `backup/pre-clear-2026-08-16`
   (HEAD `7bdb611`) and `backup/pre-rebuild-2026-08-16` (HEAD `bcc0b72`)
   hold the pre-cleanup states. Do not delete them. They are not
-  pushed to `origin`; they exist only in this clone.
+  pushed to `origin`; they exist only in this clone. They are NOT
+  ancestors of `main` — they live in parallel history because the
+  cleanup that produced them also rewrote `main`'s lineage. The
+  commits themselves are also reachable via `refs/original/refs/heads/main`
+  (a `git filter-branch -- --original` residue), but addressable as
+  branches is the canonical form. If you ever `git branch -D` these
+  by accident, recreate with `git branch backup/pre-clear-2026-08-16 7bdb611`
+  (the SHAs are stable in the object graph).
 - **Live `~/.jcode/` is shared across machines.** The install creates
   symlinks INTO `~/.jcode/`. If you rebase this repo, the symlinks
   automatically re-target. If you delete the repo checkout, the
