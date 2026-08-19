@@ -43,7 +43,7 @@ lazible-jcode/
 ├── scripts/
 │   ├── install.sh                     # Linear, unconditional, overwrite-by-default installer (3 steps)
 │   ├── uninstall.sh                   # Inverse: removes symlinks + optionally the binary
-│   └── swarm-sweep.sh                 # Manual cleanup for stale swarm worktrees (→ ~/.local/bin/swarm-sweep)
+│   └── swarm-sweep.sh                 # Manual cleanup for stale swarm worktrees (→ swarm-sweep)
 └── docs/
     ├── INSTALL.md                     # Detailed install / uninstall / troubleshooting
     ├── EXTENSIONS.md                  # Per-project extension points (10 axes)

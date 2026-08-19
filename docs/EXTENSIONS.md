@@ -212,7 +212,7 @@ Allocated via `extension.sh workspace {init,add-slot,ls,show,destroy,clean}`.
 ### Terminology drift check (extension convention, not a per-project axis)
 
 Beyond the 11 axes, the bundle exposes a **terminology-check**
-subcommand (`scripts/extension.sh terminology-check`) for catching
+subcommand (`extension.sh terminology-check`) for catching
 cross-file drift after refactors that rename functions, flags, or
 roles. It is **not** an extension axis — there is no per-project
 hook. It is a self-audit tool: the bundle reads its own glossary
@@ -220,10 +220,10 @@ hook. It is a self-audit tool: the bundle reads its own glossary
 that still match a deprecated pattern.
 
 ```bash
-scripts/extension.sh terminology-check --list    # show glossary entries
-scripts/extension.sh terminology-check            # scan tracked + untracked
-scripts/extension.sh terminology-check --staged   # scan only staged files
-scripts/extension.sh terminology-check --all      # scan entire filesystem
+extension.sh terminology-check --list    # show glossary entries
+extension.sh terminology-check            # scan tracked + untracked
+extension.sh terminology-check --staged   # scan only staged files
+extension.sh terminology-check --all      # scan entire filesystem
 ```
 
 **Glossary format** (`scripts/terminology-glossary.txt`):

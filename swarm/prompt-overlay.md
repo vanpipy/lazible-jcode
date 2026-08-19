@@ -180,7 +180,7 @@ action when the answers converge.
 slices** — disjoint file sets, no ordering dependency between them?
 
 - **YES** → dispatch as **parallel slots in one workspace**
-  (`scripts/extension.sh workspace init <label>` + multiple
+  (`extension.sh workspace init <label>` + multiple
   `add-slot` calls) OR as **plain parallel `spawn`s** in separate
   workspaces if the slices are independent *features* (not parts of
   the same feature). For deep mode with explicit deps between slices,
@@ -233,13 +233,13 @@ allocates a workspace **before** drafting spawn prompts:
 
 ```bash
 # One workspace, one slot (legacy single-worker shape):
-scripts/extension.sh workspace init <label>
-scripts/extension.sh workspace add-slot <label> --role=<r> --files=...
+extension.sh workspace init <label>
+extension.sh workspace add-slot <label> --role=<r> --files=...
 
 # One workspace, N slots (collaborative shape — Q-1 decompose path):
-scripts/extension.sh workspace init <label>
-scripts/extension.sh workspace add-slot <label> --role=<r1> --files=...
-scripts/extension.sh workspace add-slot <label> --role=<r2> --files=...
+extension.sh workspace init <label>
+extension.sh workspace add-slot <label> --role=<r1> --files=...
+extension.sh workspace add-slot <label> --role=<r2> --files=...
 ```
 
 Each slot gets its own spawn call with `workspace_path` +
@@ -450,7 +450,7 @@ Two-layered cleanup covers the residue at different scopes:
   workers idle in terminal state past threshold (~30 min default,
   configurable; `0` disables). Never fires on user-created sessions
   or the coordinator — long-running root is safe regardless.
-- **Workspace-level sweep** (`scripts/extension.sh workspace clean`,
+- **Workspace-level sweep** (`extension.sh workspace clean`,
   manual). Removes workspace directories + branches when artifacts
   land and root has acted. Dry-run by default; `--yes` to remove.
   See `AGENTS.md` "Cleanup: stale workspaces".
@@ -477,7 +477,7 @@ based on whether the project has a git repo at the spawn point:
 
 - **`.git/` present** → backing = `worktree`. Root runs:
   ```bash
-  scripts/extension.sh workspace init <label>
+  extension.sh workspace init <label>
   # → git worktree add -b ws-<label> $TMPDIR/jcode/<repo>-<sha>/ws-<label>/
   ```
   All slots in the workspace commit to the shared `ws-<label>`
@@ -486,7 +486,7 @@ based on whether the project has a git repo at the spawn point:
 
 - **No `.git/`** → backing = `folder`. Root runs:
   ```bash
-  scripts/extension.sh workspace init <label>
+  extension.sh workspace init <label>
   # → mkdir $TMPDIR/jcode/<repo>-<sha>/ws-<label>/
   #    (git init + empty initial commit if git is available;
   #     raw filesystem otherwise)
@@ -512,20 +512,20 @@ Distinct from jcode's `$JCODE_SCRATCH_DIR` (global, defaults to
 
 **Pre-allocation checklist** (run before drafting spawn prompts):
 
-1. `scripts/extension.sh preflight` — jcode on PATH, daemon reachable,
+1. `extension.sh preflight` — jcode on PATH, daemon reachable,
    bundle installed, paths writable.
-2. `scripts/extension.sh workspace init <label>` — create the
+2. `extension.sh workspace init <label>` — create the
    workspace, print the path + branch (worktree backing) or just path
    (folder backing).
 3. For each slot in the workspace:
-   - `scripts/extension.sh workspace add-slot <label> --role=<r>
+   - `extension.sh workspace add-slot <label> --role=<r>
      --files=<f1,f2,...>` — register the slot's role + disjoint
      `files_touched[]` against the manifest. Root's disjoint-partition
      check fires here: if a file appears in two slots' allow-lists,
      the call fails before any spawn happens.
-4. `scripts/extension.sh models probe <model>` for each non-default
+4. `extension.sh models probe <model>` for each non-default
    model — verify auth before spawning.
-5. `scripts/extension.sh mcp worktree-hint <ws-path>` — report
+5. `extension.sh mcp worktree-hint <ws-path>` — report
    serena staleness status to the spawn prompt.
 
 **Worker responsibilities (per slot):**
@@ -629,7 +629,7 @@ disappearance becomes undetectable until the user prompts again.
    - If a slot's todo is critically stale (>30 min) → escalate to
      `stop` + `salvage` per M3 protocol, surface to user.
 3. **On artifact arrival**, root completes the todo, validates the
-   artifact (`scripts/extension.sh artifact validate <path>`), and
+   artifact (`extension.sh artifact validate <path>`), and
    acts per §5.
 
 **Why this is not the tick-era.** Tick-era = scheduled background
@@ -805,7 +805,7 @@ etiquette, commit style) and this overlay for main-agent-side concerns
 ## 8. Extension mechanism discovery (jcode-native vs bundle convention)
 
 The bundle exposes ten per-project extension points. **Run
-`scripts/extension.sh doctor` at session start** to see what's
+`extension.sh doctor` at session start** to see what's
 wired up in the current project vs. what falls back to global
 defaults. This is the cheapest way to plan a spawn strategy: know
 what's available before deciding what to ask for.
@@ -826,7 +826,7 @@ per-project precedence. Bundle does nothing; you reference them:
   registrations. Workers inherit them automatically when the file
   exists. Run `extension.sh mcp info` to inspect.
 
-**Bundle convention (6 axes)** — invoked via `scripts/extension.sh`:
+**Bundle convention (6 axes)** — invoked via `extension.sh`:
 
 - **A5 Role override** — `extension.sh role <name>` reads per-project
   role file first; falls back to global.
@@ -862,4 +862,4 @@ per-project precedence. Bundle does nothing; you reference them:
   `extension.sh workspace init <label>` before drafting spawn prompts.
 
 Full 10×10 boundary-behavior walkthrough: `docs/EXTENSIONS.md`.
-Single source of truth for the dispatch contract: `scripts/extension.sh`.
+Single source of truth for the dispatch contract: `extension.sh`.

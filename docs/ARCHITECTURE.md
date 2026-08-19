@@ -109,7 +109,7 @@ helper (bundle-shipped) handle the workspace-level residue.
 
 ## Layer 2: lazible-jcode extension mechanism
 
-Single entry point: `scripts/extension.sh <subcommand>`. Discovery:
+Single entry point: `extension.sh <subcommand>`. Discovery:
 `extension.sh doctor` enumerates the A1-A11 surface in fixed columns.
 
 | Axis | File | Loaded by | Type |

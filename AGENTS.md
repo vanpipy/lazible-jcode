@@ -30,8 +30,8 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `docs/INTEGRATIONS.md` | Recommended local MCP server stack (filesystem + git + serena; sqlite not currently shipping a working MCP server, see INTEGRATIONS.md) | yes |
 | `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/`, and `swarm-sweep` into `~/.local/bin/` | yes |
 | `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
-| `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `~/.local/bin/swarm-sweep` by install.sh | yes |
-| `scripts/extension.sh` | Single entry point for per-project extension conventions + workspace lifecycle (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn`, `workspace`, `scratch-dir`, `mcp`, `models`, `preflight`, `artifact`, `doctor` subcommands) | yes |
+| `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `swarm-sweep` by install.sh | yes |
+| `extension.sh` | Single entry point for per-project extension conventions + workspace lifecycle (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn`, `workspace`, `scratch-dir`, `mcp`, `models`, `preflight`, `artifact`, `doctor` subcommands) | yes |
 | `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
 | `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
 | `swarm/roles/<name>.md` | Worker persona templates. **Exactly 6 roles**: `reviewer`, `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer` | yes |
@@ -100,7 +100,7 @@ the three — point at the canonical location.
 
 The bundle exposes ten per-project extension points — files at
 `<repo>/.jcode/<name>.{sh,md,json}/` that root invokes via
-`scripts/extension.sh` (the bundle convention entry point) or
+`extension.sh` (the bundle convention entry point) or
 that jcode loads directly (jcode-native). Four are jcode-native;
 six are bundle conventions:
 
@@ -282,9 +282,9 @@ find ~/.jcode -maxdepth 1 -name '*.bak.*' | wc -l   # should be 0
 
 # 6. Per-project verify hook + extension surface check. See
 #    "Per-project customization" above. Bundle's single entry point
-#    for extension conventions is scripts/extension.sh.
-scripts/extension.sh verify
-scripts/extension.sh doctor  # informational only — surfaces what is
+#    for extension conventions is extension.sh.
+extension.sh verify
+extension.sh doctor  # informational only — surfaces what is
                              # wired up vs. what falls back to defaults.
                              # Use this to verify the bundle's own
                              # discovery helpers work in cwd.
@@ -294,8 +294,8 @@ scripts/extension.sh doctor  # informational only — surfaces what is
 bash scripts/install.sh                            # happy path: all rows "ok"
 NO_COLOR=1 bash scripts/install.sh                 # color stripped
 PATH=/usr/local/bin:/usr/bin:/bin bash scripts/install.sh  # min PATH still ok
-bash scripts/extension.sh doctor --env             # 13-row env snapshot
-bash scripts/extension.sh doctor --env | grep missing  # must be empty on a working host
+extension.sh doctor --env             # 13-row env snapshot
+extension.sh doctor --env | grep missing  # must be empty on a working host
 ```
 
 All seven must pass before any commit touching the installer or
@@ -336,7 +336,7 @@ exists; absence is not a failure.
 
 - No runtime state lives in this repo.
 - The installer writes nothing outside `~/.local/bin/jcode`,
-  `~/.local/bin/swarm-sweep`, and `~/.jcode/<overlay-files>`.
+  `swarm-sweep`, and `~/.jcode/<overlay-files>`.
 - Worker liveness, sessions, telemetry, and auth all live in
   `~/.jcode/`, not here.
 
@@ -369,6 +369,6 @@ convention `$TMPDIR/swarm-<user>/<repo>-<short-sha>/wt-<label>/` or
 the workspace convention `$TMPDIR/jcode/<repo>-<short-sha>/ws-<label>/`.
 The main worktree and any manual feature worktrees are NEVER touched.
 
-`swarm-sweep` is installed into `~/.local/bin/swarm-sweep` by
+`swarm-sweep` is installed into `swarm-sweep` by
 `scripts/install.sh` (step 1, alongside jcode). Removing it happens
 via `scripts/uninstall.sh --yes`.

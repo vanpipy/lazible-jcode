@@ -396,7 +396,7 @@ allow-list and its own branch commits (when git backing applies).
 - Manifest lives at
   `$TMPDIR/jcode/<repo-name>-<short-sha>/.jcode-workspaces/<label>.json`.
   Records slots, role per slot, `files_touched[]` per slot, status.
-- Print or inspect via `scripts/extension.sh workspace {init|add-slot|ls|show|destroy|clean}`.
+- Print or inspect via `extension.sh workspace {init|add-slot|ls|show|destroy|clean}`.
 
 ### Slot semantics (per worker)
 
@@ -540,7 +540,7 @@ re-bound per workspace. Consequence:
 The bundle ships a deterministic detector:
 
 ```bash
-scripts/extension.sh mcp worktree-hint "$WORKSPACE_PATH"
+extension.sh mcp worktree-hint "$WORKSPACE_PATH"
 # Output is line-oriented; grep for the status:
 #   serena: live (project=...)                          ← editing in main repo
 #   serena: stale (sees <main-repo> only; worktree edits invisible)

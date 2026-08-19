@@ -8,7 +8,7 @@ For a fresh host, run these two checks in order:
 
 ```bash
 scripts/install.sh                      # runs env_probe() as step 0
-scripts/extension.sh doctor --env       # session-start environment snapshot
+extension.sh doctor --env       # session-start environment snapshot
 ```
 
 If both pass, the bundle is correctly wired. If either fails, the
@@ -161,15 +161,15 @@ scripts follow it.
 Two commands summarize the environment at a glance:
 
 ```bash
-scripts/extension.sh doctor         # A1-A10 per-axis status table
-scripts/extension.sh doctor --env   # 13-row env snapshot (bash, git, JSON tool, ...)
+extension.sh doctor         # A1-A10 per-axis status table
+extension.sh doctor --env   # 13-row env snapshot (bash, git, JSON tool, ...)
 ```
 
 `doctor --env` always exits 0 — failures are reported as `missing`
 rows that you can grep for:
 
 ```bash
-scripts/extension.sh doctor --env | grep missing
+extension.sh doctor --env | grep missing
 ```
 
 Sample output on a working Linux host:

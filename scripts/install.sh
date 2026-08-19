@@ -121,6 +121,74 @@ info() { printf '%b%s%b\n' "$C_INFO" "$*" "$C_RESET"; }
 warn() { printf '%b%s%b\n' "$C_WARN" "$*" "$C_RESET" >&2; }
 err()  { printf '%b%s%b\n' "$C_ERR" "error: $*" "$C_RESET" >&2; exit 1; }
 
+# Ensure `$dir` is on PATH for future shells. Idempotent: skips rc files
+# that already mention the directory (in any form) and avoids duplicating
+# entries across multiple shell rc files. Mirrors the snippet the upstream
+# jcode installer uses for ~/.local/bin — adapted for ~/.jcode/ now that
+# bundle CLI helpers (extension.sh, swarm-sweep) live there.
+#
+# SHELL-aware rc file selection:
+#   - zsh           → ~/.zshenv (always sourced; survives interactive-only gap)
+#   - fish          → ~/.config/fish/config.fish (set -gx PATH ...)
+#   - bash / others → ~/.bashrc (most portable; login shells source ~/.profile
+#                     separately, but ~/.bashrc is what interactive shells read)
+#
+# Marker lines (`# lazible-jcode: ensure <dir> on PATH`) let re-runs
+# recognize and skip without grep-matching the literal dir string (which
+# would false-positive if the user has a sibling dir with the same name).
+ensure_path_entry() {
+  local dir="$1"
+  local marker="# lazible-jcode: ensure $dir on PATH"
+
+  # Fast path: directory already on current PATH (rc files irrelevant for
+  # this session, but re-runs should be no-ops).
+  case ":$PATH:" in
+    *":$dir:"*) info "PATH already contains $dir"; return 0 ;;
+  esac
+
+  # Detect existing entries across common rc files. Match either the dir
+  # string OR our marker, so we don't double-add even if the user wrote
+  # the export themselves.
+  local rc_file=""
+  for rc in "$HOME/.bashrc" "$HOME/.zshenv" "$HOME/.profile"; do
+    [[ -f "$rc" ]] || continue
+    if grep -qF "$dir" "$rc" || grep -qF "$marker" "$rc"; then
+      info "$dir already exported in $rc"
+      return 0
+    fi
+  done
+
+  # Pick the rc file based on the user's login shell.
+  case "${SHELL##*/}" in
+    zsh)
+      rc_file="$HOME/.zshenv"
+      mkdir -p "$(dirname "$rc_file")"
+      {
+        printf '\n%s\n' "$marker"
+        printf 'export PATH="%s:$PATH"\n' "$dir"
+      } >> "$rc_file"
+      info "added $dir to PATH in $rc_file (zsh)"
+      ;;
+    fish)
+      rc_file="$HOME/.config/fish/config.fish"
+      mkdir -p "$(dirname "$rc_file")"
+      {
+        printf '\n%s\n' "$marker"
+        printf 'set -gx PATH %s $PATH\n' "$dir"
+      } >> "$rc_file"
+      info "added $dir to PATH in $rc_file (fish)"
+      ;;
+    *)
+      rc_file="$HOME/.bashrc"
+      {
+        printf '\n%s\n' "$marker"
+        printf 'export PATH="%s:$PATH"\n' "$dir"
+      } >> "$rc_file"
+      info "added $dir to PATH in $rc_file (bash default)"
+      ;;
+  esac
+}
+
 # ── env probe (step 0) ────────────────────────────────────────────────────────
 # Linux-only sanity check of the host environment. Required deps block the
 # install (exit 3); optional deps warn and continue. Run BEFORE the 3 install
@@ -268,6 +336,12 @@ for role_file in "$repo_root/swarm/roles/"*.md; do
   role_name="$(basename "$role_file")"
   overwrite_link "$role_file" "$JCODE_HOME/roles/$role_name" "roles/$role_name"
 done
+
+# Make ~/.jcode/ reachable as a command directory in future shells, so
+# `extension.sh <sub>` and `swarm-sweep` are callable without the absolute
+# path. Idempotent: re-runs do not append duplicate entries (matches the
+# snippet the upstream jcode installer uses for ~/.local/bin/).
+ensure_path_entry "$JCODE_HOME"
 
 # ── step 3: auto-init ~/.jcode/mcp.json (global, like every other bundle config) ──
 # The bundle installs ALL its config to ~/.jcode/ — prompt-overlay.md,

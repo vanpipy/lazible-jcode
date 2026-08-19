@@ -70,14 +70,14 @@ silently lose filesystem/git/serena tooling. Step 3 mirrors the
 "all-config-in-`~/.jcode/`" install pattern (same as `prompt-overlay.md`,
 `swarm-prompt.md`, `config.toml`, `roles/*.md`):
 
-1. **3a (always)** — calls `scripts/extension.sh mcp init-global
+1. **3a (always)** — calls `extension.sh mcp init-global
    --project=$TARGET_PROJECT`. Copies `config/mcp.json.example` to
    `~/.jcode/mcp.json`, substituting the `/workspace` placeholder with
    the target project root. Idempotent — skips if `~/.jcode/mcp.json`
    already exists.
 
 2. **3b (only when `--project=PATH` was given AND `PATH` != bundle repo)**
-   — calls `scripts/extension.sh mcp init --project=PATH`. Adds a
+   — calls `extension.sh mcp init --project=PATH`. Adds a
    per-project override at `<PATH>/.jcode/mcp.json` so jcode's
    session-start merge picks up project-specific MCP scopes. Skipped
    on default install (where `PATH` is the bundle's own repo) — the
@@ -113,7 +113,7 @@ HOME and /tmp, curl or wget, optional python3 / jq), see
 [ENVIRONMENTS.md](ENVIRONMENTS.md). You can also run it at any time:
 
 ```bash
-scripts/extension.sh doctor --env
+extension.sh doctor --env
 ```
 
 ## Uninstall
@@ -133,7 +133,7 @@ point elsewhere are preserved. By default it removes:
   and `~/.jcode/roles/` that point into this repo.
 - The jcode binary (`~/.local/bin/jcode`) and prior backup installs
   (`jcode.bak.*`), unless `--keep-binary` is passed.
-- The `swarm-sweep` helper at `~/.local/bin/swarm-sweep`, unless
+- The `swarm-sweep` helper at `swarm-sweep`, unless
   `--keep-binary` is passed (it shares the same keep flag because
   the two binaries are installed side by side).
 
@@ -154,10 +154,10 @@ created sit in the repo / `$TMPDIR` indefinitely. Two cleanup paths:
 
 ```bash
 # Per-workspace: remove one workspace directory + branch
-scripts/extension.sh workspace destroy <label>
+extension.sh workspace destroy <label>
 
 # Bulk: sweep all manifests marked destroyed/completed
-scripts/extension.sh workspace clean --yes
+extension.sh workspace clean --yes
 
 # Legacy: bulk for the old worktree convention
 swarm-sweep --yes        # actually remove them
@@ -177,7 +177,7 @@ session-level reaper inside the orchestrator (which closes idle
 spawned workers automatically). See `AGENTS.md` "Cleanup: stale
 workspaces" for the full description of both layers.
 
-`swarm-sweep` is installed into `~/.local/bin/swarm-sweep` by
+`swarm-sweep` is installed into `swarm-sweep` by
 `scripts/install.sh` (step 1, alongside jcode). Removing it happens
 via `scripts/uninstall.sh --yes`.
 

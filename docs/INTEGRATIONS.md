@@ -123,14 +123,14 @@ Worker pattern:
   the way I expect?", re-read the file via `read` or grep via
   `agentgrep <workspace-absolute-path>/<file>`. Do not ask serena.
 
-The bundle ships `scripts/extension.sh mcp worktree-hint <ws-path>` to
+The bundle ships `extension.sh mcp worktree-hint <ws-path>` to
 make the staleness check mechanical. Workers should run it at spawn
 start (output line still says `worktree` for backward compat, but
 accepts the workspace path):
 
 ```bash
 # Inside the worker workspace, or from root before drafting the spawn:
-scripts/extension.sh mcp worktree-hint "$WORKSPACE_PATH"
+extension.sh mcp worktree-hint "$WORKSPACE_PATH"
 # Output is line-oriented; grep for the status line:
 #   serena: live (project=...)                          ← editing in main repo
 #   serena: stale (sees <main-repo> only; worktree edits invisible)

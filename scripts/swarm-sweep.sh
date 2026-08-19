@@ -41,7 +41,9 @@
 #   2  invalid arguments or not in a git repo
 #
 # This script is part of lazible-jcode. install.sh symlinks it into
-# ~/.local/bin/swarm-sweep during the binary install step.
+# ~/.jcode/swarm-sweep alongside the rest of the bundle config
+# (extension.sh, prompt-overlay.md, swarm-prompt.md, config.toml,
+# roles/*.md). Ensure ~/.jcode/ is on PATH to invoke as `swarm-sweep`.
 
 set -euo pipefail
 
