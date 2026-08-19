@@ -95,9 +95,21 @@ set -euo pipefail
 
 # Resolve the bundle root from this script's path. Used by subcommands
 # that need to read bundle-shipped files (templates, schemas, etc.)
-# without hardcoding the path. The script lives at <bundle>/scripts/
-# so going up one level gives the bundle root.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# without hardcoding the path. The script may be invoked from either
+# <bundle>/scripts/extension.sh (in-repo use) or via a symlink such as
+# ~/.jcode/extension.sh → <bundle>/scripts/extension.sh (post-install
+# global use). Walk the symlink chain so BUNDLE_ROOT always points at
+# the actual repo, not at the symlink's directory.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" == /* ]]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(dirname "$SOURCE")/$TARGET"
+  fi
+done
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 BUNDLE_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Walk up from a directory until we find a `.jcode/` dir. Echoes the
@@ -1637,9 +1649,10 @@ cmd_terminology_check() {
   # Resolve glossary path. Default lives next to this script.
   local glossary_abs=""
   if [[ -z "$glossary_file" ]]; then
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    glossary_file="$script_dir/terminology-glossary.txt"
+    # SCRIPT_DIR is symlink-resolved at top-level (handles ~/.jcode/extension.sh
+    # post-install). Use it directly rather than BASH_SOURCE[0] which still
+    # points at the symlink in the dispatched subcommand.
+    glossary_file="$SCRIPT_DIR/terminology-glossary.txt"
     glossary_abs="$glossary_file"
   else
     glossary_abs="$(cd "$(dirname "$glossary_file")" && pwd)/$(basename "$glossary_file")"

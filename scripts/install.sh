@@ -3,9 +3,13 @@
 #
 # Linear, unconditional, overwrite-by-default. Runs 3 steps every time:
 #   1. Install jcode binary to ~/.local/bin/jcode via the upstream installer.
-#   2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md,
-#      and swarm/roles/*.md into ~/.jcode/.
-#   3. Auto-init <project>/.jcode/mcp.json from the bundle's template,
+#      Also symlinks the legacy swarm-sweep helper to ~/.local/bin/swarm-sweep
+#      for cleaning up stale swarm worktrees (Phase 2 will move this to ~/.jcode/).
+#   2. Symlink all bundle artifacts into ~/.jcode/ — the markdown overlays,
+#      config.toml, the extension.sh CLI entry point, and the roles/*.md
+#      templates. Single source of truth: `ls ~/.jcode/` shows everything
+#      the bundle deploys.
+#   3. Auto-init ~/.jcode/mcp.json from the bundle's template,
 #      substituting the actual project root for /workspace. Idempotent:
 #      skips with a message if the file already exists.
 #
@@ -254,11 +258,16 @@ LCL_BIN="${LCL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LCL_BIN"
 overwrite_link "$repo_root/scripts/swarm-sweep.sh" "$LCL_BIN/swarm-sweep" "swarm-sweep"
 
-# ── step 2: symlink swarm/* + config into ~/.jcode/ ──────────────────────────
-info "step 2/3: linking swarm/ into $JCODE_HOME"
+# ── step 2: symlink bundle artifacts into ~/.jcode/ ──────────────────────────
+# All bundle artifacts that jcode (or root/worker) reads at runtime
+# live under ~/.jcode/: the markdown overlays + config files + the
+# extension.sh CLI entry point. Top-level names below; roles/ stays
+# a subdirectory so the role loader can glob it.
+info "step 2/3: linking bundle artifacts into $JCODE_HOME"
 overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.md"           "prompt-overlay.md"
 overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"             "swarm-prompt.md"
 overwrite_link "$repo_root/config/config.toml"      "$JCODE_HOME/config.toml"                "config.toml"
+overwrite_link "$repo_root/scripts/extension.sh"    "$JCODE_HOME/extension.sh"               "extension.sh"
 
 mkdir -p "$JCODE_HOME/roles"
 for role_file in "$repo_root/swarm/roles/"*.md; do

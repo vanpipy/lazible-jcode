@@ -60,6 +60,7 @@ warn() { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
 if [[ "$ASSUME_YES" -ne 1 ]]; then
   printf "This will remove:\n"
   printf "  - symlinks: $JCODE_HOME/{prompt-overlay,swarm-prompt,config}.md\n"
+  printf "  - symlinks: $JCODE_HOME/extension.sh\n"
   printf "  - symlinks: $JCODE_HOME/roles/*.md\n"
   if [[ "$KEEP_BINARY" -ne 1 ]]; then
     printf "  - jcode binary at $INSTALL_DIR/jcode (if installed by lazible-jcode)\n"
@@ -83,7 +84,8 @@ info "removing symlinks under $JCODE_HOME"
 for link in \
   "$JCODE_HOME/prompt-overlay.md" \
   "$JCODE_HOME/swarm-prompt.md" \
-  "$JCODE_HOME/config.toml"
+  "$JCODE_HOME/config.toml" \
+  "$JCODE_HOME/extension.sh"
 do
   if [[ -L "$link" ]]; then
     rm -f "$link"
