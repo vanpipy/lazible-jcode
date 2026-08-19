@@ -279,7 +279,23 @@ cmd_pre_spawn() {
         fi
         exports="$2"; shift 2
         ;;
-      *) : "${label:=$1}"; shift; : "${role:=$1}"; shift; : "${count:=$1}"; shift ;;
+      *)
+        # Positional: fill label/role/count in order, one per iteration.
+        # Guarded against set -u tripping on a missing $1 when fewer than
+        # 3 positionals are supplied; the post-loop check below emits the
+        # canonical usage message.
+        if [[ -z "${label-}" ]]; then
+          label="$1"
+        elif [[ -z "${role-}" ]]; then
+          role="$1"
+        elif [[ -z "${count-}" ]]; then
+          count="$1"
+        else
+          echo "extension.sh pre-spawn: unexpected positional '$1'" >&2
+          return 2
+        fi
+        shift
+        ;;
     esac
   done
   if [[ -z "$label" || -z "$role" || -z "$count" ]]; then
