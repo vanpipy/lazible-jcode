@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scripts/swarm-sweep.sh — clean up stale swarm worktrees
+# swarm-sweep — clean up stale swarm worktrees
 #
 # Find and (optionally) remove git worktrees whose path matches either
 # of the two swarm worktree conventions:
