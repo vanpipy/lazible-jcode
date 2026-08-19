@@ -3,12 +3,11 @@
 #
 # Linear, unconditional, overwrite-by-default. Runs 3 steps every time:
 #   1. Install jcode binary to ~/.local/bin/jcode via the upstream installer.
-#      Also symlinks the legacy swarm-sweep helper to ~/.local/bin/swarm-sweep
-#      for cleaning up stale swarm worktrees (Phase 2 will move this to ~/.jcode/).
-#   2. Symlink all bundle artifacts into ~/.jcode/ — the markdown overlays,
-#      config.toml, the extension.sh CLI entry point, and the roles/*.md
-#      templates. Single source of truth: `ls ~/.jcode/` shows everything
-#      the bundle deploys.
+#      This is the ONLY thing the bundle writes outside ~/.jcode/.
+#   2. Symlink all bundle artifacts into ~/.jcode/ — markdown overlays,
+#      config.toml, the extension.sh + swarm-sweep CLI entry points, and
+#      the roles/*.md templates. Single source of truth: `ls ~/.jcode/`
+#      shows everything the bundle deploys.
 #   3. Auto-init ~/.jcode/mcp.json from the bundle's template,
 #      substituting the actual project root for /workspace. Idempotent:
 #      skips with a message if the file already exists.
@@ -52,10 +51,9 @@ overwrites the destination unconditionally (step 3 is idempotent, never
 overwrites an existing file):
 
   1. Install jcode binary to ~/.local/bin/jcode via the upstream installer.
-     Also symlinks the swarm-sweep helper to ~/.local/bin/swarm-sweep
-     for cleaning up stale swarm worktrees.
-  2. Symlink swarm/prompt-overlay.md, swarm/swarm-prompt.md,
-     and swarm/roles/*.md into ~/.jcode/.
+  2. Symlink all bundle artifacts into ~/.jcode/: markdown overlays,
+     config.toml, the extension.sh + swarm-sweep CLI helpers, and
+     the roles/*.md templates.
   3. Auto-init ~/.jcode/mcp.json from the bundle's template
      (config/mcp.json.example), substituting the actual project root for
      the /workspace placeholder. Mirrors the "all config in ~/.jcode/"
@@ -234,7 +232,10 @@ overwrite_link() {
   info "linked $label → $src"
 }
 
-# ── step 1: install jcode binary + swarm-sweep helper ──────────────────────
+# ── step 1: install jcode binary ─────────────────────────────────────────────
+# Only the jcode engine binary lives under ~/.local/bin/. All other
+# bundle artifacts (including CLI helper scripts like extension.sh +
+# swarm-sweep) live under ~/.jcode/ — the single source of truth.
 info "step 1/3: installing jcode binary"
 if command -v jcode >/dev/null 2>&1; then
   info "jcode already on PATH: $(command -v jcode)"
@@ -249,15 +250,6 @@ else
   fi
 fi
 
-# Install swarm-sweep helper into ~/.local/bin/. Symlinks the script
-# directly (not a copy) so updating the repo updates the installed
-# version. Idempotent: re-runs do not accumulate .bak.<ts> files
-# because the fast path in overwrite_link recognizes existing
-# correct symlinks.
-LCL_BIN="${LCL_BIN:-$HOME/.local/bin}"
-mkdir -p "$LCL_BIN"
-overwrite_link "$repo_root/scripts/swarm-sweep.sh" "$LCL_BIN/swarm-sweep" "swarm-sweep"
-
 # ── step 2: symlink bundle artifacts into ~/.jcode/ ──────────────────────────
 # All bundle artifacts that jcode (or root/worker) reads at runtime
 # live under ~/.jcode/: the markdown overlays + config files + the
@@ -268,6 +260,7 @@ overwrite_link "$repo_root/swarm/prompt-overlay.md" "$JCODE_HOME/prompt-overlay.
 overwrite_link "$repo_root/swarm/swarm-prompt.md"   "$JCODE_HOME/swarm-prompt.md"             "swarm-prompt.md"
 overwrite_link "$repo_root/config/config.toml"      "$JCODE_HOME/config.toml"                "config.toml"
 overwrite_link "$repo_root/scripts/extension.sh"    "$JCODE_HOME/extension.sh"               "extension.sh"
+overwrite_link "$repo_root/scripts/swarm-sweep.sh" "$JCODE_HOME/swarm-sweep"               "swarm-sweep"
 
 mkdir -p "$JCODE_HOME/roles"
 for role_file in "$repo_root/swarm/roles/"*.md; do

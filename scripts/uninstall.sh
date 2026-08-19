@@ -60,14 +60,14 @@ warn() { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
 if [[ "$ASSUME_YES" -ne 1 ]]; then
   printf "This will remove:\n"
   printf "  - symlinks: $JCODE_HOME/{prompt-overlay,swarm-prompt,config}.md\n"
-  printf "  - symlinks: $JCODE_HOME/extension.sh\n"
+  printf "  - symlinks: $JCODE_HOME/{extension.sh,swarm-sweep}\n"
   printf "  - symlinks: $JCODE_HOME/roles/*.md\n"
   if [[ "$KEEP_BINARY" -ne 1 ]]; then
     printf "  - jcode binary at $INSTALL_DIR/jcode (if installed by lazible-jcode)\n"
-    printf "  - swarm-sweep helper at $INSTALL_DIR/swarm-sweep (if installed by lazible-jcode)\n"
+    printf "  - any legacy swarm-sweep symlink at $INSTALL_DIR/swarm-sweep (only if it points at this bundle)\n"
   else
     printf "  - (jcode binary at $INSTALL_DIR/jcode will be kept -- --keep-binary)\n"
-    printf "  - (swarm-sweep helper at $INSTALL_DIR/swarm-sweep will be kept -- --keep-binary)\n"
+    printf "  - (legacy swarm-sweep symlink will be kept -- --keep-binary)\n"
   fi
   if [[ "$PURGE" -eq 1 ]]; then
     printf "  - the entire $JCODE_HOME/ directory (--purge)\n"
@@ -85,7 +85,8 @@ for link in \
   "$JCODE_HOME/prompt-overlay.md" \
   "$JCODE_HOME/swarm-prompt.md" \
   "$JCODE_HOME/config.toml" \
-  "$JCODE_HOME/extension.sh"
+  "$JCODE_HOME/extension.sh" \
+  "$JCODE_HOME/swarm-sweep"
 do
   if [[ -L "$link" ]]; then
     rm -f "$link"
@@ -107,20 +108,36 @@ if [[ "$PURGE" -eq 1 ]]; then
   rm -rf "$JCODE_HOME"
 fi
 
-# ── remove jcode binary + swarm-sweep helper if they look like ours ──────
+# ── remove jcode binary if it looks like ours ─────────────────────────────────
+# swarm-sweep used to live at $INSTALL_DIR/swarm-sweep but moved under
+# ~/.jcode/ — handle a stale leftover from older installs by checking
+# whether the symlink still points at this bundle's swarm-sweep.sh.
 if [[ "$KEEP_BINARY" -ne 1 ]]; then
-  for tool in jcode swarm-sweep; do
-    tool_path="$INSTALL_DIR/$tool"
-    if [[ -x "$tool_path" ]]; then
-      warn "removing $tool_path"
-      rm -f "$tool_path"
-      # Also note the most recent backup if present.
-      latest_bak="$(ls -t "$INSTALL_DIR/${tool}.bak."* 2>/dev/null | head -1 || true)"
-      if [[ -n "$latest_bak" ]]; then
-        info "left in place: $latest_bak (most recent backup; remove manually if unwanted)"
-      fi
+  if [[ -x "$INSTALL_DIR/jcode" ]]; then
+    warn "removing $INSTALL_DIR/jcode"
+    rm -f "$INSTALL_DIR/jcode"
+    latest_bak="$(ls -t "$INSTALL_DIR/jcode.bak."* 2>/dev/null | head -1 || true)"
+    if [[ -n "$latest_bak" ]]; then
+      info "left in place: $latest_bak (most recent backup; remove manually if unwanted)"
     fi
-  done
+  fi
+
+  # Legacy: old installs left swarm-sweep at $INSTALL_DIR/swarm-sweep.
+  # Only remove if the symlink still points at THIS bundle's script —
+  # otherwise the user has their own swarm-sweep and we leave it alone.
+  legacy_sw="$INSTALL_DIR/swarm-sweep"
+  if [[ -L "$legacy_sw" ]]; then
+    target="$(readlink "$legacy_sw")"
+    case "$target" in
+      *lazible-jcode/scripts/swarm-sweep.sh)
+        warn "removing legacy $legacy_sw → $target"
+        rm -f "$legacy_sw"
+        ;;
+      *)
+        info "left in place: $legacy_sw (not a lazible-jcode symlink: $target)"
+        ;;
+    esac
+  fi
 fi
 
 info "done"
