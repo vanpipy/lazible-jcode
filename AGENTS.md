@@ -28,10 +28,10 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `docs/ARCHITECTURE.md` | Three-layer view: jcode native + lazible-jcode extension mechanism + MCP | yes |
 | `docs/ENVIRONMENTS.md` | Linux support matrix: required vs. optional deps, distro notes, recovery cheat sheet | yes |
 | `docs/INTEGRATIONS.md` | Recommended local MCP server stack (filesystem + git + serena; sqlite not currently shipping a working MCP server, see INTEGRATIONS.md) | yes |
-| `scripts/install.sh` | 3-step installer. Symlinks `swarm/` + `AGENTS.md` into `~/.jcode/`, and `swarm-sweep` into `~/.local/bin/` | yes |
-| `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes` | yes |
-| `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `swarm-sweep` by install.sh | yes |
-| `extension.sh` | Single entry point for per-project extension conventions + workspace lifecycle (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn`, `workspace`, `scratch-dir`, `mcp`, `models`, `preflight`, `artifact`, `doctor` subcommands) | yes |
+| `scripts/install.sh` | 3-step installer. Symlinks ALL bundle artifacts into `~/.jcode/` (markdown overlays + `config.toml` + `extension.sh` + `swarm-sweep` + `roles/*.md`) and adds `~/.jcode/` to PATH. Single source of truth: `ls ~/.jcode/` shows everything the bundle deploys. | yes |
+| `scripts/uninstall.sh` | Inverse. Flags: `--keep-binary`, `--purge`, `--yes`. Cleans up legacy `~/.local/bin/swarm-sweep` symlinks left from older installs. | yes |
+| `scripts/swarm-sweep.sh` | Cleanup helper for stale swarm worktrees/branches (M2/M3 residue). Symlinked to `~/.jcode/swarm-sweep` by install.sh | yes |
+| `scripts/extension.sh` | Single entry point for per-project extension conventions + workspace lifecycle (`role`, `verify`, `pre-merge`, `notify`, `pre-spawn`, `workspace`, `scratch-dir`, `mcp`, `models`, `preflight`, `artifact`, `doctor`, `terminology-check`, `skills` subcommands). Symlinked to `~/.jcode/extension.sh` by install.sh; on PATH after install. | yes |
 | `swarm/prompt-overlay.md` | Main-agent overlay. Loaded by jcode at session start | yes |
 | `swarm/swarm-prompt.md` | Root + worker policy (model routing, spawn hygiene, decomposition) | yes |
 | `swarm/roles/<name>.md` | Worker persona templates. **Exactly 6 roles**: `reviewer`, `implementer`, `investigator`, `migrator`, `test-writer`, `doc-writer` | yes |
@@ -39,6 +39,24 @@ state, no Sages / tick-era / Smart Postman / DAG-stage terminology.
 | `config/config.toml.example` | Template for the above | yes |
 | `config/mcp.json.example` | Schema reference for MCP servers layout; ships the recommended local stack (filesystem + git + serena) | yes |
 | `.gitignore` | Excludes `.bak.<ts>`, `.bak.*`, OS noise, the live `config/mcp.json` | yes |
+
+### Post-install: `~/.jcode/` top-level layout
+
+After `./scripts/install.sh`, every bundle artifact lives under
+`~/.jcode/` (top-level names below; the directory also contains
+jcode's own runtime state such as `sessions/`, `cache/`, `todos/`,
+`telemetry_*`, etc. — these are owned by the jcode engine, not the
+bundle):
+
+| Path | Source | Purpose |
+| --- | --- | --- |
+| `~/.jcode/prompt-overlay.md` | `swarm/prompt-overlay.md` | Main-agent overlay (jcode loads on session start) |
+| `~/.jcode/swarm-prompt.md`   | `swarm/swarm-prompt.md`   | Worker policy (jcode loads on spawn) |
+| `~/.jcode/config.toml`       | `config/config.toml`      | jcode's main config |
+| `~/.jcode/mcp.json`          | `config/mcp.json.example` | MCP server registrations |
+| `~/.jcode/extension.sh`      | `scripts/extension.sh`    | Bundle CLI entry point (~17 subcommands) |
+| `~/.jcode/swarm-sweep`       | `scripts/swarm-sweep.sh`  | Stale-worktree cleanup helper |
+| `~/.jcode/roles/<name>.md`   | `swarm/roles/*.md`        | 6 worker persona templates |
 
 There are no `scripts/lib/`, `tests/`, `jcode-patches/`, `experiments/`,
 `docs/HEARTBEAT.md`, `docs/POSTMAN_PROTOCOL.md`, `skills/`, or

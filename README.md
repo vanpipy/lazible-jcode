@@ -41,14 +41,29 @@ lazible-jcode/
 │       ├── test-writer.md
 │       └── doc-writer.md
 ├── scripts/
-│   ├── install.sh                     # Linear, unconditional, overwrite-by-default installer (3 steps)
-│   ├── uninstall.sh                   # Inverse: removes symlinks + optionally the binary
+│   ├── install.sh                     # Linear, unconditional, overwrite-by-default installer (3 steps + ensure PATH)
+│   ├── uninstall.sh                   # Inverse: removes symlinks + cleans up legacy artifacts
+│   ├── extension.sh                   # Single CLI entry point (~17 subcommands: role/verify/pre-merge/... → ~/.jcode/extension.sh)
 │   └── swarm-sweep.sh                 # Manual cleanup for stale swarm worktrees (→ swarm-sweep)
 └── docs/
     ├── INSTALL.md                     # Detailed install / uninstall / troubleshooting
     ├── EXTENSIONS.md                  # Per-project extension points (10 axes)
     ├── ARCHITECTURE.md                # Three-layer view: jcode native + extensions + MCP
     └── INTEGRATIONS.md                # Recommended local MCP server stack
+```
+
+After install, **every bundle artifact lives under `~/.jcode/`** (single
+source of truth):
+
+```
+~/.jcode/
+├── prompt-overlay.md     # main-agent overlay
+├── swarm-prompt.md       # worker policy
+├── config.toml           # jcode config
+├── mcp.json              # MCP server registrations
+├── extension.sh          # CLI entry point (on PATH)
+├── swarm-sweep           # cleanup helper (on PATH)
+└── roles/<name>.md       # 6 worker persona templates
 ```
 
 ## Quick start
@@ -58,16 +73,19 @@ lazible-jcode/
 git clone https://github.com/vanpipy/lazible-jcode.git
 cd lazible-jcode
 
-# 2. Install jcode + overlay + swarm config + ~/.jcode/mcp.json (3 steps, overwrite-by-default; step 3 idempotent)
+# 2. Install jcode + overlay + CLI helpers (extension.sh, swarm-sweep) + ~/.jcode/mcp.json
 ./scripts/install.sh
 
 # 2b. Or, set up the bundle for a different project (installs bundle + inits that project's .jcode/mcp.json override)
 ./scripts/install.sh --project=/path/to/your/project
 
-# 3. Verify
+# 3. Verify (open a new shell first if ~/.jcode/ wasn't on PATH before)
 command -v jcode
+command -v extension.sh     # CLI helper
+command -v swarm-sweep      # legacy helper
 jcode --version
 jcode run "say hello"
+extension.sh doctor         # bundle CLI sanity check
 ```
 
 The installer is **always idempotent and unconditional**: it runs 3
