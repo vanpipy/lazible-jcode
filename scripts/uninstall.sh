@@ -53,8 +53,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
-warn() { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
+# Color-aware output. Disable color in three cases:
+#   1. NO_COLOR env set (https://no-color.org standard)
+#   2. stdout not a tty (output is being piped/captured)
+#   3. TERM=dumb (terminal can't render ANSI; CI / minimal emulators)
+# All other cases: cyan/blue info, yellow warn, red err.
+# Mirrors the pattern in scripts/install.sh and scripts/swarm-sweep.sh.
+if [[ -n "${NO_COLOR:-}" || ! -t 1 || "${TERM:-}" == "dumb" ]]; then
+  C_INFO=''; C_WARN=''; C_ERR=''; C_RESET=''
+else
+  C_INFO='\033[1;34m'; C_WARN='\033[1;33m'; C_ERR='\033[1;31m'; C_RESET='\033[0m'
+fi
+info() { printf '%b%s%b\n' "$C_INFO" "$*" "$C_RESET"; }
+warn() { printf '%b%s%b\n' "$C_WARN" "$*" "$C_RESET" >&2; }
 
 # ── confirmation ─────────────────────────────────────────────────────────────
 if [[ "$ASSUME_YES" -ne 1 ]]; then
