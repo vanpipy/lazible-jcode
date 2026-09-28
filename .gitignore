@@ -1,0 +1,36 @@
+# secrets / live config (should never reach git)
+# Allow the sanitized config.toml snapshot + example files
+config/*
+!config/config.toml
+# But NEVER let a real mcp.json with tokens slip in
+config/mcp.json
+
+# swarm runtime state — worker spawn manifests + scope files. These
+# contain machine-specific paths (worktree locations, branch SHAs) and
+# must never reach git.
+.jcode/*
+
+# jcode scratch dirs the harness creates at runtime. Safe to drop.
+.git-commit-msg/
+.git-spawn-scope/
+.git-tmp/
+
+# macOS
+.DS_Store
+
+# editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# python bytecode
+__pycache__/
+*.pyc
+
+# build artifacts
+target/
+build/
+dist/
+*.log
+
