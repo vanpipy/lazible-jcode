@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# snapshot-config : copy ~/.jcode/config.toml to config/config.toml and
+# sanitize it.
+#
+# Usage:
+#   ./scripts/snapshot-config
+#
+# Sanitization rules (same as verify-sanitized):
+#   - Parse TOML; walk by schema path
+#   - Non-empty strings at known sensitive keys → "~/<PLACEHOLDER>"
+#   - Replace hardcoded /home/<user> paths with ~/
+#   - Output preserves original file structure but values are masked
+#
+# Important: confirm the live config is the state you want to commit first.
+#            This will overwrite config/config.toml (git will see a diff).
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+src="${JCODE_HOME:-$HOME/.jcode}/config.toml"
+dst="${repo}/config/config.toml"
+
+[[ -f "$src" ]] || { echo "no source: $src" >&2; exit 1; }
+
+if [[ -L "$src" ]]; then
+    echo "✗ $src is a symlink → $(readlink "$src")" >&2
+    echo "  snapshot-config would write through it to the repo." >&2
+    echo "  Break the symlink first:" >&2
+    echo "    rm $src && cp <repo>/config/config.toml $src" >&2
+    exit 3
+fi
+
+python3 - "$src" "$dst" "${repo}/scripts" <<'PY'
+import sys, re, pathlib, tomllib
+sys.path.insert(0, sys.argv[3])
+import _lib_toml as L
+
+src, dst = sys.argv[1], sys.argv[2]
+
+# 1. Parse to know which keys to mask
+with open(src, 'rb') as f:
+    data = tomllib.load(f)
+
+masked = L.mask_secrets(data)
+
+# 2. Re-emit using the shared emitter
+with open(dst, 'w') as f:
+    f.write(L.emit(masked))
+
+# 3. Path replacement (for hardcoded /home/<user> outside of $HOME / $JCODE_HOME env vars)
+text = pathlib.Path(dst).read_text()
+text = re.sub(r'/home/\w+', '~', text)
+pathlib.Path(dst).write_text(text)
+PY
+
+echo "✓ sanitized snapshot → $dst"
+echo "  review with: git diff config/config.toml"

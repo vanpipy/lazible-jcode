@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# diff-live-base : show differences between ~/.jcode/config.toml (live) and
+# config/config.toml (repo base). Shows only effective values (masked
+# differences), not the full TOML.
+#
+# Usage:
+#   ./scripts/diff-live-base              # all sections
+#   ./scripts/diff-live-base ambient      # only ambient section
+#   ./scripts/diff-live-base agents       # only agents section
+#
+# "repo base" refers to the **working tree** (uncommitted or just-committed
+# both work). If you want to compare against the just-committed state (working
+# tree = HEAD), that works too; when working tree ≠ HEAD (uncommitted edits),
+# the diff reflects "what the next commit will look like".
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+live="${JCODE_HOME:-$HOME/.jcode}/config.toml"
+base_file="${repo}/config/config.toml"
+section="${1:-}"
+
+if [[ ! -f "$live" ]]; then
+    echo "no live config: $live" >&2
+    exit 1
+fi
+
+if [[ -L "$live" ]]; then
+    echo "⚠ $live is a symlink → $(readlink "$live")" >&2
+    echo "  diff would compare live against itself, which is meaningless." >&2
+    exit 2
+fi
+
+python3 - "$live" "$base_file" "$section" <<'PY'
+import sys, tomllib
+
+live, base_file, section = sys.argv[1:4]
+
+with open(live, 'rb') as f:
+    live_data = tomllib.load(f)
+with open(base_file, 'rb') as f:
+    base_data = tomllib.load(f)
+
+def walk_diff(a, b, path):
+    """Yield (path, a_value, b_value) for every differing leaf."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            yield from walk_diff(a.get(k), b.get(k), path + (k,))
+    elif a != b:
+        yield (path, a, b)
+
+diffs = list(walk_diff(base_data, live_data, ()))
+
+if section:
+    diffs = [d for d in diffs if d[0] and d[0][0] == section]
+    if not diffs:
+        print(f'(no differences in [{section}])')
+        sys.exit(0)
+
+if not diffs:
+    print('live == base (no differences)')
+    sys.exit(0)
+
+print(f'{len(diffs)} differing fields (base → live):')
+for path, base_v, live_v in diffs:
+    base_s = repr(base_v) if not isinstance(base_v, str) else repr(base_v)[:60]
+    live_s = repr(live_v) if not isinstance(live_v, str) else repr(live_v)[:60]
+    print(f'  {".".join(path):40s}  {base_s:>30s}  →  {live_s}')
+PY

@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# verify-sanitized : pre-commit check that no tokens or paths leak.
+#
+# Checks:
+#   1. config/config.toml is parseable
+#   2. No hardcoded /home/<user> paths
+#   3. All known sensitive keys are empty or placeholders
+#   4. Profile files have no hardcoded paths
+#   5. Skill files have no long tokens (coarse check)
+#   6. ~/.jcode/config.toml is not a symlink (prevents live writes flowing back into repo)
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+config_toml="${repo}/config/config.toml"
+profiles_dir="${repo}/config/profiles"
+skills_dir="${repo}/config/skills"
+live_config="${JCODE_HOME:-$HOME/.jcode}/config.toml"
+
+fail=0
+warn=0
+note() { printf "  %s\n" "$*"; }
+err()  { printf "  ✗ %s\n" "$*"; fail=1; }
+warn_msg() { printf "  ⚠ %s\n" "$*"; warn=1; }
+ok()   { printf "  ✓ %s\n" "$*"; }
+
+# 1. TOML parse
+python3 - "$config_toml" <<'PY' && ok "config/config.toml parses" || { err "config/config.toml parse failed"; }
+import sys, tomllib
+tomllib.load(open(sys.argv[1], 'rb'))
+PY
+
+# 2. Hardcoded /home/<user>
+if grep -nE '/home/[a-z]+' "$config_toml" 2>/dev/null; then
+    err "config/config.toml has hardcoded /home/..."
+else
+    ok "no /home/... in config.toml"
+fi
+
+# 3. Sensitive-key masking (walks by schema path, matching real field names)
+python3 - "$config_toml" <<'PY' || { err "config.toml secret leak"; }
+import sys, tomllib
+data = tomllib.load(open(sys.argv[1], 'rb'))
+SECRET_KEYS = {
+    'api_key', 'api-key', 'apikey',
+    'token', 'bearer',
+    'password', 'secret',
+    'ntfy_topic', 'telegram_bot_token', 'discord_bot_token',
+    'email_password', 'jade_relay_token', 'bing_api_key',
+}
+def walk(obj, path=()):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            walk(v, path + (k,))
+    elif isinstance(obj, str):
+        key = path[-1].lower() if path else ''
+        if key in SECRET_KEYS:
+            if obj and not obj.startswith('~') and obj != '':
+                print(f'leak: {".".join(path)} = {obj!r}')
+                sys.exit(1)
+walk(data)
+PY
+ok "config.toml secret scan"
+
+# 4. Profile files
+if [[ -d "$profiles_dir" ]]; then
+    for f in "$profiles_dir"/*.toml; do
+        [[ -f "$f" ]] || continue
+        if grep -nE '/home/[a-z]+' "$f" 2>/dev/null; then
+            err "$f: hardcoded path"
+        else
+            ok "$f clean"
+        fi
+    done
+fi
+
+# 5. Skill files long tokens (coarse)
+if [[ -d "$skills_dir" ]]; then
+    if grep -rnE '\b[A-Za-z0-9_-]{40,}\b' "$skills_dir" 2>/dev/null | grep -v README; then
+        err "long token-looking string in skills/"
+    else
+        ok "skills/ no long tokens"
+    fi
+fi
+
+# 6. Live config must not be a symlink (otherwise use-profile flows back into repo)
+if [[ -L "$live_config" ]]; then
+    warn_msg "$live_config is a symlink → $(readlink "$live_config"); use-profile will refuse to write"
+    echo "    (this is OK as long as you don't run use-profile)"
+else
+    ok "live config is a regular file"
+fi
+
+# 7. Live vs base structural difference (quick estimate via diff-live-base logic)
+if [[ -f "$live_config" && ! -L "$live_config" ]]; then
+    diff_count=$(python3 - "$live_config" "$config_toml" 2>/dev/null <<'PYEOF'
+import sys, tomllib
+live_d = tomllib.load(open(sys.argv[1], 'rb'))
+base_d = tomllib.load(open(sys.argv[2], 'rb'))
+def walk(a, b):
+    if isinstance(a, dict) and isinstance(b, dict):
+        n = 0
+        for k in set(a) | set(b):
+            n += walk(a.get(k), b.get(k))
+        return n
+    return 0 if a == b else 1
+print(walk(base_d, live_d))
+PYEOF
+)
+    if [[ "$diff_count" -gt 20 ]] 2>/dev/null; then
+        warn_msg "live vs base has $diff_count differing leaves (run ./scripts/diff-live-base for details)"
+        echo "    large drift usually means live was loaded with a profile and base wasn't updated"
+    else
+        ok "live vs base drift: $diff_count leaves (see diff-live-base)"
+    fi
+fi
+
+echo
+if [[ $fail -ne 0 ]]; then
+    echo "FAIL: sanitization checks failed"
+    exit 1
+elif [[ $warn -ne 0 ]]; then
+    echo "OK with warnings"
+else
+    echo "ALL OK"
+fi

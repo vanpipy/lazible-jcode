@@ -201,7 +201,7 @@ imported = true
 
 [[launch_hotkeys.entries]]
 chord = "cmd+;"
-dir = "/home/leroy/Project/lazible-jcode"
+dir = "~/Project/lazible-jcode"
 label = "lazible-jcode"
 self_dev = false
 

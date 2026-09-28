@@ -1,0 +1,29 @@
+# autonomous profile : enables ambient + heavy notifications + all hooks
+# Use case: long offline windows; you want the agent to work proactively during idle.
+#
+# Important: ambient.visible must be explicitly set to false.
+# Base defaults visible=true, which makes every ambient cycle spawn kitty
+# + waits for TUI interaction. That contradicts the profile's "run unattended" intent.
+# (runner.rs:891 run_cycle picks run_cycle_visible or run_cycle_direct based
+# on config().ambient.visible. The former needs TUI; the latter runs directly.)
+
+[ambient]
+enabled = true
+allow_api_keys = true
+proactive_work = true
+min_interval_minutes = 5
+max_interval_minutes = 30
+pause_on_active_session = true
+work_branch_prefix = "ambient/"
+visible = false   # headless: runner.rs:891 skips kitty spawn, runs Agent::new() directly
+
+[safety]
+desktop_notifications = true
+ntfy_topic = ""   # empty string; the real value comes from JCODE_NTFY_TOPIC environment variable (injected by jcode's apply_env_overrides)
+
+[hooks]
+post_tool = ["~/.local/bin/jcode-audit-log"]
+
+[agents]
+swarm_spawn_mode = "headless"   # autonomous mode does not pop a terminal
+swarm_max_concurrent_agents = 32

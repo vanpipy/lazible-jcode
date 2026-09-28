@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# use-profile : merge config/config.toml with config/profiles/<name>.toml and
+# write the result to ~/.jcode/config.toml.
+#
+# Usage:
+#   ./scripts/use-profile [name]    # default: autonomous (the only available profile)
+#
+# Notes:
+#   - Does not modify files inside this repo
+#   - Deep merge: overlay segments override base segments; other segments preserved
+#   - Real secret values are injected by jcode's own env override (apply_env_overrides)
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+profile="${1:-autonomous}"
+base="${repo}/config/config.toml"
+overlay="${repo}/config/profiles/${profile}.toml"
+target_dir="${JCODE_HOME:-$HOME/.jcode}"
+target="${target_dir}/config.toml"
+
+[[ -f "$base"     ]] || { echo "base not found: ${base}"          >&2; exit 1; }
+[[ -f "$overlay"  ]] || { echo "unknown profile: ${profile} (${overlay})" >&2; exit 1; }
+
+if [[ -L "$target" ]]; then
+    echo "✗ ${target} is a symlink → $(readlink "$target")" >&2
+    echo "  writing through a symlink would overwrite the target (your repo base)." >&2
+    echo "  Fix first:" >&2
+    echo "    rm ${target} && cp ${base} ${target}" >&2
+    exit 3
+fi
+
+mkdir -p "$target_dir"
+
+python3 - "$base" "$overlay" "$target" "${repo}/scripts" <<'PY'
+import sys, tomllib
+sys.path.insert(0, sys.argv[4])
+import _lib_toml as L
+
+base_p, overlay_p, target_p = sys.argv[1], sys.argv[2], sys.argv[3]
+
+with open(base_p, 'rb') as f:
+    base = tomllib.load(f)
+with open(overlay_p, 'rb') as f:
+    overlay = tomllib.load(f)
+
+L.merge(base, overlay)
+
+with open(target_p, 'w') as f:
+    f.write(L.emit(base))
+PY
+
+echo "✓ profile '${profile}' merged → ${target}"

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# use-profile-reset : reset ~/.jcode/config.toml to git HEAD base.
+# Resolves the problem where `use-profile autonomous` leaves no path back to
+# the original base.
+#
+# Usage:
+#   ./scripts/use-profile-reset                       # pull from git HEAD
+#   ./scripts/use-profile-reset --target HEAD~3       # pull from a specific commit
+#   ./scripts/use-profile-reset --target <sha>        # pull from a specific sha
+#
+# Notes:
+#   - Overwrites `~/.jcode/config.toml` (**does not** modify config/config.toml
+#     inside this repo)
+#   - If ~/.jcode/config.toml is a symlink (pointing back into the repo), this
+#     script refuses and prints instructions to fix it
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+target="HEAD"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --target) target="${2:-HEAD}"; shift 2 ;;
+        -h|--help)
+            sed -n '2,18p' "$0" | sed 's/^# *//'
+            exit 0
+            ;;
+        *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+cd "$repo"
+
+if ! git rev-parse --verify "$target" >/dev/null 2>&1; then
+    echo "invalid ref: $target" >&2
+    exit 2
+fi
+
+live_dir="${JCODE_HOME:-$HOME/.jcode}"
+live="${live_dir}/config.toml"
+
+if [[ -L "$live" ]]; then
+    echo "✗ ${live} is a symlink → $(readlink "$live")" >&2
+    echo "  use-profile / use-profile-reset writes follow symlinks, which would" >&2
+    echo "  overwrite the target (your repo base). Fix first:" >&2
+    echo "    rm ${live} && cp ${repo}/config/config.toml ${live}" >&2
+    exit 3
+fi
+
+mkdir -p "$live_dir"
+
+echo "reset ~/.jcode/config.toml from git $target"
+git show "${target}:config/config.toml" > "$live"
+
+echo "current state:"
+python3 - "$live" <<'PY'
+import sys, tomllib
+d = tomllib.load(open(sys.argv[1], "rb"))
+a = d.get("ambient", {})
+h = d.get("hooks", {})
+ag = d.get("agents", {})
+print("  ambient.enabled      =", a.get("enabled"))
+print("  ambient.proactive    =", a.get("proactive_work"))
+print("  hooks.post_tool      =", h.get("post_tool"))
+print("  agents.swarm_spawn   =", ag.get("swarm_spawn_mode"))
+PY

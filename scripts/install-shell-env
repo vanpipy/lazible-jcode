@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# install-shell-env : install the env vars required by jcode's ambient cycle
+# into ~/.zshrc + ~/.bashrc.
+#
+# Usage:
+#   ./scripts/install-shell-env                # dry-run: show what would be written
+#   ./scripts/install-shell-env --apply        # actually write
+#   ./scripts/install-shell-env --remove       # reverse: remove installed block
+#   ./scripts/install-shell-env --status       # inspect current state (no writes)
+#
+# Why this is needed:
+#   jcode's OpenRouter runtime reads JCODE_OPENROUTER_MODEL at provider
+#   initialization (lib.rs:1532). If unset, it falls back to const
+#   DEFAULT_MODEL = "anthropic/claude-sonnet-4" (a model name MiniMax's
+#   endpoint does not recognize). The ambient cycle's fork()
+#   (openrouter_provider_impl.rs:771) loses a RwLock race against the user
+#   session; the forked provider's model then becomes None, and any request
+#   falls back to the const → 400 Bad Request. See
+#   notes/ambient-no-cycle-2026-09-28.md.
+#
+# This script writes `export JCODE_OPENROUTER_MODEL=MiniMax-M3` to both
+# shell rc files, so that after serve restart the in-memory model seeds with
+# M3 and any race-triggered fallback also lands on M3. (After fork() is
+# fixed, lib.rs:1660 will still overwrite this fallback, so the race fix
+# itself cannot be skipped; this env var is a defense-in-depth layer, not
+# a cure.)
+#
+# Write conventions:
+#   - Writes to ~/.zshrc and ~/.bashrc (creates if missing, appends if exists)
+#   - Wraps block in sentinels `>>> jcode-openrouter-env >>>` /
+#     `<<< jcode-openrouter-env <<<` so --remove / --status can locate it
+#   - Default is dry-run; --apply is required to actually write
+#   - Refuses to write through symlinks (so it cannot overwrite dotfiles in
+#     the repo)
+
+set -euo pipefail
+
+marker_begin='# >>> jcode-openrouter-env >>> do not edit this block >>>'
+marker_end='# <<< jcode-openrouter-env <<<'
+
+# Env entries to install (exported to ambient cycle's shell context)
+read -r -d '' BLOCK_CONTENT <<'ENV' || true
+# Managed by lazible-jcode/scripts/install-shell-env
+# Default model for jcode's OpenRouter runtime. Without this, the runtime
+# falls back to const DEFAULT_MODEL = "anthropic/claude-sonnet-4", which
+# MiniMax's endpoint does not recognize (400 Bad Request).
+export JCODE_OPENROUTER_MODEL=MiniMax-M3
+ENV
+
+# Default action is install (dry-run); --remove switches to remove mode
+# (also dry-run); --apply makes either mode actually write
+action="install"
+apply=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --apply)    apply=1; shift ;;
+        --status)   action="status"; shift ;;
+        --remove)   action="remove"; shift ;;
+        -h|--help)
+            sed -n '2,28p' "$0" | sed 's/^# *//'
+            exit 0
+            ;;
+        *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+if [[ $# -gt 0 ]]; then
+    echo "unknown arg: $1" >&2
+    exit 2
+fi
+
+files=(~/.zshrc ~/.bashrc)
+
+# Show current state of each rc
+status_one() {
+    local f="$1"
+    if [[ ! -e "$f" ]]; then
+        echo "  $f (missing)"
+        return
+    fi
+    if [[ -L "$f" ]]; then
+        echo "  $f (symlink → $(readlink "$f")) : SKIP"
+        return
+    fi
+    if grep -qF "$marker_begin" "$f"; then
+        echo "  $f (installed)"
+        sed -n "/${marker_begin//\//\\/}/,/${marker_end//\//\\/}/p" "$f" | sed 's/^/    /'
+    else
+        echo "  $f (not installed)"
+    fi
+}
+
+# Append block to rc (with idempotency check)
+install_one() {
+    local f="$1"
+    if [[ -L "$f" ]]; then
+        echo "  SKIP $f (symlink → $(readlink "$f"))"
+        return 0
+    fi
+    if grep -qF "$marker_begin" "$f" 2>/dev/null; then
+        echo "  SKIP $f (already installed : re-run --remove first)"
+        return 0
+    fi
+    local content
+    content="${marker_begin}
+${BLOCK_CONTENT}
+${marker_end}"
+    if [[ $apply -eq 1 ]]; then
+        [[ -f "$f" ]] || touch "$f"
+        printf '\n%s\n' "$content" >> "$f"
+        echo "  ✓ $f (appended)"
+    else
+        echo "  would append to $f:"
+        printf '%s\n' "$content" | sed 's/^/    /'
+    fi
+}
+
+# Remove block (slice by sentinel, keep other lines)
+remove_one() {
+    local f="$1"
+    if [[ ! -f "$f" ]]; then
+        echo "  SKIP $f (missing)"
+        return 0
+    fi
+    if [[ -L "$f" ]]; then
+        echo "  SKIP $f (symlink → $(readlink "$f"))"
+        return 0
+    fi
+    if ! grep -qF "$marker_begin" "$f"; then
+        echo "  SKIP $f (no installed block)"
+        return 0
+    fi
+    if [[ $apply -eq 1 ]]; then
+        # Delete all lines between sentinels (including sentinels themselves)
+        # Use python for ast-safe slicing : avoids sed escaping of / in markers
+        python3 - "$f" <<'PY'
+import sys
+path = sys.argv[1]
+begin = "# >>> jcode-openrouter-env >>> do not edit this block >>>"
+end = "# <<< jcode-openrouter-env <<<"
+with open(path) as fh:
+    lines = fh.readlines()
+out = []
+inside = False
+for line in lines:
+    if line.rstrip("\n") == begin:
+        inside = True
+        continue
+    if line.rstrip("\n") == end:
+        inside = False
+        continue
+    if not inside:
+        out.append(line)
+# Trim trailing blank lines but keep at least one \n
+while len(out) > 1 and out[-1] == "\n" and out[-2] == "\n":
+    out.pop()
+with open(path, "w") as fh:
+    fh.writelines(out)
+PY
+        echo "  ✓ $f (block removed)"
+    else
+        echo "  would remove block from $f (--apply to actually do it)"
+    fi
+}
+
+case "$action" in
+    status)
+        echo "status:"
+        for f in "${files[@]}"; do status_one "$f"; done
+        exit 0
+        ;;
+    remove)
+        echo "remove jcode-openrouter-env block from shell rc files:"
+        for f in "${files[@]}"; do remove_one "$f"; done
+        if [[ $apply -eq 0 ]]; then
+            echo ""
+            echo "dry-run : re-run with --apply to actually remove."
+        fi
+        exit 0
+        ;;
+esac
+
+# Default: install
+echo "install jcode-openrouter-env block to shell rc files:"
+for f in "${files[@]}"; do install_one "$f"; done
+
+if [[ $apply -eq 0 ]]; then
+    echo ""
+    echo "dry-run : re-run with --apply to actually write."
+fi

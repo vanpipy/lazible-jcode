@@ -1,0 +1,22 @@
+{
+  "_comment": "Example MCP server config. Real tokens live in ~/.jcode/mcp.json (gitignored).",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "~"],
+      "env": {}
+    },
+    "git": {
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "."],
+      "env": {}
+    },
+    "_placeholder_remote": {
+      "_comment": "Example remote MCP via SSE. Replace URL and bearer token.",
+      "url": "https://example.invalid/sse",
+      "headers": {
+        "Authorization": "Bearer ~/<MCP_REMOTE_TOKEN>"
+      }
+    }
+  }
+}

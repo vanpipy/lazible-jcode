@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# jcode-audit-log : default implementation of the post_tool observer hook.
+# Appends metadata for every tool invocation to ~/.jcode/audit.log.
+# jcode passes fields via env vars (see jcode-base/src/hooks.rs apply_event_env):
+#   JCODE_HOOK_EVENT / JCODE_HOOK_SESSION_ID / JCODE_HOOK_CWD
+#   JCODE_HOOK_TOOL_NAME / JCODE_HOOK_STATUS / JCODE_HOOK_DURATION_MS / JCODE_HOOK_OUTPUT_BYTES
+#   JCODE_HOOK_PAYLOAD (full JSON)
+#
+# Failures do not affect jcode: all post_tool hooks are fire-and-forget observers.
+#
+# Install:
+#   cp scripts/jcode-audit-log ~/.local/bin/jcode-audit-log
+#   chmod +x ~/.local/bin/jcode-audit-log
+
+set -euo pipefail
+
+log_dir="${JCODE_HOME:-$HOME/.jcode}"
+log_file="${log_dir}/audit.log"
+
+mkdir -p "$log_dir"
+
+ts="$(date -Iseconds 2>/dev/null || date)"
+printf '[%s] event=%s tool=%s status=%s duration_ms=%s output_bytes=%s cwd=%s\n' \
+    "$ts" \
+    "${JCODE_HOOK_EVENT:-?}" \
+    "${JCODE_HOOK_TOOL_NAME:-?}" \
+    "${JCODE_HOOK_STATUS:-?}" \
+    "${JCODE_HOOK_DURATION_MS:-?}" \
+    "${JCODE_HOOK_OUTPUT_BYTES:-?}" \
+    "${JCODE_HOOK_CWD:-?}" \
+    >> "$log_file"

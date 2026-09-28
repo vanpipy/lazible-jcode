@@ -1,0 +1,648 @@
+#!/usr/bin/env bash
+# install : orchestrator: clone/fetch patched-jcode → rebase → build → install binary → wire config
+#
+# Usage:
+#   ./scripts/install                       # auto install (default)
+#   ./scripts/install --dry-run             # print what would happen, no side effects
+#   ./scripts/install --force               # allow overwriting existing binary, redirect wrong origin
+#   ./scripts/install --no-preflight        # skip dep check (for CI)
+#   ./scripts/install --help                # show help
+#
+# Environment variables:
+#   JCODE_BUILD=release|debug      # default release; debug skips optimizations
+#   JCODE_NO_PUSH=1                # skip auto push of feat/patches (default pushes; no --force)
+#   JCODE_SOURCE_DIR=...           # override where the fork clone lives (default $HOME/Project/patched-jcode)
+#
+# Workflow (runs every install):
+#   1. Pre-flight: check deps, path conflicts
+#   2. Source: clone fork if missing (default → $JCODE_SOURCE_DIR); symlink patched-jcode → that dir
+#   3. Branch: checkout feat/patches (create from fork default branch if missing)
+#      baseline auto-detected: symbolic-ref HEAD → origin/main → origin/master
+#   4. Rebase: git rebase <baseline> (runs every install; conflict = exit 4)
+#   5. Build: cargo build --release --bin jcode
+#   6. Install binary: ~/.local/bin/jcode (back up existing)
+#   7. Wire config: config.toml + use-profile + sync-skills + install-shell-env
+#                  + jcode-audit-log
+#   8. Verify: 7 checks (binary callable / binary matches source /
+#                  origin is vanpipy fork / config not symlink /
+#                  autonomous profile / skills / shell env)
+#   9. Write state.json + print summary
+#
+# Exit codes:
+#   0  success
+#   1  preflight failed
+#   2  source dir origin mismatch (unless --force)
+#   3  working tree dirty (must commit before install)
+#   4  rebase conflict
+#   5  cargo build failed
+#   6  verify failed
+#
+# Design constraints:
+#   - install **does not commit**: user must commit patches in
+#     $JCODE_SOURCE_DIR (default ~/Project/patched-jcode) manually before running.
+#     Dirty working tree → exit 3
+#   - Every install rebases: user's patches are always replayed on the latest origin/main
+#   - ~/Project/jcode (existing upstream clone) is never touched
+#   - ~/.jcode/config.toml must not be a symlink (exit 6)
+#   - The repo has a `patched-jcode/` symlink at its root pointing at the local
+#     fork clone, so every script that needs the source tree just uses
+#     ${REPO}/patched-jcode rather than a hardcoded absolute path.
+
+set -euo pipefail
+
+# ============================================================================
+# Constants
+# ============================================================================
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Canonical source location: a `patched-jcode` symlink at the repo root points
+# at the local fork clone (default: $HOME/Project/patched-jcode). The symlink
+# makes the repo self-contained : every script that needs the source tree can
+# just use ${REPO}/patched-jcode without hardcoding an absolute path.
+#
+# Override JCODE_SOURCE_DIR to point at a non-default location (e.g. an
+# existing clone you want to keep at a different path); install will then
+# create or refresh the patched-jcode symlink to match.
+JCODE_SOURCE_DIR="${JCODE_SOURCE_DIR:-$HOME/Project/patched-jcode}"
+SOURCE_LINK="$REPO/patched-jcode"
+SOURCE_DIR="$REPO/patched-jcode"   # canonical path used by all phases
+FORK_URL="https://github.com/vanpipy/jcode.git"
+UPSTREAM_URL="https://github.com/1jehuang/jcode.git"
+BRANCH="feat/patches"
+BASELINE_REF="auto-detect (origin/main or origin/master)"   # placeholder; phase_branch overwrites
+BIN_DST="$HOME/.local/bin/jcode"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lazible-jcode"
+STATE_FILE="$STATE_DIR/state.json"
+JCODE_CONFIG="$HOME/.jcode/config.toml"
+BUILD_LOG="/tmp/lazible-build.log"
+REBASE_LOG="/tmp/lazible-rebase.log"
+
+# Ensure the patched-jcode symlink points at JCODE_SOURCE_DIR. If the target
+# already exists as a real directory, leave it alone (legacy layout). If it's a
+# broken or stale symlink, recreate it.
+sync_source_link() {
+    if [[ -d "$JCODE_SOURCE_DIR" && ! -L "$JCODE_SOURCE_DIR" ]]; then
+        # real directory at JCODE_SOURCE_DIR : wire symlink to it
+        if [[ ! -e "$SOURCE_LINK" ]]; then
+            ln -s "$JCODE_SOURCE_DIR" "$SOURCE_LINK"
+            log "linked $SOURCE_LINK -> $JCODE_SOURCE_DIR"
+        elif [[ -L "$SOURCE_LINK" ]] && [[ "$(readlink "$SOURCE_LINK")" != "$JCODE_SOURCE_DIR" ]]; then
+            ln -sfn "$JCODE_SOURCE_DIR" "$SOURCE_LINK"
+            log "re-linked $SOURCE_LINK -> $JCODE_SOURCE_DIR"
+        fi
+    elif [[ ! -e "$JCODE_SOURCE_DIR" && ! -e "$SOURCE_LINK" ]]; then
+        # neither exists yet : create the parent dir and let phase_source clone
+        # into JCODE_SOURCE_DIR; then wire the symlink.
+        mkdir -p "$(dirname "$JCODE_SOURCE_DIR")"
+    fi
+}
+
+# Baseline detection: query the fork's default branch (auto-detect because
+# the user said "main" but vanpipy/jcode.git actually uses "master").
+# Falls back through: detected default → origin/main → origin/master → error.
+detect_baseline_ref() {
+    local ref
+    # 1. symbolic-ref from origin's HEAD (set after first fetch).
+    #    Must verify the target exists : sometimes HEAD points at a commit
+    #    that was deleted by a force-push.
+    ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || true
+    if [[ -n "$ref" ]] && git show-ref --verify --quiet "$ref"; then
+        echo "$ref"; return 0
+    fi
+
+    # 2. origin/main (GitHub's newer default)
+    git show-ref --verify --quiet refs/remotes/origin/main && { echo "origin/main"; return 0; }
+
+    # 3. origin/master (older default, what vanpipy/jcode currently uses)
+    git show-ref --verify --quiet refs/remotes/origin/master && { echo "origin/master"; return 0; }
+
+    return 1
+}
+
+# ============================================================================
+# Args
+# ============================================================================
+
+dry_run=0
+force=0
+skip_preflight=0
+
+usage() {
+    sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run)      dry_run=1; shift ;;
+        --force)        force=1; shift ;;
+        --no-preflight) skip_preflight=1; shift ;;
+        -h|--help)      usage ;;
+        *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+log()  { echo "[install] $*"; }
+warn() { echo "[install] WARN: $*" >&2; }
+err()  { echo "[install] ERR: $*" >&2; }
+
+run() {
+    if [[ $dry_run -eq 1 ]]; then
+        echo "  would run: $*"
+    else
+        "$@"
+    fi
+}
+
+section() {
+    echo ""
+    echo "=== $* ==="
+}
+
+# ============================================================================
+# Phase 1: Pre-flight
+# ============================================================================
+
+phase_preflight() {
+    section "phase 1: preflight"
+
+    local missing=()
+
+    command -v bash     >/dev/null || missing+=("bash")
+    command -v python3  >/dev/null || missing+=("python3")
+    command -v git      >/dev/null || missing+=("git")
+    command -v cargo    >/dev/null || missing+=("cargo (install rustup)")
+    command -v rustc    >/dev/null || missing+=("rustc")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "missing deps: ${missing[*]}"
+        exit 1
+    fi
+
+    local py_version
+    py_version=$(python3 -c 'import sys; print(sys.version_info[:2])' | tr -d '()')
+    log "python3 $py_version, cargo $(cargo --version | awk '{print $2}'), git $(git --version | awk '{print $3}')"
+
+    # Path writability
+    for d in "$HOME/.local/bin" "$(dirname "$STATE_DIR")" "$HOME/.jcode" "$(dirname "$SOURCE_DIR")"; do
+        if [[ ! -d "$d" ]]; then
+            run mkdir -p "$d"
+        fi
+        [[ -w "$d" ]] || { err "not writable: $d"; exit 1; }
+    done
+    run mkdir -p "$STATE_DIR"
+
+    # config.toml must not be a symlink (prevents overwriting the repo base)
+    if [[ -L "$JCODE_CONFIG" ]]; then
+        err "$JCODE_CONFIG is a symlink → $(readlink "$JCODE_CONFIG")"
+        err "scripts refuse to overwrite. See notes/symlink-incident.md"
+        exit 1
+    fi
+
+    log "preflight ok"
+}
+
+# ============================================================================
+# Phase 2: Source setup (clone or fetch)
+# ============================================================================
+
+phase_source() {
+    section "phase 2: source"
+
+    sync_source_link
+
+    # Always operate on the actual clone (resolving through the symlink), not
+    # the symlink path itself. Cloning into the symlink would nest a new clone
+    # inside the existing target.
+    local real_source
+    real_source="$(cd "$JCODE_SOURCE_DIR" 2>/dev/null && pwd || true)"
+
+    if [[ -z "$real_source" || ! -d "$real_source/.git" ]]; then
+        log "cloning $FORK_URL → $JCODE_SOURCE_DIR"
+        run git clone --origin origin "$FORK_URL" "$JCODE_SOURCE_DIR"
+        if [[ $dry_run -eq 1 ]]; then
+            # dry-run: source dir doesn't exist, can't cd into it. All later phases are no-ops.
+            log "(dry-run: skipping phases 3-9 since source dir not materialized)"
+            echo ""
+            echo "dry-run complete (no clone performed). re-run without --dry-run to actually install."
+            exit 0
+        fi
+        sync_source_link
+        real_source="$(cd "$JCODE_SOURCE_DIR" && pwd)"
+        cd "$real_source"
+        run git remote add upstream "$UPSTREAM_URL"
+    else
+        cd "$real_source"
+
+        local current
+        current=$(git remote get-url origin 2>/dev/null || echo "")
+        if [[ "$current" != "$FORK_URL" ]]; then
+            if [[ $force -eq 1 ]]; then
+                warn "redirecting origin: $current → $FORK_URL"
+                run git remote set-url origin "$FORK_URL"
+            else
+                err "origin = $current, expected $FORK_URL"
+                err "use --force to redirect"
+                exit 2
+            fi
+        fi
+
+        if ! git remote get-url upstream >/dev/null 2>&1; then
+            run git remote add upstream "$UPSTREAM_URL"
+        fi
+    fi
+
+    log "fetching all remotes"
+    run git fetch --all --prune --tags
+}
+
+# ============================================================================
+# Phase 3: Branch setup
+# ============================================================================
+
+phase_branch() {
+    section "phase 3: branch ($BRANCH)"
+
+    if [[ $dry_run -eq 0 ]]; then
+        # Detect baseline ref (runtime)
+        if ! BASELINE_REF=$(detect_baseline_ref); then
+            err "could not determine baseline ref (no origin/main or origin/master)"
+            err "is $FORK_URL fetchable? run 'git -C $SOURCE_DIR fetch origin'"
+            exit 2
+        fi
+    else
+        # dry-run: fetch didn't actually happen; assume master (vanpipy's current default)
+        BASELINE_REF="origin/master"
+    fi
+
+    if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        log "checking out existing $BRANCH"
+        run git checkout "$BRANCH"
+
+        if [[ $dry_run -eq 0 ]]; then
+            # git diff --quiet only checks tracked files; untracked files must be queried separately via ls-files
+            local untracked
+            untracked=$(git ls-files --others --exclude-standard)
+            if ! git diff --quiet HEAD 2>/dev/null \
+               || ! git diff --cached --quiet HEAD 2>/dev/null \
+               || [[ -n "$untracked" ]]; then
+                err "working tree is dirty. Commit your patches first, then re-run install."
+                git status --short
+                exit 3
+            fi
+        fi
+    else
+        log "creating $BRANCH from $BASELINE_REF"
+        run git checkout -B "$BRANCH" "$BASELINE_REF"
+    fi
+
+    log "on branch: $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
+}
+
+# ============================================================================
+# Phase 4: Rebase (every install)
+# ============================================================================
+
+phase_rebase() {
+    section "phase 4: rebase onto $BASELINE_REF"
+
+    local before_sha
+    before_sha=$(git rev-parse HEAD)
+
+    log "git rebase $BASELINE_REF"
+    if [[ $dry_run -eq 1 ]]; then
+        echo "  would run: git rebase $BASELINE_REF"
+        return 0
+    fi
+
+    if ! git rebase "$BASELINE_REF" 2>&1 | tee "$REBASE_LOG"; then
+        warn "rebase conflict detected"
+        git rebase --abort 2>/dev/null || true
+        echo ""
+        err "rebase aborted. Resolve manually:"
+        echo ""
+        echo "  cd $SOURCE_DIR"
+        echo ""
+        echo "  # option 1: resolve conflicts"
+        echo "  #   (edit conflicted files)"
+        echo "  git add <resolved-files>"
+        echo "  git rebase --continue"
+        echo ""
+        echo "  # option 2: drop all patches and start from current main"
+        echo "  git rebase --abort"
+        echo "  git reset --hard $BASELINE_REF"
+        echo ""
+        echo "  # option 3: skip current patch"
+        echo "  git rebase --skip"
+        echo ""
+        echo "After resolving, re-run: ./scripts/install"
+        echo ""
+        echo "rebase log: $REBASE_LOG"
+        exit 4
+    fi
+
+    local after_sha
+    after_sha=$(git rev-parse HEAD)
+
+    if [[ "$before_sha" != "$after_sha" ]]; then
+        log "rebase moved: ${before_sha:0:7} → ${after_sha:0:7}"
+    else
+        log "rebase no-op (already up-to-date)"
+    fi
+
+    # Push the rebased branch to origin.
+    #
+    # Notes:
+    #   - We omit --ff-only: that flag is NOT a valid 'git push' option
+    #     (it only exists on 'git merge'). 'git push' defaults to refusing
+    #     non-fast-forward updates already, so dropping the bogus flag
+    #     keeps the desired safety.
+    #   - First push (origin/$BRANCH missing): creates the branch.
+    #   - Subsequent pushes: refuses non-ff unless --force is given (and
+    #     we never pass --force).
+    #   - JCODE_NO_PUSH=1 skips this entirely.
+    if [[ "${JCODE_NO_PUSH:-0}" != "1" ]]; then
+        log "pushing HEAD:refs/heads/$BRANCH to origin (no --force)"
+        run git push origin "HEAD:refs/heads/$BRANCH" || warn "push failed (non-ff? manual push needed)"
+    fi
+}
+
+# ============================================================================
+# Phase 5: Build
+# ============================================================================
+
+phase_build() {
+    section "phase 5: build"
+
+    local profile_flag="--release"
+    if [[ "${JCODE_BUILD:-release}" == "debug" ]]; then
+        profile_flag=""
+    fi
+
+    local version_str
+    version_str="$(git describe --tags --always --dirty)-vanpipy.$(date +%Y%m%d)"
+    export JCODE_BUILD_VERSION="$version_str"
+    log "JCODE_BUILD_VERSION=$version_str"
+
+    # Force build-meta/build.rs to re-run by passing the current short SHA and
+    # commit date as env vars. Without this, cargo's incremental cache skips
+    # build-meta after the first build (it does not declare .git/HEAD as a
+    # rerun-if-changed input) and the embedded JCODE_GIT_HASH stays stale,
+    # so jcode --version reports the original HEAD rather than the patches we
+    # just added on top of it.
+    export JCODE_BUILD_GIT_HASH="$(git rev-parse --short HEAD)"
+    export JCODE_BUILD_GIT_DATE="$(git log -1 --format=%ci)"
+    log "JCODE_BUILD_GIT_HASH=$JCODE_BUILD_GIT_HASH"
+    log "JCODE_BUILD_GIT_DATE=$JCODE_BUILD_GIT_DATE"
+
+    log "cargo build $profile_flag --bin jcode"
+    if [[ $dry_run -eq 1 ]]; then
+        echo "  would run: cargo build $profile_flag --bin jcode"
+        return 0
+    fi
+
+    local bin_src="$SOURCE_DIR/target/release/jcode"
+    [[ "${JCODE_BUILD:-release}" == "debug" ]] && bin_src="$SOURCE_DIR/target/debug/jcode"
+
+    if ! cargo build $profile_flag --bin jcode 2>&1 | tee "$BUILD_LOG"; then
+        err "cargo build failed"
+        echo ""
+        echo "last 50 lines of build log:"
+        tail -50 "$BUILD_LOG"
+        exit 5
+    fi
+
+    log "build ok: $bin_src"
+}
+
+# ============================================================================
+# Phase 6: Install binary
+# ============================================================================
+
+phase_install_binary() {
+    section "phase 6: install binary"
+
+    local bin_src="$SOURCE_DIR/target/release/jcode"
+    [[ "${JCODE_BUILD:-release}" == "debug" ]] && bin_src="$SOURCE_DIR/target/debug/jcode"
+
+    if [[ $dry_run -eq 1 ]]; then
+        echo "  would install: $bin_src → $BIN_DST"
+        return 0
+    fi
+
+    [[ -f "$bin_src" ]] || { err "binary not found: $bin_src"; exit 5; }
+
+    # Back up existing
+    if [[ -e "$BIN_DST" && ! -L "$BIN_DST" ]]; then
+        local backup
+        backup="$BIN_DST.bak.$(date +%Y%m%d%H%M%S)"
+        log "backing up existing binary: $BIN_DST → $backup"
+        mv "$BIN_DST" "$backup"
+    fi
+
+    install -m 0755 "$bin_src" "$BIN_DST"
+    log "installed: $BIN_DST"
+
+    # PATH check
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) warn "$HOME/.local/bin not in PATH : add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+    esac
+}
+
+# ============================================================================
+# Phase 7: Wire up config
+# ============================================================================
+
+phase_wire_config() {
+    section "phase 7: wire config"
+
+    run cp "$REPO/config/config.toml" "$JCODE_CONFIG"
+    log "config copied: $REPO/config/config.toml → $JCODE_CONFIG"
+
+    run "$REPO/scripts/use-profile"
+    log "profile applied: autonomous"
+
+    run "$REPO/scripts/sync-skills" --to-home --apply
+    log "skills synced to ~/.jcode/skills/"
+
+    run "$REPO/scripts/install-shell-env" --apply
+    log "shell env installed (JCODE_OPENROUTER_MODEL)"
+
+    run cp "$REPO/scripts/jcode-audit-log" "$HOME/.local/bin/jcode-audit-log"
+    run chmod +x "$HOME/.local/bin/jcode-audit-log"
+    log "audit log hook installed: ~/.local/bin/jcode-audit-log"
+}
+
+# ============================================================================
+# Phase 8: Verify
+# ============================================================================
+
+phase_verify() {
+    section "phase 8: verify"
+
+    if [[ $dry_run -eq 1 ]]; then
+        echo "  would run 7 checks (skipped in --dry-run)"
+        return 0
+    fi
+
+    local ok=0 fail=0
+
+    check() {
+        if [[ $? -eq 0 ]]; then
+            ok=$((ok+1))
+            echo "  ✓ $1"
+        else
+            fail=$((fail+1))
+            echo "  ✗ $1"
+        fi
+    }
+
+    # Verify checks MUST survive individual failures (we want to print the
+    # full report, not abort on the first ✗). Disable -e / pipefail around
+    # this block; restore on exit.
+    local saved_opts
+    saved_opts="$-"
+    set +e +o pipefail
+
+    $BIN_DST --version >/dev/null 2>&1
+    check "jcode binary callable"
+
+    # Build provenance: installed binary must be byte-identical to the source
+    # build artifact. Combined with `git remote get-url origin | grep vanpipy`
+    # this proves the running binary came from the user's fork at HEAD.
+    local bin_src
+    if [[ "${JCODE_BUILD:-release}" == "debug" ]]; then
+        bin_src="$SOURCE_DIR/target/debug/jcode"
+    else
+        bin_src="$SOURCE_DIR/target/release/jcode"
+    fi
+    if [[ -f "$bin_src" ]] && diff -q "$BIN_DST" "$bin_src" >/dev/null 2>&1; then
+        ok=$((ok+1)); echo "  ✓ binary matches $bin_src"
+    else
+        fail=$((fail+1)); echo "  ✗ binary matches $bin_src"
+    fi
+
+    (git -C "$SOURCE_DIR" remote get-url origin 2>/dev/null | grep -q "vanpipy")
+    check "source origin is vanpipy fork"
+
+    [[ ! -L "$JCODE_CONFIG" ]]
+    check "$JCODE_CONFIG is regular file"
+
+    grep -q "proactive_work = true" "$JCODE_CONFIG"
+    check "autonomous profile active"
+
+    [[ -d "$HOME/.jcode/skills/optimization" ]]
+    check "skills synced (optimization present)"
+
+    grep -q "JCODE_OPENROUTER_MODEL" "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null
+    check "shell env installed (JCODE_OPENROUTER_MODEL)"
+
+    # Restore the caller's shell options (e.g. errexit / pipefail).
+    set -${saved_opts}
+
+    echo ""
+    echo "verify: $ok passed, $fail failed"
+
+    [[ $fail -eq 0 ]] || exit 6
+}
+
+# ============================================================================
+# Phase 9: State + summary
+# ============================================================================
+
+phase_finalize() {
+    section "phase 9: state + summary"
+
+    if [[ $dry_run -eq 1 ]]; then
+        echo "  would write: $STATE_FILE"
+        echo ""
+        echo "dry-run complete. re-run without --dry-run to actually install."
+        exit 0
+    fi
+
+    local commit_sha commit_short branch_name
+    commit_sha=$(git -C "$SOURCE_DIR" rev-parse HEAD)
+    commit_short=$(git -C "$SOURCE_DIR" rev-parse --short HEAD)
+    branch_name=$(git -C "$SOURCE_DIR" rev-parse --abbrev-ref HEAD)
+
+    mkdir -p "$STATE_DIR"
+
+    python3 - "$STATE_FILE" "$SOURCE_DIR" "$FORK_URL" "$UPSTREAM_URL" \
+                  "$branch_name" "$commit_sha" "$commit_short" "$BIN_DST" \
+                  "${JCODE_BUILD:-release}" <<'PY'
+import json, sys, datetime
+path, src, fork, upstream, branch, sha, short, dst, profile = sys.argv[1:10]
+data = {
+    "source_dir": src,
+    "source_remote_origin": fork,
+    "source_remote_upstream": upstream,
+    "source_branch": branch,
+    "source_commit": sha,
+    "source_short": short,
+    "binary_path": dst,
+    "build_profile": profile,
+    "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
+}
+with open(path, "w") as f:
+    json.dump(data, f, indent=2, sort_keys=True)
+    f.write("\n")
+PY
+    log "state written: $STATE_FILE"
+
+    echo ""
+    echo "✓ install complete"
+    echo ""
+    echo "  source:     $SOURCE_DIR"
+    echo "  branch:     $branch_name"
+    echo "  commit:     $commit_short ($commit_sha)"
+    echo "  baseline:   $BASELINE_REF"
+    echo "  binary:     $BIN_DST"
+    echo "  config:     $JCODE_CONFIG (autonomous profile)"
+    echo "  state:      $STATE_FILE"
+    echo ""
+    echo "Next steps:"
+    echo "  1. New shell, or:  source ~/.zshrc"
+    echo "  2. Smoke test:     $BIN_DST --version"
+    echo "  3. Start serve:    nohup $BIN_DST serve &  # or systemd (see scripts/README.md)"
+    echo "  4. Watch cycles:   tail -f ~/.jcode/logs/ambient.log"
+    echo ""
+    echo "To update later (after more commits):"
+    echo "  cd $SOURCE_DIR"
+    echo "  # commit your new patches first"
+    echo "  ./scripts/install      # re-runs rebase + rebuild + reinstall"
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+main() {
+    echo "lazible-jcode installer"
+    echo ""
+    echo "  source:   $SOURCE_DIR (will be created if missing)"
+    echo "  branch:   $BRANCH (rebased onto $BASELINE_REF)"
+    echo "  binary:   $BIN_DST"
+    echo "  state:    $STATE_FILE"
+    echo ""
+    [[ $dry_run -eq 1 ]] && echo "  mode: DRY-RUN (no side effects)"
+    [[ $force -eq 1 ]]   && echo "  mode: FORCE (allow overwrite / redirect)"
+    echo ""
+
+    [[ $skip_preflight -eq 0 ]] && phase_preflight
+    phase_source
+    phase_branch
+    phase_rebase
+    phase_build
+    phase_install_binary
+    phase_wire_config
+    phase_verify
+    phase_finalize
+}
+
+main

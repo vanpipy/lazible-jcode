@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# sync-skills : bidirectional sync between config/skills/ and either
+# ~/.jcode/skills/ or a project's .jcode/skills/. Default is dry-run.
+#
+# Usage:
+#   ./scripts/sync-skills --to-home                  # config/skills/* → ~/.jcode/skills/
+#   ./scripts/sync-skills --from-home                # ~/.jcode/skills/* → config/skills/
+#   ./scripts/sync-skills --to-project <dir>         # config/skills/* → <dir>/.jcode/skills/
+#   ./scripts/sync-skills --from-project <dir>       # <dir>/.jcode/skills/* → config/skills/
+#
+# Options:
+#   --apply        actually write (default: dry-run / diff only)
+#   --overwrite    allow overwriting skills with the same name
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+src_dir="${repo}/config/skills"
+
+apply=0
+overwrite=0
+direction=""
+target_dir=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --to-home)      direction="to-home"; shift ;;
+        --from-home)    direction="from-home"; shift ;;
+        --to-project)   direction="to-project"; target_dir="$2"; shift 2 ;;
+        --from-project) direction="from-project"; target_dir="$2"; shift 2 ;;
+        --apply)        apply=1; shift ;;
+        --overwrite)    overwrite=1; shift ;;
+        -h|--help)
+            sed -n '2,15p' "$0" | sed 's/^# *//'
+            exit 0
+            ;;
+        *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+[[ -n "$direction" ]] || { echo "specify one of --to-home / --from-home / --to-project / --from-project" >&2; exit 2; }
+
+case "$direction" in
+    to-home)   from="$src_dir"; to="${JCODE_HOME:-$HOME/.jcode}/skills" ;;
+    from-home) from="${JCODE_HOME:-$HOME/.jcode}/skills"; to="$src_dir" ;;
+    to-project)   from="$src_dir"; to="${target_dir%/}/.jcode/skills" ;;
+    from-project) from="${target_dir%/}/.jcode/skills"; to="$src_dir" ;;
+esac
+
+if [[ ! -d "$from" ]]; then
+    echo "source dir not found: $from" >&2
+    exit 1
+fi
+
+echo "from: $from"
+echo "to:   $to"
+
+mkdir -p "$to"
+shopt -s nullglob
+for src_skill in "$from"/*; do
+    name="$(basename "$src_skill")"
+    [[ -f "$src_skill/SKILL.md" ]] || continue
+    dest="$to/$name"
+    if [[ -d "$dest" ]] && [[ $overwrite -eq 0 ]]; then
+        echo "skip (exists, no --overwrite): $name"
+        continue
+    fi
+    if [[ $apply -eq 1 ]]; then
+        mkdir -p "$dest"
+        cp -r "$src_skill/." "$dest/"
+        echo "✓ copied $name"
+    else
+        echo "would copy $name (--apply to actually do it)"
+    fi
+done
