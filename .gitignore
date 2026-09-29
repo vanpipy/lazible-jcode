@@ -12,6 +12,7 @@ config/mcp.json
 !config/skills/
 !config/notes/
 !config/bin/
+!config/share/
 !config/mcp.example.json
 
 # profiles : local drafts must never reach git

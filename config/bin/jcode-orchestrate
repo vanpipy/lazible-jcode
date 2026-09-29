@@ -1,0 +1,607 @@
+#!/usr/bin/env python3
+# jcode-orchestrate : drive the Autonomous Coding Control Loop (new.md §4)
+#
+# One cycle of the orchestrator state machine:
+#   1. Find active goals for the current project (or --cwd).
+#   2. For each goal, advance one step:
+#       - if pending -> spawn coder (label "coder:<m>:<s>")
+#       - if in_progress -> check coder; if done, run verify_cmd; if pass,
+#         mark step done; if fail, Diagnose -> Repair (retry_count++)
+#   3. After all steps in a milestone are done -> spawn reviewer
+#      (label "reviewer:<m>"), parse verdict, mark milestone completed
+#      or reset targeted steps for the Repair loop.
+#   4. Retry budget enforcement (step.max_retries, milestone.review_max_retries)
+#      triggers escalated + notify when exceeded.
+#
+# Usage:
+#   jcode-orchestrate [--once] [--dry-run] [--cwd DIR] [--json]
+#
+# Design constraints:
+#   - Pure single-cycle mode (--once). Daemon loop is owned by ambient
+#     scheduler (long-task-discipline skill) calling --once repeatedly.
+#   - All spawn / verify / git operations are side effects gated by --dry-run.
+#   - No PR / merge / push — safety boundary §13 in new.md.
+#
+# Environment:
+#   JCODE_GOAL_HOME      override goal home (default: ~/.jcode/goals)
+#   JCODE_ORCHESTRATE_HOME  override share dir (default: ~/.local/share/jcode-orchestrate)
+#   JCODE_ORCHESTRATE_SWARM_CMD  override swarm CLI (default: swarm)
+#   JCODE_ORCHESTRATE_VERIFY_TIMEOUT  seconds (default: 300)
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import Callable
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+def goal_home() -> Path:
+    return Path(os.environ.get("JCODE_GOAL_HOME", os.path.expanduser("~/.jcode/goals")))
+
+
+def share_home() -> Path:
+    """Where prompt templates and runtime state live."""
+    return Path(os.environ.get("JCODE_ORCHESTRATE_HOME",
+                               os.path.expanduser("~/.local/share/jcode-orchestrate")))
+
+
+def swarm_cmd() -> str:
+    return os.environ.get("JCODE_ORCHESTRATE_SWARM_CMD", "swarm")
+
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Prompt rendering
+# ---------------------------------------------------------------------------
+
+def render_prompt(name: str, ctx: dict) -> str:
+    """Render a prompt template from share_home()/prompts/<name>.md."""
+    path = share_home() / "prompts" / f"{name}.md"
+    if not path.is_file():
+        # Fallback to repo config/share (development case)
+        repo_share = Path(__file__).resolve().parent.parent / "share" / "jcode-orchestrate" / "prompts" / f"{name}.md"
+        path = repo_share
+    text = path.read_text()
+    # Render {var} placeholders. Skip placeholders whose value is falsy/None
+    # by leaving them as the literal placeholder (visible to the LLM as
+    # a hint that nothing was attached).
+    for key, val in ctx.items():
+        if val is None or val == "":
+            placeholder = "{" + key + "}"
+        else:
+            placeholder = "{" + key + "}"
+            text = text.replace(placeholder, str(val))
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Side effects (mockable for tests)
+# ---------------------------------------------------------------------------
+
+def spawn_worker(label: str, initial_message: str, working_dir: str | None = None,
+                 effort: str = "low", headless: bool = True) -> str:
+    """Spawn a swarm worker. Returns new session_id. Side effect."""
+    cmd = [swarm_cmd(), "spawn",
+           "--label", label,
+           "--initial-message", initial_message,
+           "--effort", effort,
+           "--spawn-mode", "headless" if headless else "auto"]
+    if working_dir:
+        cmd += ["--working-dir", working_dir]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
+    if out.returncode != 0:
+        raise RuntimeError(f"swarm spawn failed (rc={out.returncode}): {out.stderr.strip()}")
+    # Parse session_id from output. swarm spawn returns JSON-ish; fall back to stdout last line.
+    try:
+        data = json.loads(out.stdout)
+        return data.get("new_session_id") or data.get("session_id") or out.stdout.strip().splitlines()[-1]
+    except json.JSONDecodeError:
+        return out.stdout.strip().splitlines()[-1]
+
+
+def swarm_status(session_id: str) -> dict:
+    """Query swarm status for a worker. Returns dict with at least
+    status (string), latest_completion_report (string|None), running (bool)."""
+    cmd = [swarm_cmd(), "status", "--session-id", session_id, "--json"]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
+    if out.returncode != 0:
+        raise RuntimeError(f"swarm status failed (rc={out.returncode}): {out.stderr.strip()}")
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return {"status": "unknown", "latest_completion_report": None}
+
+
+def run_shell(cmd: str, cwd: str | None = None, timeout: int = 300) -> tuple[int, str, str]:
+    """Run a shell command. Returns (exit_code, stdout, stderr)."""
+    if timeout <= 0:
+        timeout = int(os.environ.get("JCODE_ORCHESTRATE_VERIFY_TIMEOUT", "300"))
+    try:
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                              cwd=cwd, check=False, timeout=timeout)
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", f"timeout after {timeout}s"
+
+
+def git_head_sha(cwd: str | None = None) -> str | None:
+    try:
+        out = subprocess.run(["git", "-C", cwd or os.getcwd(), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, check=False, timeout=10)
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+def git_diff(from_sha: str, cwd: str | None = None, max_chars: int = 50000) -> str:
+    if not from_sha:
+        return ""
+    try:
+        out = subprocess.run(["git", "-C", cwd or os.getcwd(), "diff", from_sha+"..HEAD"],
+                             capture_output=True, text=True, check=False, timeout=30)
+        if out.returncode != 0:
+            return ""
+        diff = out.stdout
+        if len(diff) > max_chars:
+            diff = diff[:max_chars] + f"\n\n... (truncated at {max_chars} chars)\n"
+        return diff
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def notify_human(message: str) -> None:
+    """Best-effort notification. ntfy/email/desktop — depends on config."""
+    # For v1: just print to stderr. ntfy/desktop integration is a future
+    # enhancement that requires reading ~/.jcode/config.toml.
+    print(f"[orchestrator] NOTIFY: {message}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Verdict parsing (from reviewer completion_report)
+# ---------------------------------------------------------------------------
+
+DEFAULT_VERDICT_FAIL = {
+    "verdict": "findings",
+    "findings": [],
+    "confidence": 0.0,
+    "reasoning": "parse failure: not JSON",
+}
+
+
+def parse_verdict(report_text: str | None) -> dict:
+    """Parse reviewer's JSON verdict from latest_completion_report.
+
+    Conservative default: parse failure -> verdict=findings, confidence=0
+    (orchestrator treats this as 'no usable review' -> triggers retry/escalate).
+    """
+    if not report_text:
+        return dict(DEFAULT_VERDICT_FAIL, reasoning="empty completion_report")
+    # Try to find JSON object in the text (reviewer may add prose around it).
+    text = report_text.strip()
+    # First try: whole string is JSON.
+    try:
+        return _validate_verdict(json.loads(text))
+    except json.JSONDecodeError:
+        pass
+    # Second try: find first {...} block.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return _validate_verdict(json.loads(text[start:end+1]))
+        except json.JSONDecodeError:
+            pass
+    return dict(DEFAULT_VERDICT_FAIL, reasoning=f"parse failure: {text[:80]!r}")
+
+
+def _validate_verdict(v: dict) -> dict:
+    label = v.get("verdict")
+    if label not in {"clean", "findings"}:
+        return dict(DEFAULT_VERDICT_FAIL, reasoning=f"unknown verdict {label!r}")
+    findings = v.get("findings") or []
+    if not isinstance(findings, list):
+        findings = []
+    confidence = v.get("confidence", 0.5)
+    try:
+        confidence = float(confidence)
+    except (TypeError, ValueError):
+        confidence = 0.5
+    return {
+        "verdict": label,
+        "findings": findings,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "reasoning": v.get("reasoning", ""),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Goal loading
+# ---------------------------------------------------------------------------
+
+def load_active_goals(cwd: str | None) -> list[tuple[Path, dict]]:
+    """Return list of (path, goal) tuples for active goals in the cwd's project."""
+    import hashlib
+    if not cwd:
+        cwd = os.getcwd()
+    try:
+        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, check=False, timeout=5)
+        if out.returncode == 0:
+            cwd = out.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    h = hashlib.sha256(cwd.encode()).hexdigest()[:16]
+    d = goal_home() / "projects" / h
+    if not d.is_dir():
+        return []
+    result = []
+    for fp in sorted(d.glob("*.json")):
+        try:
+            g = json.loads(fp.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if g.get("status") == "active":
+            result.append((fp, g))
+    # Priority + oldest first
+    prio_rank = {"high": 0, "medium": 1, "low": 2}
+    result.sort(key=lambda t: (prio_rank.get(t[1].get("priority", "medium"), 1),
+                                t[1].get("created_at", "")))
+    return result
+
+
+def save_goal(path: Path, data: dict) -> None:
+    data["updated_at"] = now_iso()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
+
+# ---------------------------------------------------------------------------
+# State machine — the core cycle
+# ---------------------------------------------------------------------------
+
+TERMINAL_LIFECYCLE = {"done", "completed", "stopped"}
+FAILURE_LIFECYCLE = {"failed", "crashed"}
+ACTIVE_LIFECYCLE = {"running", "running_stale", "queued", "ready", "spawned", "pending"}
+
+
+def advance_goal(goal_path: Path, goal: dict,
+                 spawn_fn: Callable = spawn_worker,
+                 status_fn: Callable = swarm_status,
+                 verify_fn: Callable = run_shell,
+                 git_head_fn: Callable = git_head_sha,
+                 git_diff_fn: Callable = git_diff,
+                 notify_fn: Callable = notify_human,
+                 dry_run: bool = False) -> list[dict]:
+    """Advance one goal's state machine. Returns list of actions taken.
+
+    Actions: {"type": "spawn_coder"|"spawn_reviewer"|"step_done"|"step_failed"|
+              "review_done"|"review_failed"|"milestone_completed"|"milestone_escalated"|
+              "goal_completed", ...details}
+    """
+    actions: list[dict] = []
+
+    for milestone in goal.get("milestones") or []:
+        mstatus = milestone.get("status", "pending")
+        if mstatus == "completed":
+            continue
+        if mstatus == "escalated":
+            actions.append({"type": "milestone_escalated", "milestone_id": milestone.get("id"),
+                            "title": milestone.get("title")})
+            continue
+
+        # Phase A: advance pending/in_progress steps
+        for step in milestone.get("steps") or []:
+            sstatus = step.get("status", "pending")
+            sid = step.get("id")
+
+            if sstatus == "done":
+                continue
+            if sstatus == "failed":
+                # Old failure state, retry path handled below in 'pending' branch
+                # (we treat failed == pending for retry purposes via retry_count)
+                pass
+
+            if sstatus in ("pending", "failed"):
+                # Capture start_sha on first transition to in_progress
+                if milestone.get("start_sha") is None:
+                    sha = git_head_fn()
+                    if sha:
+                        milestone["start_sha"] = sha
+                # Spawn coder (or fake it in dry-run so state still advances)
+                label = f"coder:{milestone.get('id')}:{sid}"
+                if dry_run:
+                    step["status"] = "in_progress"
+                    step["coder_session_id"] = f"DRYRUN-{sid}"
+                    step["coder_label"] = label
+                    step["last_error"] = None
+                    save_goal(goal_path, goal)
+                    actions.append({"type": "spawn_coder",
+                                    "milestone_id": milestone.get("id"),
+                                    "step_id": sid, "label": label,
+                                    "session_id": f"DRYRUN-{sid}",
+                                    "dry_run": True})
+                    return actions
+                prompt = render_prompt("coder", {
+                    "goal.title": goal.get("title", ""),
+                    "goal.description": goal.get("description", ""),
+                    "milestone.title": milestone.get("title", ""),
+                    "step.id": sid,
+                    "step.content": step.get("content", ""),
+                    "step.verify_cmd": step.get("verify_cmd") or "(none specified)",
+                    "attached_findings": (
+                        f"\n## Attached review findings (from previous reviewer)\n\n"
+                        f"{step.get('last_findings') or ''}\n"
+                        if step.get("last_findings") else ""
+                    ),
+                })
+                session_id = spawn_fn(label=label, initial_message=prompt)
+                step["status"] = "in_progress"
+                step["coder_session_id"] = session_id
+                step["coder_label"] = label
+                # Clear stale failure fields
+                step["last_error"] = None
+                save_goal(goal_path, goal)
+                actions.append({"type": "spawn_coder", "milestone_id": milestone.get("id"),
+                                "step_id": sid, "session_id": session_id, "label": label})
+                return actions
+
+            if sstatus == "in_progress":
+                session_id = step.get("coder_session_id")
+                if not session_id:
+                    actions.append({"type": "step_failed", "step_id": sid,
+                                    "reason": "in_progress without session_id; resetting"})
+                    step["status"] = "pending"
+                    save_goal(goal_path, goal)
+                    continue
+                status = status_fn(session_id)
+                life = status.get("status", "unknown")
+                if life in ACTIVE_LIFECYCLE:
+                    actions.append({"type": "step_running", "step_id": sid, "lifecycle": life})
+                    continue  # still working
+                if life in FAILURE_LIFECYCLE:
+                    step["retry_count"] = step.get("retry_count", 0) + 1
+                    step["last_error"] = (status.get("latest_completion_report") or "")[:2000]
+                    if step["retry_count"] >= step.get("max_retries", 3):
+                        step["status"] = "escalated"
+                        notify_fn(f"step {sid} escalated (retry_count={step['retry_count']})")
+                        actions.append({"type": "step_escalated", "step_id": sid})
+                    else:
+                        step["status"] = "pending"
+                        actions.append({"type": "step_failed", "step_id": sid,
+                                        "retry_count": step["retry_count"],
+                                        "max_retries": step.get("max_retries", 3)})
+                    save_goal(goal_path, goal)
+                    continue
+                # life in TERMINAL or unknown — treat as done; run verify_cmd
+                if step.get("verify_cmd"):
+                    rc, so, se = verify_fn(step["verify_cmd"])
+                    if rc != 0:
+                        step["retry_count"] = step.get("retry_count", 0) + 1
+                        step["last_error"] = f"verify_cmd exit={rc}\nstdout: {so[-500:]}\nstderr: {se[-500:]}"
+                        if step["retry_count"] >= step.get("max_retries", 3):
+                            step["status"] = "escalated"
+                            notify_fn(f"step {sid} escalated after verify_cmd failure (rc={rc})")
+                            actions.append({"type": "step_escalated", "step_id": sid})
+                        else:
+                            step["status"] = "pending"
+                            actions.append({"type": "step_failed", "step_id": sid,
+                                            "reason": f"verify_cmd rc={rc}",
+                                            "retry_count": step["retry_count"]})
+                        save_goal(goal_path, goal)
+                        continue
+                step["status"] = "done"
+                actions.append({"type": "step_done", "step_id": sid})
+                save_goal(goal_path, goal)
+                # Continue to next step in same milestone
+
+        # Phase B: milestone just completed (all steps done) -> review or close
+        if milestone.get("status") == "pending":
+            milestone["status"] = "in_progress"
+            save_goal(goal_path, goal)
+            actions.append({"type": "milestone_in_progress", "milestone_id": milestone.get("id")})
+            # fall through to next cycle to actually advance steps
+            return actions
+
+        if milestone.get("status") == "in_progress":
+            all_done = all(s.get("status") == "done" for s in milestone.get("steps") or [])
+            if not all_done:
+                continue  # more steps to run
+            # All steps done. Either review or close.
+            if not milestone.get("review_required", True):
+                milestone["status"] = "completed"
+                actions.append({"type": "milestone_completed",
+                                "milestone_id": milestone.get("id"),
+                                "review": "skipped"})
+                save_goal(goal_path, goal)
+                continue
+            # Spawn reviewer (or fake it in dry-run)
+            label = f"reviewer:{milestone.get('id')}"
+            if dry_run:
+                milestone["status"] = "review"
+                milestone["reviewer_session_id"] = f"DRYRUN-{milestone.get('id')}"
+                milestone["reviewer_label"] = label
+                save_goal(goal_path, goal)
+                actions.append({"type": "spawn_reviewer",
+                                "milestone_id": milestone.get("id"),
+                                "label": label,
+                                "session_id": f"DRYRUN-{milestone.get('id')}",
+                                "dry_run": True})
+                return actions
+            diff = git_diff_fn(milestone.get("start_sha") or "")
+            prompt = render_prompt("reviewer", {
+                "goal.title": goal.get("title", ""),
+                "goal.description": goal.get("description", ""),
+                "milestone.title": milestone.get("title", ""),
+                "milestone.review_criteria": ", ".join(milestone.get("review_criteria") or
+                                                       ["requirements", "diff", "tests", "security", "edge"]),
+                "diff": diff or "(no diff captured)",
+            })
+            session_id = spawn_fn(label=label, initial_message=prompt)
+            milestone["status"] = "review"
+            milestone["reviewer_session_id"] = session_id
+            milestone["reviewer_label"] = label
+            save_goal(goal_path, goal)
+            actions.append({"type": "spawn_reviewer", "milestone_id": milestone.get("id"),
+                            "session_id": session_id, "label": label})
+            return actions
+
+        if milestone.get("status") == "review":
+            session_id = milestone.get("reviewer_session_id")
+            if not session_id:
+                actions.append({"type": "review_failed",
+                                "milestone_id": milestone.get("id"),
+                                "reason": "review status without session_id"})
+                milestone["status"] = "pending"  # reopen
+                save_goal(goal_path, goal)
+                continue
+            status = status_fn(session_id)
+            life = status.get("status", "unknown")
+            if life in ACTIVE_LIFECYCLE:
+                actions.append({"type": "review_running", "milestone_id": milestone.get("id"),
+                                "lifecycle": life})
+                continue
+            # Reviewer finished (success/failure). Parse verdict regardless.
+            verdict = parse_verdict(status.get("latest_completion_report"))
+            milestone["review_verdict"] = verdict["verdict"]
+            if verdict["verdict"] == "clean" or life in FAILURE_LIFECYCLE and verdict["confidence"] >= 0.9:
+                milestone["status"] = "completed"
+                actions.append({"type": "review_done", "milestone_id": milestone.get("id"),
+                                "verdict": verdict["verdict"], "confidence": verdict["confidence"]})
+                save_goal(goal_path, goal)
+                continue
+            # findings — handle Repair loop
+            milestone["review_retry_count"] = milestone.get("review_retry_count", 0) + 1
+            milestone["review_findings"] = verdict["findings"]
+            if milestone["review_retry_count"] >= milestone.get("review_max_retries", 3):
+                milestone["status"] = "escalated"
+                notify_fn(f"milestone {milestone.get('id')} review loop exhausted "
+                            f"(retry_count={milestone['review_retry_count']})")
+                actions.append({"type": "milestone_escalated",
+                                "milestone_id": milestone.get("id"),
+                                "reason": "review_retry_exhausted",
+                                "findings": verdict["findings"][:5]})
+                save_goal(goal_path, goal)
+                continue
+            # Targeted reset: each finding -> step.status = pending + attach
+            for finding in verdict["findings"]:
+                target_step = finding.get("step_id")
+                if not target_step:
+                    # General finding -> reset whole milestone
+                    for step in milestone.get("steps") or []:
+                        step["status"] = "pending"
+                        step["last_findings"] = finding.get("issue", "")
+                    continue
+                for step in milestone.get("steps") or []:
+                    if step.get("id") == target_step:
+                        step["status"] = "pending"
+                        step["last_findings"] = (
+                            f"[{finding.get('severity','minor')}] "
+                            f"{finding.get('location','')}: {finding.get('issue','')}"
+                        )
+                        # Also reset retry counters so reviewer feedback starts fresh
+                        step["retry_count"] = 0
+            milestone["status"] = "in_progress"  # reopen
+            save_goal(goal_path, goal)
+            actions.append({"type": "review_failed", "milestone_id": milestone.get("id"),
+                            "findings_count": len(verdict["findings"]),
+                            "retry_count": milestone["review_retry_count"],
+                            "max_retries": milestone.get("review_max_retries", 3)})
+
+    # Phase D: goal completion check
+    if all(m.get("status") == "completed" for m in goal.get("milestones") or []):
+        if goal.get("milestones"):
+            goal["status"] = "complete"
+            save_goal(goal_path, goal)
+            actions.append({"type": "goal_completed", "goal_id": goal.get("id")})
+
+    return actions
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def cmd_once(args) -> int:
+    cwd = args.cwd
+    goals = load_active_goals(cwd)
+    if not goals:
+        msg = "no active goals"
+        if args.json:
+            print(json.dumps({"ok": True, "actions": [], "message": msg}))
+        else:
+            print(msg)
+        return 0
+
+    all_actions: list[dict] = []
+    # Only advance one goal per cycle (matches ambient scheduler semantics).
+    # Multi-goal parallelism is a future enhancement (v2).
+    goal_path, goal = goals[0]
+    actions = advance_goal(
+        goal_path, goal,
+        dry_run=args.dry_run,
+        spawn_fn=spawn_worker if not args.dry_run else (lambda **kw: "FAKE_SESSION_ID"),
+        status_fn=swarm_status if not args.dry_run else (lambda sid: {"status": "done",
+                                                                       "latest_completion_report": args.fake_report}),
+        verify_fn=run_shell if not args.dry_run else (lambda cmd, **kw: (0, "", "")),
+    )
+    all_actions.extend(actions)
+    # If we did anything in goal 0 but didn't finish, don't proceed.
+    # If goal 0 had nothing to do, try goal 1 etc.
+
+    summary = {
+        "ok": True,
+        "goal_id": goal.get("id"),
+        "goal_title": goal.get("title"),
+        "actions": all_actions,
+    }
+    if args.json:
+        print(json.dumps(summary, indent=2))
+    else:
+        print(f"goal: {goal.get('id')} ({goal.get('title','')})")
+        if not all_actions:
+            print("  (no actions this cycle)")
+        for a in all_actions:
+            atype = a.get("type", "?")
+            details = " ".join(f"{k}={v}" for k, v in a.items() if k != "type")
+            print(f"  → {atype} {details}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="jcode-orchestrate",
+        description="Drive one cycle of the Autonomous Coding Control Loop (new.md §4)",
+    )
+    p.add_argument("--once", action="store_true", default=True,
+                   help="run a single cycle (default; daemon loop owned by ambient scheduler)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print actions without spawning workers or running verify_cmd")
+    p.add_argument("--cwd", default=None, help="override cwd for project_hash lookup")
+    p.add_argument("--json", action="store_true", help="JSON output")
+    p.add_argument("--fake-report", default='{"verdict":"clean","findings":[],"confidence":1.0,"reasoning":"dry-run"}',
+                   help="fake reviewer completion_report for dry-run testing")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return cmd_once(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
