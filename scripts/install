@@ -555,7 +555,7 @@ phase_verify() {
     section "phase 9: verify"
 
     if [[ $dry_run -eq 1 ]]; then
-        echo "  would run 9 checks (skipped in --dry-run)"
+        echo "  would run 10 checks (skipped in --dry-run)"
         return 0
     fi
 
