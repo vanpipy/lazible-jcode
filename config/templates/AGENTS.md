@@ -121,6 +121,47 @@ for human reference only.
 - Goals are stored at `~/.jcode/goals/projects/<project_hash>/<goal_id>.json`.
 - `jcode-l2-check` reports current readiness (skill installed, AGENTS.md
   present, active goal exists, etc.).
+- The Autonomous Coding Control Loop (new.md §4) is owned by
+  `jcode-orchestrate --once`. The ambient scheduler (long-task-discipline)
+  invokes it; it is NOT a daemon. To advance manually:
+  `cd <project> && /orchestrate loop 10`.
+
+## User: Coder != Reviewer principle (new.md §11)
+
+The orchestrator spawns **two distinct worker roles** per milestone. They
+must never be the same session.
+
+| Role | Label | Prompt | Output |
+| --- | --- | --- | --- |
+| **Coder** | `coder:<mid>:<sid>` | `~/.local/share/jcode-orchestrate/prompts/coder.md` | Implements one step, runs `verify_cmd`, commits |
+| **Reviewer** | `reviewer:<mid>` | `~/.local/share/jcode-orchestrate/prompts/reviewer.md` | Reads diff, emits JSON verdict, never modifies code |
+
+**Enforcement**:
+
+1. Distinct `session_id` (jcode-swarm-core `SwarmMemberRecord`).
+2. Distinct `label` prefix (`coder:` vs `reviewer:`). The label is
+   visible in the swarm gallery and in `swarm list`.
+3. Reviewer prompt explicitly forbids code modification:
+   *"Do not modify code. Report only."* (prompts/reviewer.md).
+4. Verdict protocol: the reviewer's completion_report must contain a
+   JSON object with `verdict` (`clean` | `findings`), `findings[]`
+   (each with `step_id`, `severity`, `location`, `issue`), and
+   `confidence` (0.0–1.0). Parse failure = conservative default
+   (findings + 0.0 confidence).
+
+**On verdict=findings**:
+
+- The orchestrator increments `review_retry_count`. Each finding with
+  a `step_id` matching a known step resets only that step to `pending`
+  and attaches the finding as `step.last_findings`. General findings
+  (no `step_id`) reset the whole milestone.
+- If `review_retry_count >= review_max_retries` (default 3), the
+  milestone is marked `escalated` and the cycle stops with
+  `milestone_escalated` action. The ambient scheduler must wait for
+  human input.
+
+**Never** bypass the review gate to ship faster. The reviewer is the
+quality boundary.
 
 ## User: Project policy
 

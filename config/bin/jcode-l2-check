@@ -2,7 +2,7 @@
 # jcode-l2-check : verify L2 ambient is goal-driven.
 #
 # Reports readiness for goal-driven L2 ambient (autonomous profile + scaffolding).
-# Exits 0 if all 6 checks pass, non-zero otherwise. Exit code is the first failed
+# Exits 0 if all 8 checks pass, non-zero otherwise. Exit code is the first failed
 # check id, which script callers can rely on for fail-fast:
 #   1 = ambient not enabled
 #   2 = ~/AGENTS.md missing
@@ -10,6 +10,8 @@
 #   4 = jcode-goal CLI not installed
 #   5 = no active goal for current project
 #   6 = max_interval_minutes too long (>60)
+#   7 = jcode-orchestrate CLI not installed
+#   8 = orchestrator skill missing
 #
 # Usage:
 #   jcode-l2-check                 # run all checks (uses current dir)
@@ -24,6 +26,8 @@ set -u
 CONFIG="${JCODE_CONFIG:-$HOME/.jcode/config.toml}"
 SKILL_DIR="$HOME/.jcode/skills/long-task-discipline"
 GOAL_BIN="${JCODE_GOAL_BIN:-$HOME/.local/bin/jcode-goal}"
+ORCH_BIN="${JCODE_ORCH_BIN:-$HOME/.local/bin/jcode-orchestrate}"
+ORCH_SKILL_DIR="$HOME/.jcode/skills/orchestrator"
 GOAL_HOME="${JCODE_GOAL_HOME:-$HOME/.jcode/goals}"
 
 json_mode=0
@@ -171,6 +175,32 @@ check_interval() {
     fi
 }
 
+# ---------- check 7: jcode-orchestrate CLI ----------
+
+check_orch_cli() {
+    if should_run 7; then
+        if [[ -x "$ORCH_BIN" ]]; then
+            record 7 1 "jcode-orchestrate CLI installed" "$ORCH_BIN is executable"
+        else
+            record 7 0 "jcode-orchestrate CLI installed" \
+                "missing or not executable; reinstall via ./scripts/install"
+        fi
+    fi
+}
+
+# ---------- check 8: orchestrator skill ----------
+
+check_orch_skill() {
+    if should_run 8; then
+        if [[ -f "$ORCH_SKILL_DIR/SKILL.md" ]]; then
+            record 8 1 "orchestrator skill installed" "found at $ORCH_SKILL_DIR/SKILL.md"
+        else
+            record 8 0 "orchestrator skill installed" \
+                "missing; reinstall via ./scripts/install or rm -rf $ORCH_SKILL_DIR && ./scripts/install"
+        fi
+    fi
+}
+
 # ---------- run ----------
 
 [[ $json_mode -eq 0 && $quiet_mode -eq 0 ]] && echo "=== L2 ambient goal-driven readiness check ==="
@@ -181,6 +211,8 @@ check_skill
 check_goal_cli
 check_active_goal
 check_interval
+check_orch_cli
+check_orch_skill
 
 # ---------- report ----------
 
@@ -218,5 +250,5 @@ fi
     echo "  full remediation in install --help and config/templates/AGENTS.md"
 }
 
-# exit code = first failed check id (1..6)
+# exit code = first failed check id (1..8)
 exit "${failed_ids[0]}"

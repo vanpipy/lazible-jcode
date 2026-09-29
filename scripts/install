@@ -499,6 +499,12 @@ phase_wire_config() {
 #   8e. jcode-tool-policy CLI → ~/.local/bin/jcode-tool-policy (pre_tool gate hook)
 #   8f. goal skill → ~/.jcode/skills/goal/SKILL.md
 #       (slash command: /goal wraps jcode-goal for in-chat goal creation/edits)
+#   8g. orchestrator skill → ~/.jcode/skills/orchestrator/SKILL.md
+#       (slash command: /orchestrate wraps jcode-orchestrate for in-chat loop runs)
+#   8h. jcode-orchestrate CLI → ~/.local/bin/jcode-orchestrate (Python; state
+#       machine for Autonomous Coding Control Loop, new.md §4)
+#   8i. orchestrator prompts → ~/.local/share/jcode-orchestrate/prompts/
+#       (coder.md, reviewer.md — the two worker role templates)
 #       NOTE: 8a is technically redundant with `sync-skills` in Phase 7 (which
 #       copies all skills including long-task-discipline). Kept as explicit
 #       first-write-only install so the skill exists even if Phase 7 is skipped
@@ -530,6 +536,17 @@ phase_scaffolding() {
         log "goal skill installed: $goal_skill_dst/SKILL.md"
     fi
 
+    # 8g. orchestrator skill — /orchestrate slash command wrapper (skip if exists)
+    local orch_skill_dst="$HOME/.jcode/skills/orchestrator"
+    if [[ -f "$orch_skill_dst/SKILL.md" ]]; then
+        log "orchestrator skill already installed (skipped)"
+    else
+        run mkdir -p "$orch_skill_dst"
+        run cp "$REPO/config/skills/orchestrator/SKILL.md" \
+               "$orch_skill_dst/SKILL.md"
+        log "orchestrator skill installed: $orch_skill_dst/SKILL.md"
+    fi
+
     # 8b. ~/AGENTS.md (only if missing — never overwrite user edits)
     if [[ -f "$HOME/AGENTS.md" ]]; then
         log "~/AGENTS.md already exists (skipped; install never overwrites user files)"
@@ -538,13 +555,28 @@ phase_scaffolding() {
         log "~/AGENTS.md installed from template (customize freely; install won't overwrite)"
     fi
 
-    # 8c + 8d + 8e. CLI binaries → ~/.local/bin/
+    # 8c + 8d + 8e + 8h. CLI binaries → ~/.local/bin/
     local cli_src_dir="$REPO/config/bin"
-    for cli in jcode-goal jcode-l2-check jcode-tool-policy; do
+    for cli in jcode-goal jcode-l2-check jcode-tool-policy jcode-orchestrate; do
         local dst="$HOME/.local/bin/$cli"
         run install -m 0755 "$cli_src_dir/$cli" "$dst"
         log "CLI installed: $dst"
     done
+
+    # 8i. orchestrator prompts → ~/.local/share/jcode-orchestrate/prompts/
+    # First-write-only; orchestrator falls back to repo path in dev mode.
+    local prompts_src="$REPO/config/share/jcode-orchestrate/prompts"
+    local prompts_dst="$HOME/.local/share/jcode-orchestrate/prompts"
+    if [[ -d "$prompts_dst" ]]; then
+        log "orchestrator prompts already installed (skipped)"
+    else
+        run mkdir -p "$prompts_dst"
+        for f in "$prompts_src"/*.md; do
+            [[ -f "$f" ]] || continue
+            run install -m 0644 "$f" "$prompts_dst/"
+        done
+        log "orchestrator prompts installed: $prompts_dst/{coder,reviewer}.md"
+    fi
 
     # Optional readiness check (informational; does NOT block install)
     if [[ $dry_run -eq 0 ]]; then
@@ -568,7 +600,7 @@ phase_verify() {
     section "phase 9: verify"
 
     if [[ $dry_run -eq 1 ]]; then
-        echo "  would run 11 checks (skipped in --dry-run)"
+        echo "  would run 13 checks (skipped in --dry-run)"
         return 0
     fi
 
@@ -633,8 +665,14 @@ phase_verify() {
     [[ -x "$HOME/.local/bin/jcode-tool-policy" ]]
     check "jcode-tool-policy pre_tool gate installed (~/.local/bin/jcode-tool-policy)"
 
+    [[ -x "$HOME/.local/bin/jcode-orchestrate" ]]
+    check "jcode-orchestrate CLI installed (~/.local/bin/jcode-orchestrate)"
+
     [[ -f "$HOME/.jcode/skills/goal/SKILL.md" ]]
     check "/goal slash command skill installed (~/.jcode/skills/goal/SKILL.md)"
+
+    [[ -f "$HOME/.jcode/skills/orchestrator/SKILL.md" ]]
+    check "/orchestrate slash command skill installed (~/.jcode/skills/orchestrator/SKILL.md)"
 
     # Restore the caller's shell options (e.g. errexit / pipefail).
     set -${saved_opts}
@@ -709,12 +747,18 @@ PY
     echo "  • ~/AGENTS.md                 — user-level global instructions"
     echo "  • ~/.jcode/skills/long-task-discipline/SKILL.md  — goal discipline"
     echo "  • ~/.local/bin/jcode-goal     — manage ~/.jcode/goals/"
-    echo "  • ~/.local/bin/jcode-l2-check — readiness verifier (6 checks)"
+    echo "  • ~/.local/bin/jcode-l2-check — readiness verifier (8 checks)"
     echo "  • ~/.local/bin/jcode-tool-policy — pre_tool gate (blocks commits on"
     echo "    ambient/* without an active goal; blocks git push)"
+    echo "  • ~/.local/bin/jcode-orchestrate — Autonomous Coding Control Loop"
+    echo "    (new.md §4): state machine + reviewer verdict protocol"
+    echo "  • ~/.local/share/jcode-orchestrate/prompts/{coder,reviewer}.md"
     echo "  • ~/.jcode/skills/goal/SKILL.md   — /goal slash command (in-chat"
     echo "    wrapper around jcode-goal: /goal \"<title>\" --priority high)"
+    echo "  • ~/.jcode/skills/orchestrator/SKILL.md   — /orchestrate slash command"
+    echo "    (in-chat wrapper around jcode-orchestrate: /orchestrate --once)"
     echo "  To activate: cd <your-project> && /goal \"<title>\" --priority high"
+    echo "  Then advance: cd <your-project> && /orchestrate loop 10"
     echo ""
     echo "To update later (after more commits):"
     echo "  cd $SOURCE_DIR"
