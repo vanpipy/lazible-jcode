@@ -12,6 +12,24 @@ ambient cycles drift into "check-in + queue maintenance" mode (observed in
 cycle #12 `last_summary`: "post-squash routine check-in" with no user-driven
 output). This skill forces every cycle to advance a concrete milestone.
 
+## Loop ownership (NEW: orchestrator is the loop)
+
+The Autonomous Coding Control Loop (new.md §4) is owned by
+`jcode-orchestrate --once` (NOT by this skill). This skill's job is
+**dispatch + cycle bookkeeping**, not step execution:
+
+1. Decide which goal to advance (this skill)
+2. Call `jcode-orchestrate --once --cwd $(pwd)` to perform ONE transition
+3. Read its action list (spawn_coder | step_done | spawn_reviewer |
+   review_done | milestone_escalated | goal_completed)
+4. Record to history.jsonl (this skill)
+5. Schedule next ambient wake (this skill)
+
+The orchestrator owns Phase A–D (step advance, milestone close, reviewer
+verdict, goal completion). This skill does NOT manually advance steps,
+spawn workers, parse verdicts, or maintain per-step state. Hand-rolling
+any of that duplicates the orchestrator and bypasses its review gate.
+
 ## Rules
 
 ### 1. Goal lookup (must do first thing each cycle)
@@ -31,8 +49,30 @@ If `active_goal` is empty:
 1. Write a `last_summary` line: `no active goal for project <hash>; run 'jcode-goal add "..."'`
 2. **Stop.** Do not invent a goal. Do not free-form explore. Cycle exits with no worker dispatch.
 
-If `active_goal` exists, read its JSON, identify the highest-priority pending
-milestone, and constrain all work to that milestone's steps.
+If `active_goal` exists, proceed to Rule 1.5 (delegate to orchestrator).
+
+### 1.5. Cycle body: delegate to jcode-orchestrate
+
+```bash
+# Run ONE transition. Orchestrator handles phase A-D internally.
+output=$(jcode-orchestrate --once --cwd "$project_root" 2>&1)
+echo "$output"
+
+# Parse actions for history.jsonl and stop conditions
+actions=$(echo "$output" | grep -E '^\s+→ ' | sed 's/^\s*→\s*//')
+echo "$actions" | head -1 > ~/.jcode/goals/projects/$project_hash/last_action
+```
+
+If `output` contains `goal_completed` or `milestone_escalated`:
+
+- `milestone_escalated` → write `last_summary` with
+  `cycle N: milestone <id> ESCALATED, HUMAN INPUT NEEDED`
+  and **stop** the loop (do not queue another cycle).
+- `goal_completed` → write `last_summary` with
+  `cycle N: goal <id> completed` and continue to next goal.
+
+Otherwise the cycle exits normally; the next ambient wake (5–30 min)
+will call `--once` again.
 
 ### 2. Commit alignment (pre-commit gate)
 
@@ -51,46 +91,55 @@ Before any commit on an `ambient/*` branch:
 At the end of every cycle, append one line to `~/.jcode/goals/projects/<hash>/history.jsonl`:
 
 ```json
-{"ts":"<ISO8601>","cycle_id":"<N>","goal_id":"<id>","milestone_id":"<id>","action":"<verb>","outcome":"<pass|fail|skip|reject>","duration_s":<N>}
+{"ts":"<ISO8601>","cycle_id":"<N>","goal_id":"<id>","milestone_id":"<id>","action":"<verb>","outcome":"<pass|fail|skip|reject|escalated>","duration_s":<N>}
 ```
 
-This log is the **audit trail** for what the agent tried. Future cycles read
-the last 5 lines before starting to avoid repeating failed approaches.
+The `action` field is the first orchestrator action (e.g. `spawn_coder`,
+`step_done`, `review_failed`, `goal_completed`). `outcome` maps:
+
+| Orchestrator action | outcome |
+| --- | --- |
+| `step_done`, `review_done` (verdict=clean) | `pass` |
+| `step_failed`, `step_escalated`, `review_failed` | `fail` |
+| `milestone_escalated` | `escalated` |
+| `spawn_coder`, `spawn_reviewer` | (in_progress; outcome=skip on next cycle) |
+| `goal_completed` | `pass` |
 
 ### 4. Cycle budget
 
-- Max **3 worker dispatches** per cycle
+- Max **3 worker dispatches** per cycle (each `--once` call = 1 dispatch)
 - Max **5 minutes** wall-clock per cycle
 - If budget is exhausted mid-milestone:
-  - Mark the in-progress step as `"status": "paused"` (NOT `"pending"`)
-  - Do NOT mark it `"completed"` (work was not finished)
+  - Do NOT mark anything (orchestrator owns state). Just exit.
   - Append to history.jsonl with `outcome: "budget_exhausted"`
+  - Next ambient wake will resume
 
 ### 5. Failure escalation
 
-Track per-milestone failure count in a sibling file:
-`~/.jcode/goals/projects/<hash>/failure_counts.json`:
+The orchestrator owns the per-milestone retry counters
+(`review_retry_count`, `review_max_retries`, `step.retry_count`,
+`step.max_retries`). This skill does NOT maintain separate counters.
 
-```json
-{"<milestone_id>": <N>}
-```
+When the orchestrator emits `milestone_escalated`:
 
-Increment on each `outcome: "fail"`. When a milestone's count reaches 3:
-
-1. Set `milestone.status = "needs_decision"`
-2. Write `last_summary`: `cycle N: milestone <id> escalated after 3 failures — HUMAN INPUT NEEDED: <reason>`
-3. Do NOT queue another cycle for this milestone
-4. **Wait** for the user to either: (a) revise the milestone, (b) abandon the goal, or (c) reset the failure count
+1. Write `last_summary`: `cycle N: milestone <id> escalated, HUMAN INPUT NEEDED: <reason>`
+2. Do NOT queue another cycle for this milestone
+3. **Wait** for the user to either: (a) revise the milestone via
+   `jcode-goal step <gid> <mid> add <content> --attach-findings "..."`,
+   (b) reset via `jcode-goal milestone <gid> reset <mid>`, or
+   (c) abandon via `jcode-goal rm <gid>`
 
 ## Anti-patterns (NEVER do)
 
 - ❌ Worker invents its own goal not in `~/.jcode/goals/`
 - ❌ Worker modifies files outside the project root (use `git rev-parse --show-toplevel` to verify)
 - ❌ Worker bypasses the commit alignment check (Rule 2)
-- ❌ Worker writes directly to `~/Project/patched-jcode/crates/...` — that path goes through `./scripts/install` only
-- ❌ Worker escalates after only 1 failure (must wait for 3)
-- ❌ Worker continues past `needs_decision` without user input
-- ❌ Worker modifies `~/.jcode/goals/projects/<hash>/*.json` directly — use `jcode-goal` CLI
+- ❌ Worker writes directly to `~/Project/patched-jcode/crates/...`. That path goes through `./scripts/install` only.
+- ❌ Worker **manually advances steps / spawns workers / parses verdicts**.
+   That is the orchestrator's job (Rule 1.5). Always call
+   `jcode-orchestrate --once`.
+- ❌ Worker continues past `milestone_escalated` without user input.
+- ❌ Worker modifies `~/.jcode/goals/projects/<hash>/*.json` directly. Use `jcode-goal` CLI.
 
 ## Layering (in order of authority)
 
