@@ -497,6 +497,8 @@ phase_wire_config() {
 #   8c. jcode-goal CLI → ~/.local/bin/jcode-goal (Python; manages ~/.jcode/goals/)
 #   8d. jcode-l2-check CLI → ~/.local/bin/jcode-l2-check (bash; readiness verifier)
 #   8e. jcode-tool-policy CLI → ~/.local/bin/jcode-tool-policy (pre_tool gate hook)
+#   8f. goal skill → ~/.jcode/skills/goal/SKILL.md
+#       (slash command: /goal wraps jcode-goal for in-chat goal creation/edits)
 #       NOTE: 8a is technically redundant with `sync-skills` in Phase 7 (which
 #       copies all skills including long-task-discipline). Kept as explicit
 #       first-write-only install so the skill exists even if Phase 7 is skipped
@@ -515,6 +517,17 @@ phase_scaffolding() {
         run cp "$REPO/config/skills/long-task-discipline/SKILL.md" \
                "$skill_dst/SKILL.md"
         log "long-task-discipline skill installed: $skill_dst/SKILL.md"
+    fi
+
+    # 8f. goal skill — /goal slash command wrapper (skip if exists)
+    local goal_skill_dst="$HOME/.jcode/skills/goal"
+    if [[ -f "$goal_skill_dst/SKILL.md" ]]; then
+        log "goal skill already installed (skipped)"
+    else
+        run mkdir -p "$goal_skill_dst"
+        run cp "$REPO/config/skills/goal/SKILL.md" \
+               "$goal_skill_dst/SKILL.md"
+        log "goal skill installed: $goal_skill_dst/SKILL.md"
     fi
 
     # 8b. ~/AGENTS.md (only if missing — never overwrite user edits)
@@ -555,7 +568,7 @@ phase_verify() {
     section "phase 9: verify"
 
     if [[ $dry_run -eq 1 ]]; then
-        echo "  would run 10 checks (skipped in --dry-run)"
+        echo "  would run 11 checks (skipped in --dry-run)"
         return 0
     fi
 
@@ -619,6 +632,9 @@ phase_verify() {
 
     [[ -x "$HOME/.local/bin/jcode-tool-policy" ]]
     check "jcode-tool-policy pre_tool gate installed (~/.local/bin/jcode-tool-policy)"
+
+    [[ -f "$HOME/.jcode/skills/goal/SKILL.md" ]]
+    check "/goal slash command skill installed (~/.jcode/skills/goal/SKILL.md)"
 
     # Restore the caller's shell options (e.g. errexit / pipefail).
     set -${saved_opts}
@@ -696,7 +712,9 @@ PY
     echo "  • ~/.local/bin/jcode-l2-check — readiness verifier (6 checks)"
     echo "  • ~/.local/bin/jcode-tool-policy — pre_tool gate (blocks commits on"
     echo "    ambient/* without an active goal; blocks git push)"
-    echo "  To activate: cd <your-project> && ~/.local/bin/jcode-goal add \"<goal>\" --priority high"
+    echo "  • ~/.jcode/skills/goal/SKILL.md   — /goal slash command (in-chat"
+    echo "    wrapper around jcode-goal: /goal \"<title>\" --priority high)"
+    echo "  To activate: cd <your-project> && /goal \"<title>\" --priority high"
     echo ""
     echo "To update later (after more commits):"
     echo "  cd $SOURCE_DIR"
