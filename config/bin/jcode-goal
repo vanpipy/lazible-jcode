@@ -17,7 +17,32 @@
 #     "priority":    "high" | "medium" | "low",
 #     "description": "<long-form description>",
 #     "why":         "<rationale>",
-#     "milestones":  [{"id":..., "title":..., "status":..., "steps":[...]}],
+#     "milestones":  [{
+#                       "id":...,
+#                       "title":...,
+#                       "status": "pending"|"in_progress"|"review"|"completed"|"escalated",
+#                       "review_required": true|false,
+#                       "review_criteria": ["requirements", "diff", "tests", "security", "edge"],
+#                       "review_max_retries": 3,
+#                       "review_verdict": null|"clean"|"findings",
+#                       "review_findings": [{"step_id":..., "severity":..., "issue":...}],
+#                       "review_retry_count": 0,
+#                       "reviewer_session_id": null,
+#                       "reviewer_label": null,
+#                       "coder_session_ids": [],
+#                       "start_sha": null,            # git sha at milestone open, for diff
+#                       "steps":[{
+#                         "id":..., "content":...,
+#                         "status": "pending"|"in_progress"|"done"|"failed"|"escalated",
+#                         "verify_cmd": null,
+#                         "max_retries": 3,
+#                         "retry_count": 0,
+#                         "last_error": null,
+#                         "last_findings": null,
+#                         "coder_session_id": null,
+#                         "coder_label": null
+#                       }]
+#                     }],
 #     "created_at":  "<ISO8601>",
 #     "updated_at":  "<ISO8601>"
 #   }
@@ -27,9 +52,10 @@
 #   list [--scope <scope>] [--status <status>] [--json]
 #   show <goal-id>
 #   rm <goal-id>
-#   milestone <goal-id> add <title>
-#   step <goal-id> <milestone-id> add <content>
+#   milestone <goal-id> add <title> [--no-review] [--review-criteria "a,b,c"] [--review-max-retries N]
+#   step <goal-id> <milestone-id> add <content> [--verify "cmd"] [--max-retries N] [--attach-findings "..."]
 #   status <goal-id> <new-status>
+#   check [--cwd X] [--json]
 #
 # Environment:
 #   JCODE_GOAL_HOME    override ~/.jcode/goals (default: ~/.jcode/goals)
@@ -48,6 +74,13 @@ from pathlib import Path
 VALID_STATUSES = {"active", "paused", "complete", "abandoned", "needs_decision"}
 VALID_PRIORITIES = {"high", "medium", "low"}
 VALID_SCOPES = {"project", "user"}
+
+# Orchestrator / reviewer-aware schema constants.
+VALID_MILESTONE_STATUSES = {"pending", "in_progress", "review", "completed", "escalated"}
+VALID_STEP_STATUSES = {"pending", "in_progress", "done", "failed", "escalated"}
+DEFAULT_REVIEW_CRITERIA = ["requirements", "diff", "tests", "security", "edge"]
+DEFAULT_REVIEW_MAX_RETRIES = 3
+DEFAULT_STEP_MAX_RETRIES = 3
 
 
 def goal_home() -> Path:
@@ -239,9 +272,21 @@ def cmd_show(args) -> int:
             mid = m.get("id", "?")
             mtitle = m.get("title", "")
             mstatus = m.get("status", "?")
-            print(f"  [{mstatus}] {mid}: {mtitle}")
+            review_req = m.get("review_required", True)
+            review_v = m.get("review_verdict")
+            line = f"  [{mstatus}] {mid}: {mtitle}"
+            if review_req:
+                line += f" (review={review_v or 'pending'})"
+            else:
+                line += f" (review=skipped)"
+            print(line)
             for s in m.get("steps") or []:
-                print(f"      - [{s.get('status','?')}] {s.get('id','?')}: {s.get('content','')}")
+                sinfo = f"      - [{s.get('status','?')}] {s.get('id','?')}: {s.get('content','')}"
+                if s.get("verify_cmd"):
+                    sinfo += f"  [verify: {s['verify_cmd'][:40]}]"
+                if s.get("retry_count", 0) > 0:
+                    sinfo += f"  [retry {s['retry_count']}/{s.get('max_retries','?')}]"
+                print(sinfo)
     return 0
 
 
@@ -272,14 +317,45 @@ def cmd_milestone(args) -> int:
             return 2
         n = len(g.get("milestones") or [])
         mid = f"m-{n}"
+
+        # Review configuration (new in orchestrator-aware schema).
+        # Default: review_required=True, criteria=DEFAULT_REVIEW_CRITERIA, max_retries=3.
+        review_required = not args.no_review
+        if args.review_criteria:
+            criteria = [c.strip() for c in args.review_criteria.split(",") if c.strip()]
+        else:
+            criteria = list(DEFAULT_REVIEW_CRITERIA)
+        try:
+            review_max_retries = int(args.review_max_retries) if args.review_max_retries else DEFAULT_REVIEW_MAX_RETRIES
+        except ValueError:
+            print(f"error: --review-max-retries must be an integer", file=sys.stderr)
+            return 2
+        if review_max_retries < 0:
+            print(f"error: --review-max-retries must be >= 0", file=sys.stderr)
+            return 2
+
         g.setdefault("milestones", []).append({
             "id": mid,
             "title": title,
             "status": "pending",
+            "review_required": review_required,
+            "review_criteria": criteria,
+            "review_max_retries": review_max_retries,
+            "review_verdict": None,
+            "review_findings": None,
+            "review_retry_count": 0,
+            "reviewer_session_id": None,
+            "reviewer_label": None,
+            "coder_session_ids": [],
+            "start_sha": None,
             "steps": [],
         })
         save_goal(p, g)
         print(f"added milestone {mid} to {g['id']}")
+        if review_required:
+            print(f"  review: required, criteria={criteria}, max_retries={review_max_retries}")
+        else:
+            print(f"  review: skipped (--no-review)")
         return 0
     print(f"error: unknown milestone subcommand '{args.subcmd}'", file=sys.stderr)
     return 2
@@ -304,15 +380,36 @@ def cmd_step(args) -> int:
         if not content:
             print("error: step content is required", file=sys.stderr)
             return 2
+        try:
+            max_retries = int(args.max_retries) if args.max_retries else DEFAULT_STEP_MAX_RETRIES
+        except ValueError:
+            print(f"error: --max-retries must be an integer", file=sys.stderr)
+            return 2
+        if max_retries < 0:
+            print(f"error: --max-retries must be >= 0", file=sys.stderr)
+            return 2
         n = len(milestone.get("steps") or [])
         sid = f"{args.milestone_id}-step-{n}"
+        # Orchestrator-aware step schema. Old fields (id/content/status) preserved.
         milestone.setdefault("steps", []).append({
             "id": sid,
             "content": content,
             "status": "pending",
+            "verify_cmd": args.verify or None,
+            "max_retries": max_retries,
+            "retry_count": 0,
+            "last_error": None,
+            "last_findings": args.attach_findings or None,
+            "coder_session_id": None,
+            "coder_label": None,
         })
         save_goal(p, g)
         print(f"added step {sid} to milestone {args.milestone_id}")
+        if args.verify:
+            print(f"  verify_cmd: {args.verify}")
+        if args.attach_findings:
+            print(f"  attached findings: {args.attach_findings[:80]}...")
+        print(f"  max_retries: {max_retries}")
         return 0
     print(f"error: unknown step subcommand '{args.subcmd}'", file=sys.stderr)
     return 2
@@ -471,6 +568,12 @@ def build_parser() -> argparse.ArgumentParser:
     pm_sub = pm.add_subparsers(dest="subcmd", metavar="<action>")
     pma = pm_sub.add_parser("add")
     pma.add_argument("title")
+    pma.add_argument("--no-review", action="store_true",
+                     help="skip review phase for this milestone (default: review required)")
+    pma.add_argument("--review-criteria", default="",
+                     help="comma-separated review criteria (default: requirements,diff,tests,security,edge)")
+    pma.add_argument("--review-max-retries", type=int, default=None,
+                     help="max review retries before escalate (default: 3)")
     pm.set_defaults(func=cmd_milestone)
 
     # step
@@ -480,6 +583,12 @@ def build_parser() -> argparse.ArgumentParser:
     pst_sub = pst.add_subparsers(dest="subcmd", metavar="<action>")
     psta = pst_sub.add_parser("add")
     psta.add_argument("content")
+    psta.add_argument("--verify", default="",
+                     help="shell command that must exit 0 for step to be considered done")
+    psta.add_argument("--max-retries", type=int, default=None,
+                     help="max retries before escalate (default: 3)")
+    psta.add_argument("--attach-findings", default="",
+                     help="initial findings to attach (used when re-running after a review finding)")
     pst.set_defaults(func=cmd_step)
 
     # status
