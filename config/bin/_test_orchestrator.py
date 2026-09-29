@@ -329,10 +329,76 @@ def test_t12_no_review_bypass():
         shutil.rmtree(home, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# T13: queue auto-promote — completing the active goal shifts pending -> active
+# ---------------------------------------------------------------------------
+def test_t13_queue_auto_promote():
+    print("T13: queue auto-promote on goal_completed")
+    home, active_gid, pending_gid, cwd_backup = setup_repo_with_pending()
+    try:
+        env = os.environ.copy()
+        env["JCODE_GOAL_HOME"] = str(home)
+        # Minimal scaffold: 1 milestone with 1 step on the active goal so it
+        # can complete quickly. (Pending goal stays empty; we just verify it
+        # becomes active when active goal completes.)
+        run([str(GOAL), "milestone", active_gid, "add", "M0", "--no-review"], env=env)
+        run([str(GOAL), "step", active_gid, "m-0", "add", "only-step",
+             "--verify", "true"], env=env)
+
+        # Drive the active goal to completion.
+        cycles = cycle_until(home, active_gid, 8)
+        assert cycles <= 4, f"T13 active goal cycles ({cycles})"
+
+        # After the active goal completed, the pending goal should have been
+        # auto-promoted to active.
+        pending_now = get_goal(home, pending_gid)
+        active_now = get_goal(home, active_gid)
+        assert_eq(active_now["status"], "complete", "T13 active goal marked complete")
+        assert_eq(pending_now["status"], "active", "T13 pending goal auto-promoted to active")
+
+        # Run one more cycle to confirm the orchestrator now drives the
+        # promoted goal. The promoted goal has no milestones, so the cycle
+        # prints "(no actions this cycle)" — but it must NOT print
+        # "no active goals", which would mean the auto-promote failed.
+        out = orchestrate(home)
+        assert "no active goals" not in out, \
+            f"T13 orchestrator should see promoted goal; got: {out[:200]}"
+    finally:
+        os.chdir(cwd_backup)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def setup_repo_with_pending() -> tuple[Path, str, str, str]:
+    """Like setup_repo but also seeds a second pending goal.
+
+    Returns (home, active_gid, pending_gid, cwd_backup).
+    """
+    home, active_gid, cwd_backup = setup_repo()
+    env = os.environ.copy()
+    env["JCODE_GOAL_HOME"] = str(home)
+    # Add a second goal: since queue already has an active goal, this one
+    # enters as pending (per new queue-aware add semantics).
+    out = run([str(GOAL), "add", "Pending", "--priority", "high",
+               "--content", "queued behind active",
+               "--scope", "project", "--cwd", str(home)], env=env)
+    assert out.returncode == 0, out.stderr
+    # list --json is sorted by filename (goal-<ts>-<4hex>) which is not
+    # chronological when both goals share the same unix second. Sort by
+    # created_at and find the one that is NOT active (the pending one).
+    data = json.loads(run([str(GOAL), "list", "--json"], env=env).stdout)
+    data.sort(key=lambda g: g.get("created_at", ""))
+    pending_gid = next(g["id"] for g in data if g.get("status") == "pending")
+    assert pending_gid, "T13 setup: no pending goal found"
+    assert_eq(next(g for g in data if g["id"] == pending_gid)["status"],
+              "pending", "T13 setup: new goal starts as pending")
+    return home, active_gid, pending_gid, cwd_backup
+
+
 def main() -> int:
     for t in [test_t7_happy_review, test_t8_findings_precise_reset,
               test_t9_review_retry_exhausted, test_t10_reviewer_crashed,
-              test_t11_coder_reviewer_different_ids, test_t12_no_review_bypass]:
+              test_t11_coder_reviewer_different_ids, test_t12_no_review_bypass,
+              test_t13_queue_auto_promote]:
         try:
             t()
         except AssertionError as e:

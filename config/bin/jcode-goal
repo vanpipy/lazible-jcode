@@ -71,7 +71,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-VALID_STATUSES = {"active", "paused", "complete", "abandoned", "needs_decision"}
+VALID_STATUSES = {"pending", "active", "paused", "complete", "abandoned", "needs_decision"}
+# Status lifecycle:
+#   pending   : queued behind the current active goal; orchestrator auto-promotes
+#               the queue head to `active` when the current goal completes.
+#   active    : orchestrator is currently driving this goal (one per project).
+#   paused    : user-paused; never auto-promoted (use `jcode-goal status <id> pending`
+#               to put it back in the queue, or `active` to skip the queue).
+#   complete  : terminal — all milestones done; archived.
+#   abandoned : terminal — user dropped it.
+#   needs_decision : terminal for now (user must act to resume).
+QUEUE_STATUSES = {"pending"}      # eligible for auto-promote
+TERMINAL_STATUSES = {"complete", "abandoned", "needs_decision"}
 VALID_PRIORITIES = {"high", "medium", "low"}
 VALID_SCOPES = {"project", "user"}
 
@@ -176,11 +187,23 @@ def cmd_add(args) -> int:
     goal_id = generate_id()
     d = goal_dir_for(scope, cwd=args.cwd)
     ts = now_iso()
+    # Queue-aware creation: new goals enter as `pending`. If the project
+    # queue is empty (no current active goal), the new goal is auto-promoted
+    # to `active` so the first add still starts immediately — matches the
+    # pre-queue UX. Subsequent adds while one is active stay in `pending`
+    # and wait for auto-promotion on completion.
+    initial_status = "pending"
+    promoted_to_active = False
+    if scope == "project":
+        existing_active = _any_active_goal(d)
+        if not existing_active:
+            initial_status = "active"
+            promoted_to_active = True
     data = {
         "id": goal_id,
         "title": args.title,
         "scope": scope,
-        "status": "active",
+        "status": initial_status,
         "priority": priority,
         "description": args.content or "",
         "why": args.why or "",
@@ -193,10 +216,92 @@ def cmd_add(args) -> int:
     print(f"created {path}")
     print(f"  id:      {goal_id}")
     print(f"  scope:   {scope}")
+    print(f"  status:  {initial_status}{' (auto-promoted; queue was empty)' if promoted_to_active else ' (queued behind active goal)'}")
     print(f"  priority: {priority}")
     if args.content:
         preview = args.content.splitlines()[0][:80]
         print(f"  content: {preview}{'...' if len(args.content) > 80 else ''}")
+    return 0
+
+
+def _any_active_goal(d: Path) -> bool:
+    """Return True if dir `d` contains any goal with status='active'."""
+    if not d.is_dir():
+        return False
+    for fp in d.glob("*.json"):
+        try:
+            if load_goal(fp).get("status") == "active":
+                return True
+        except (json.JSONDecodeError, OSError):
+            continue
+    return False
+
+
+def _queue_peek(d: Path) -> tuple[Path | None, dict | None]:
+    """Return the queue head (highest-priority pending goal) from `d`, or (None, None)."""
+    if not d.is_dir():
+        return None, None
+    prio_rank = {"high": 0, "medium": 1, "low": 2}
+    candidates: list[tuple[Path, dict]] = []
+    for fp in d.glob("*.json"):
+        try:
+            g = load_goal(fp)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if g.get("status") in QUEUE_STATUSES:
+            candidates.append((fp, g))
+    if not candidates:
+        return None, None
+    candidates.sort(key=lambda t: (prio_rank.get(t[1].get("priority", "medium"), 1),
+                                   t[1].get("created_at", "")))
+    return candidates[0]
+
+
+def cmd_queue(args) -> int:
+    """Inspect or advance the pending queue (without touching the active goal)."""
+    cwd = args.cwd
+    if not cwd:
+        cwd = os.getcwd()
+    if args.scope == "user":
+        d = goal_home() / "user"
+    else:
+        d = goal_dir_for("project", cwd=cwd)
+    head_path, head_goal = _queue_peek(d)
+    if not head_goal:
+        if args.json:
+            print(json.dumps({"ok": True, "queue_empty": True}))
+        else:
+            print("(queue empty)")
+        return 0
+    if args.json and not args.promote:
+        print(json.dumps({
+            "ok": True,
+            "queue_empty": False,
+            "head_id": head_goal.get("id"),
+            "head_title": head_goal.get("title"),
+            "head_priority": head_goal.get("priority"),
+            "head_created_at": head_goal.get("created_at"),
+        }, indent=2))
+        return 0
+    if not args.json:
+        print(f"queue head: {head_goal.get('id')} ({head_goal.get('title')}, priority={head_goal.get('priority')})")
+    if args.promote:
+        # Manual promote: shift head to active. Only allowed when no current active.
+        if _any_active_goal(d):
+            print("error: a goal is already active; complete or pause it first", file=sys.stderr)
+            return 1
+        head_goal["status"] = "active"
+        save_goal(head_path, head_goal)
+        if args.json:
+            print(json.dumps({
+                "ok": True,
+                "promoted": True,
+                "goal_id": head_goal.get("id"),
+                "title": head_goal.get("title"),
+            }, indent=2))
+        else:
+            print(f"promoted: {head_goal.get('id')} -> active")
+        return 0
     return 0
 
 
@@ -596,6 +701,15 @@ def build_parser() -> argparse.ArgumentParser:
     psu.add_argument("goal_id")
     psu.add_argument("new_status", choices=sorted(VALID_STATUSES))
     psu.set_defaults(func=cmd_status)
+
+    # queue — inspect or manually promote the pending queue
+    pq = sub.add_parser("queue", help="inspect or promote the pending goal queue")
+    pq.add_argument("--scope", choices=list(VALID_SCOPES), default="project")
+    pq.add_argument("--cwd", default=None, help="override cwd for project_hash")
+    pq.add_argument("--promote", action="store_true",
+                    help="manually shift the queue head to active (only when no active goal exists)")
+    pq.add_argument("--json", action="store_true")
+    pq.set_defaults(func=cmd_queue)
 
     # check
     pc = sub.add_parser("check", help="verify goal state for current project (used by pre_tool hooks)")

@@ -544,8 +544,63 @@ def advance_goal(goal_path: Path, goal: dict,
             goal["status"] = "complete"
             save_goal(goal_path, goal)
             actions.append({"type": "goal_completed", "goal_id": goal.get("id")})
+            # Phase E: auto-promote next pending goal from the queue.
+            # The active goal is now complete; the project should keep its
+            # L2 ambient loop alive by shifting the highest-priority pending
+            # goal to active. This makes the orchestrator a true dynamic
+            # queue: a project with N pending goals will run all N without
+            # the user manually creating a new active goal each time.
+            next_goal = _peek_queue_head(goal_path)
+            if next_goal is not None:
+                next_path, next_data = next_goal
+                next_data["status"] = "active"
+                save_goal(next_path, next_data)
+                actions.append({
+                    "type": "goal_promoted",
+                    "goal_id": next_data.get("id"),
+                    "goal_title": next_data.get("title"),
+                    "from": "pending",
+                    "reason": "auto-promote after goal_completed",
+                })
 
     return actions
+
+
+def _peek_queue_head(current_goal_path: Path) -> tuple[Path, dict] | None:
+    """Find the highest-priority pending goal in the same project directory.
+
+    Returns (path, goal_data) or None if the queue is empty. Mirrors the
+    queue semantics from jcode-goal: high > medium > low priority, oldest
+    first within a tier. Reads via the on-disk JSON files (not the cached
+    in-memory state), so the queue reflects the latest user edits.
+    """
+    home = goal_home()
+    project_dir = current_goal_path.parent
+    # Defensive: only auto-promote within the project's goal bucket.
+    # Path layout: ~/.jcode/goals/projects/<hash>/<file>.json
+    # current_goal_path = .../projects/<hash>/<file>.json
+    # current_goal_path.parent = .../projects/<hash>/
+    # current_goal_path.parent.parent = .../projects/
+    if project_dir.parent != home / "projects":
+        return None
+    prio_rank = {"high": 0, "medium": 1, "low": 2}
+    candidates: list[tuple[Path, dict]] = []
+    for fp in project_dir.glob("*.json"):
+        if fp == current_goal_path:
+            continue
+        try:
+            g = json.loads(fp.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if g.get("status") == "pending":
+            candidates.append((fp, g))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda pair: (
+        prio_rank.get(pair[1].get("priority", "medium"), 1),
+        pair[1].get("created_at", ""),
+    ))
+    return candidates[0]
 
 
 # ---------------------------------------------------------------------------
@@ -610,17 +665,21 @@ def cmd_loop(args) -> int:
 
     Stops early on terminal action (goal_completed or milestone_escalated)
     to match /orchestrate loop N semantics. Returns last cmd_once rc.
+
+    With auto-promote (queue head shifted from pending to active after
+    each goal_completed), the loop naturally chains across multiple goals
+    in the queue until either (a) the queue runs out (no active goals),
+    (b) a milestone escalates, or (c) the cycle budget is exhausted.
     """
     n = max(1, args.loop)
     last_rc = 0
     ran = 0
-    summary_actions: list[dict] = []
     for i in range(n):
         ran += 1
         last_rc = cmd_once(args)
-        # If the most recent action was terminal, stop.
-        # We re-derive it from the persisted goal state to avoid re-parsing stdout.
-        # For JSON mode we captured above; otherwise inspect the latest goal file.
+        # Reload active goals to inspect persisted state for terminal-stop
+        # detection. After auto-promote, the queue head is the next goal,
+        # so we naturally continue across the queue.
         cwd = args.cwd or os.getcwd()
         goals = load_active_goals(cwd)
         if not goals:
@@ -631,16 +690,30 @@ def cmd_loop(args) -> int:
             break
         if goal.get("status") == "complete":
             break
-    # Final summary
+    # Final summary: surface terminal-action and promotion counts so callers
+    # (ambient scheduler, /orchestrate loop N) can tell whether the loop
+    # drained the queue or stopped on a single goal_completed.
+    stopped_reason = "exhausted"
+    if ran < n:
+        cwd = args.cwd or os.getcwd()
+        goals = load_active_goals(cwd)
+        if not goals:
+            stopped_reason = "queue_empty"
+        else:
+            statuses = [m.get("status") for m in goals[0][1].get("milestones") or []]
+            if "escalated" in statuses:
+                stopped_reason = "milestone_escalated"
+            elif goals[0][1].get("status") == "complete":
+                stopped_reason = "goal_completed"
     if args.json:
         print(json.dumps({
             "ok": True,
             "ran_cycles": ran,
             "max_cycles": n,
-            "stopped_reason": "terminal_action" if ran < n else "exhausted",
+            "stopped_reason": stopped_reason,
         }, indent=2))
     else:
-        print(f"\nloop: ran {ran}/{n} cycles")
+        print(f"\nloop: ran {ran}/{n} cycles (stopped_reason={stopped_reason})")
     return last_rc
 
 

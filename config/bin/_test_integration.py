@@ -332,10 +332,14 @@ def test_i6_loop_stops_on_terminal():
                 break
         assert objects, f"I6 no JSON objects parsed from: {text[:200]!r}"
         summary = objects[-1]
-        # Expected: ran 2 cycles to complete (spawn, done+close)
+        # Expected: ran 2 cycles to complete (spawn, done+close). After
+        # goal_completed, the auto-promote tries to peek the queue head;
+        # with only one goal, the queue is empty, so cmd_loop stops with
+        # stopped_reason="queue_empty". The earlier "terminal_action" value
+        # was a less specific catch-all.
         assert summary["ran_cycles"] < 100, f"I6 loop stopped early (ran {summary['ran_cycles']})"
         assert summary["ran_cycles"] >= 2, f"I6 loop ran at least 2 cycles (got {summary['ran_cycles']})"
-        assert_eq(summary["stopped_reason"], "terminal_action", "I6 stopped_reason = terminal_action")
+        assert_eq(summary["stopped_reason"], "queue_empty", "I6 stopped_reason = queue_empty (post auto-promote)")
         assert_eq(summary["max_cycles"], 100, "I6 max_cycles = 100")
     finally:
         os.chdir(cwd_backup)
@@ -383,11 +387,81 @@ def test_i7_md5_install_artifacts():
             print(f"  FAIL  md5 mismatch: {src_rel} ({s_md5}) != {dst_rel} ({d_md5})")
 
 
+# ---------------------------------------------------------------------------
+# I8: end-to-end queue chain — --loop N drives 3 goals in priority order
+# ---------------------------------------------------------------------------
+def test_i8_queue_chain():
+    print("I8: end-to-end queue chain (3 goals, --loop drives all)")
+    # setup_repo creates 1 active goal. We add 2 more pending goals with
+    # --priority to control the order, then run --loop with sufficient
+    # budget to drive all 3 to completion.
+    home, gid1, cwd_backup = setup_repo()
+    try:
+        env = os.environ.copy()
+        env["JCODE_GOAL_HOME"] = str(home)
+
+        # Add 2 more goals (will queue as pending since gid1 is active).
+        out = run([str(GOAL), "add", "Second", "--priority", "medium",
+                   "--scope", "project", "--cwd", str(home)], env=env)
+        assert out.returncode == 0, out.stderr
+        out = run([str(GOAL), "add", "Third", "--priority", "low",
+                   "--scope", "project", "--cwd", str(home)], env=env)
+        assert out.returncode == 0, out.stderr
+
+        # Each goal needs a single no-review milestone + step with verify=true.
+        goals = json.loads(run([str(GOAL), "list", "--json"], env=env).stdout)
+        active = next(g for g in goals if g["status"] == "active")
+        pending = sorted([g for g in goals if g["status"] == "pending"],
+                         key=lambda g: g.get("created_at", ""))
+        assert_eq(len(pending), 2, "I8 setup: 2 pending goals")
+
+        for g in [active, *pending]:
+            run([str(GOAL), "milestone", g["id"], "add", "M0", "--no-review"], env=env)
+            run([str(GOAL), "step", g["id"], "m-0", "add", "work",
+                 "--verify", "true"], env=env)
+
+        # Run --loop with enough budget to drive all 3 goals (each needs
+        # spawn + done + close ~2-3 cycles; 3 goals ~9 cycles).
+        result = orchestrate(home, "--loop", "30", "--json")
+        text = result.stdout.strip()
+        decoder = json.JSONDecoder()
+        idx = 0
+        objects = []
+        while idx < len(text):
+            while idx < len(text) and text[idx] in " \n\r\t":
+                idx += 1
+            if idx >= len(text):
+                break
+            try:
+                obj, end = decoder.raw_decode(text[idx:])
+                objects.append(obj)
+                idx += end
+            except json.JSONDecodeError:
+                break
+        assert objects, f"I8 no JSON objects parsed from: {text[:200]!r}"
+        summary = objects[-1]
+
+        # All 3 should now be complete (ran out of queue -> queue_empty).
+        assert_eq(summary["stopped_reason"], "queue_empty", "I8 stopped_reason = queue_empty")
+        assert summary["ran_cycles"] >= 6, f"I8 ran >= 6 cycles (got {summary['ran_cycles']})"
+        assert summary["ran_cycles"] <= 20, f"I8 ran <= 20 cycles (got {summary['ran_cycles']})"
+
+        # Reload final state: all 3 goals should be status=complete.
+        goals_final = json.loads(run([str(GOAL), "list", "--json"], env=env).stdout)
+        statuses = sorted([g["status"] for g in goals_final])
+        assert_eq(statuses, ["complete", "complete", "complete"],
+                  "I8 all 3 goals completed via auto-promote chain")
+    finally:
+        os.chdir(cwd_backup)
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def main() -> int:
     tests = [test_i1_e2e_real_verify, test_i2_real_verify_failure,
              test_i3_json_output, test_i4_mixed_review,
              test_i5_real_json_findings, test_i6_loop_stops_on_terminal,
-             test_i7_md5_install_artifacts]
+             test_i7_md5_install_artifacts,
+             test_i8_queue_chain]
     for t in tests:
         try:
             t()
