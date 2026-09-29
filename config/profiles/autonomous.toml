@@ -23,6 +23,10 @@ ntfy_topic = ""   # empty string; the real value comes from JCODE_NTFY_TOPIC env
 
 [hooks]
 post_tool = ["~/.local/bin/jcode-audit-log"]
+# pre_tool blocks git push and git commit on ambient/* branches without an active
+# goal with pending steps (enforces long-task-discipline Rule 2).
+pre_tool = ["~/.local/bin/jcode-tool-policy"]
+pre_tool_timeout_ms = 8000
 
 [agents]
 swarm_spawn_mode = "headless"   # autonomous mode does not pop a terminal

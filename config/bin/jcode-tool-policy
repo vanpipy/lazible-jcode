@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""jcode-tool-policy: pre_tool gate for goal-driven ambient sessions.
+
+Contract (per jcode's hooks.rs):
+- exit 0 : allow the tool call
+- exit 2 : block; stderr becomes the reason shown to the model
+- other  : fail open (allow)
+
+Intercepts:
+- `git commit` on an `ambient/*` branch when the current project has no
+  active goal with pending steps (enforces long-task-discipline Rule 2).
+- `git push` from an autonomous session (worker should never push).
+
+Reads:
+- Tool input JSON on stdin.
+- Env vars set by jcode: JCODE_HOOK_TOOL_NAME, JCODE_HOOK_CWD, JCODE_HOOK_SESSION_ID.
+
+Bypass:
+- Set JCODE_TOOL_POLICY_BYPASS=1 to skip all policy checks (escape hatch).
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+
+AMBIENT_BRANCH_RE = re.compile(r"^ambient/")
+
+
+def read_tool_command() -> tuple[str, str, str | None]:
+    """Return (tool_name, command_string, cwd).
+
+    Tool input may have the command at `command`, `cmd`, or be a JSON string.
+    """
+    tool_name = os.environ.get("JCODE_HOOK_TOOL_NAME", "")
+    cwd = os.environ.get("JCODE_HOOK_CWD") or None
+    raw = sys.stdin.read()
+    cmd = ""
+    if raw.strip():
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                cmd = obj.get("command") or obj.get("cmd") or obj.get("shell_command") or ""
+            elif isinstance(obj, str):
+                cmd = obj
+        except json.JSONDecodeError:
+            cmd = raw.strip()
+    return tool_name, cmd, cwd
+
+
+def is_git_commit(cmd: str) -> bool:
+    return bool(re.search(r"\bgit\s+commit\b", cmd))
+
+
+def is_git_push(cmd: str) -> bool:
+    return bool(re.search(r"\bgit\s+push\b", cmd))
+
+
+def current_branch(cwd: str | None) -> str | None:
+    args = ["git", "rev-parse", "--abbrev-ref", "HEAD"]
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, cwd=cwd, timeout=5, check=False)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip() or None
+
+
+def run_jcode_goal_check(cwd: str | None) -> int:
+    """Call `jcode-goal check --json` and return its exit code.
+
+    Falls back to exit 0 (allow) if jcode-goal is not on PATH or fails to run —
+    we don't want the policy hook itself to break the session.
+    """
+    args = ["jcode-goal", "check", "--json"]
+    if cwd:
+        args.extend(["--cwd", cwd])
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=5, check=False)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return 0
+    return r.returncode if r.returncode is not None else 0
+
+
+def block(reason: str) -> None:
+    print(reason, file=sys.stderr, flush=True)
+    raise SystemExit(2)
+
+
+def main() -> int:
+    # Bypass escape hatch
+    if os.environ.get("JCODE_TOOL_POLICY_BYPASS") == "1":
+        return 0
+
+    tool_name, cmd, cwd = read_tool_command()
+
+    # Only inspect Bash commands; Read/Write/Edit etc. are unaffected.
+    if tool_name not in ("Bash", "bash", "shell", "Shell"):
+        return 0
+
+    if not cmd:
+        return 0
+
+    # 1. Block `git push` from a session — worker should never push.
+    if is_git_push(cmd):
+        block(
+            "blocked by jcode-tool-policy: 'git push' is not allowed from a "
+            "session. The user runs `git push` outside the session."
+        )
+
+    # 2. Enforce goal-alignment on `git commit` in ambient/* branches.
+    if is_git_commit(cmd):
+        branch = current_branch(cwd)
+        if branch and AMBIENT_BRANCH_RE.match(branch):
+            rc = run_jcode_goal_check(cwd)
+            if rc == 1:
+                block(
+                    "blocked by jcode-tool-policy: this branch is an ambient/* "
+                    "branch but the project has no active goal. Run "
+                    "`jcode-goal add '<title>' --priority high` first."
+                )
+            if rc == 2:
+                block(
+                    "blocked by jcode-tool-policy: active goal has no pending "
+                    "steps. Add a milestone/step (`jcode-goal milestone <id> "
+                    "add '<title>'`) or mark the goal complete before committing."
+                )
+            # rc 0, 3, or fail-open: allow
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -334,6 +334,98 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_check(args) -> int:
+    """Check goal state for the current project (or --cwd).
+
+    Designed to be called from pre_tool hooks and CI checks. Returns:
+      exit 0 : an active goal exists with at least one pending step
+      exit 1 : no active goal for this project
+      exit 2 : active goal exists but all steps are completed
+      exit 3 : not in a git repository
+
+    Output (stdout) is JSON when --json is passed; human-readable otherwise.
+    Stderr is reserved for failure reason (consumed by jcode pre_tool on exit 2).
+    """
+    cwd = args.cwd
+    if not cwd:
+        try:
+            r = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True, check=False, timeout=5,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            r = None
+        if r and r.returncode == 0:
+            cwd = r.stdout.strip()
+    if not cwd:
+        # Not in a git repo — pass (policy not applicable).
+        print("not in a git repo; check skipped")
+        return 3
+
+    h = hashlib.sha256(cwd.encode()).hexdigest()[:16]
+    d = goal_home() / "projects" / h
+
+    active = []
+    if d.is_dir():
+        for fp in sorted(d.glob("*.json")):
+            try:
+                g = load_goal(fp)
+            except (json.JSONDecodeError, OSError):
+                continue
+            if g.get("status") == "active":
+                active.append(g)
+
+    if not active:
+        msg = f"no active goal for project (hash={h}); run: jcode-goal add '<title>' --priority high"
+        if args.json:
+            print(json.dumps({"ok": False, "reason": "no_active_goal", "hash": h, "message": msg}))
+        else:
+            print(msg, file=sys.stderr)
+        return 1
+
+    # Sort by priority (high > medium > low), then by created_at (oldest first)
+    prio_rank = {"high": 0, "medium": 1, "low": 2}
+    active.sort(key=lambda g: (prio_rank.get(g.get("priority", "medium"), 1), g.get("created_at", "")))
+    g = active[0]
+
+    pending_steps = []
+    for m in g.get("milestones") or []:
+        if m.get("status") == "pending":
+            for s in m.get("steps") or []:
+                if s.get("status") == "pending":
+                    pending_steps.append({"milestone_id": m.get("id"), "step_id": s.get("id"), "content": s.get("content")})
+
+    if not pending_steps:
+        msg = f"active goal {g['id']} ({g.get('title','')}) has no pending steps; add a milestone/step or mark complete"
+        if args.json:
+            print(json.dumps({
+                "ok": False,
+                "reason": "no_pending_steps",
+                "goal_id": g["id"],
+                "title": g.get("title", ""),
+                "message": msg,
+            }))
+        else:
+            print(msg, file=sys.stderr)
+        return 2
+
+    payload = {
+        "ok": True,
+        "goal_id": g["id"],
+        "title": g.get("title", ""),
+        "priority": g.get("priority", "medium"),
+        "pending_steps": pending_steps[:5],   # cap output size
+        "pending_count": len(pending_steps),
+    }
+    if args.json:
+        print(json.dumps(payload))
+    else:
+        print(f"ok: goal {g['id']} ({g.get('title','')}) — {len(pending_steps)} pending step(s)")
+        for s in pending_steps[:5]:
+            print(f"  - {s['milestone_id']}/{s['step_id']}: {s['content']}")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Argparse wiring
 # ---------------------------------------------------------------------------
@@ -395,6 +487,12 @@ def build_parser() -> argparse.ArgumentParser:
     psu.add_argument("goal_id")
     psu.add_argument("new_status", choices=sorted(VALID_STATUSES))
     psu.set_defaults(func=cmd_status)
+
+    # check
+    pc = sub.add_parser("check", help="verify goal state for current project (used by pre_tool hooks)")
+    pc.add_argument("--cwd", default=None, help="override cwd for project_hash")
+    pc.add_argument("--json", action="store_true")
+    pc.set_defaults(func=cmd_check)
 
     return p
 
