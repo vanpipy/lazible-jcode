@@ -136,6 +136,22 @@ def run_shell(cmd: str, cwd: str | None = None, timeout: int = 300) -> tuple[int
         return 124, "", f"timeout after {timeout}s"
 
 
+def _dryrun_verify_fn():
+    """Return the dry-run verify function.
+
+    Honors JCODE_DRYRUN_VERIFY env var to force failure/success:
+      - "pass" / unset / "" : always return (0, "", "")
+      - "fail": always return (1, "", "dryrun verify forced failure")
+      - any other value     : interpreted as a shell command; runs via run_shell
+    """
+    mode = os.environ.get("JCODE_DRYRUN_VERIFY", "")
+    if mode == "fail":
+        return lambda cmd, **kw: (1, "", "dryrun verify forced failure")
+    if mode and mode != "pass":
+        return lambda cmd, cwd=None, timeout=300, **kw: run_shell(mode, cwd=cwd, timeout=timeout)
+    return lambda cmd, **kw: (0, "", "")
+
+
 def git_head_sha(cwd: str | None = None) -> str | None:
     try:
         out = subprocess.run(["git", "-C", cwd or os.getcwd(), "rev-parse", "HEAD"],
@@ -557,7 +573,7 @@ def cmd_once(args) -> int:
         spawn_fn=spawn_worker if not args.dry_run else (lambda **kw: "FAKE_SESSION_ID"),
         status_fn=swarm_status if not args.dry_run else (lambda sid: {"status": "done",
                                                                        "latest_completion_report": args.fake_report}),
-        verify_fn=run_shell if not args.dry_run else (lambda cmd, **kw: (0, "", "")),
+        verify_fn=run_shell if not args.dry_run else _dryrun_verify_fn(),
     )
     all_actions.extend(actions)
     # If we did anything in goal 0 but didn't finish, don't proceed.
@@ -582,6 +598,52 @@ def cmd_once(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# cmd_loop: run up to N cycles sequentially, stopping on terminal actions
+# ---------------------------------------------------------------------------
+
+TERMINAL_ACTION_TYPES = {"goal_completed", "milestone_escalated"}
+
+
+def cmd_loop(args) -> int:
+    """Run `cmd_once` up to args.loop times.
+
+    Stops early on terminal action (goal_completed or milestone_escalated)
+    to match /orchestrate loop N semantics. Returns last cmd_once rc.
+    """
+    n = max(1, args.loop)
+    last_rc = 0
+    ran = 0
+    summary_actions: list[dict] = []
+    for i in range(n):
+        ran += 1
+        last_rc = cmd_once(args)
+        # If the most recent action was terminal, stop.
+        # We re-derive it from the persisted goal state to avoid re-parsing stdout.
+        # For JSON mode we captured above; otherwise inspect the latest goal file.
+        cwd = args.cwd or os.getcwd()
+        goals = load_active_goals(cwd)
+        if not goals:
+            break
+        goal_path, goal = goals[0]
+        statuses = [m.get("status") for m in goal.get("milestones") or []]
+        if "escalated" in statuses:
+            break
+        if goal.get("status") == "complete":
+            break
+    # Final summary
+    if args.json:
+        print(json.dumps({
+            "ok": True,
+            "ran_cycles": ran,
+            "max_cycles": n,
+            "stopped_reason": "terminal_action" if ran < n else "exhausted",
+        }, indent=2))
+    else:
+        print(f"\nloop: ran {ran}/{n} cycles")
+    return last_rc
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="jcode-orchestrate",
@@ -589,6 +651,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--once", action="store_true", default=True,
                    help="run a single cycle (default; daemon loop owned by ambient scheduler)")
+    p.add_argument("--loop", type=int, default=0, metavar="N",
+                   help="run up to N cycles sequentially; stop on goal_completed "
+                        "or milestone_escalated; intended for /orchestrate loop N")
     p.add_argument("--dry-run", action="store_true",
                    help="print actions without spawning workers or running verify_cmd")
     p.add_argument("--cwd", default=None, help="override cwd for project_hash lookup")
@@ -600,6 +665,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.loop and args.loop > 0:
+        return cmd_loop(args)
     return cmd_once(args)
 
 
