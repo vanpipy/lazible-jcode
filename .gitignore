@@ -11,6 +11,7 @@ config/mcp.json
 !config/templates/
 !config/skills/
 !config/notes/
+!config/bin/
 !config/mcp.example.json
 
 # profiles : local drafts must never reach git
@@ -52,6 +53,8 @@ config/.snapshot-tmp/
 __pycache__/
 *.pyc
 scripts/_lib_toml.pyc
+# same for the python-based CLIs in config/bin/
+config/bin/__pycache__/
 
 # build artifacts
 target/

@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# jcode-l2-check : verify L2 ambient is goal-driven.
+#
+# Reports readiness for goal-driven L2 ambient (autonomous profile + scaffolding).
+# Exits 0 if all 6 checks pass, non-zero otherwise. Exit code is the first failed
+# check id, which script callers can rely on for fail-fast:
+#   1 = ambient not enabled
+#   2 = ~/AGENTS.md missing
+#   3 = long-task-discipline skill missing
+#   4 = jcode-goal CLI not installed
+#   5 = no active goal for current project
+#   6 = max_interval_minutes too long (>60)
+#
+# Usage:
+#   jcode-l2-check                 # run all checks (uses current dir)
+#   jcode-l2-check --json          # machine-readable output
+#   jcode-l2-check --quiet         # exit code only, no output
+#   jcode-l2-check --check <id>    # run only one check
+#
+# No environment variables required. Uses ~/.jcode/config.toml and current cwd.
+
+set -u
+
+CONFIG="${JCODE_CONFIG:-$HOME/.jcode/config.toml}"
+SKILL_DIR="$HOME/.jcode/skills/long-task-discipline"
+GOAL_BIN="${JCODE_GOAL_BIN:-$HOME/.local/bin/jcode-goal}"
+GOAL_HOME="${JCODE_GOAL_HOME:-$HOME/.jcode/goals}"
+
+json_mode=0
+quiet_mode=0
+only_check=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json)   json_mode=1; shift ;;
+        --quiet)  quiet_mode=1; shift ;;
+        --check)  only_check="${2:-}"; shift 2 ;;
+        -h|--help)
+            sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+            exit 0 ;;
+        *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+# ---------- helpers ----------
+
+passed_ids=()
+failed_ids=()
+declare -A fail_reason
+
+record() {
+    local id="$1" ok="$2" name="$3" detail="${4:-}"
+    if [[ "$ok" == "1" ]]; then
+        passed_ids+=("$id")
+        [[ $json_mode -eq 0 && $quiet_mode -eq 0 ]] && printf '  \033[32m✓\033[0m [%d] %s\n' "$id" "$name"
+    else
+        failed_ids+=("$id")
+        fail_reason[$id]="$detail"
+        [[ $json_mode -eq 0 && $quiet_mode -eq 0 ]] && printf '  \033[31m✗\033[0m [%d] %s — %s\n' "$id" "$name" "$detail"
+    fi
+}
+
+should_run() {
+    [[ -z "$only_check" || "$only_check" == "$1" ]]
+}
+
+# ---------- check 1: ambient.enabled ----------
+
+check_ambient() {
+    if should_run 1; then
+        if [[ ! -f "$CONFIG" ]]; then
+            record 1 0 "ambient.enabled = true" "config not found at $CONFIG"
+        else
+            local v
+            # Parse [ambient] section-aware (avoid matching [tools].enabled = [] earlier
+            # in the file, or [display].enabled_animations). Same pattern as check_interval.
+            v=$(awk -F'=' '/^\[ambient\]/{a=1; next} /^\[/{a=0} a && /^[ \t]*enabled[ \t]*=/{
+                gsub(/[ \t]/,"",$2); gsub(/["'\'']/,"",$2); print $2; exit}' "$CONFIG" 2>/dev/null || echo "")
+            if [[ "$v" == "true" ]]; then
+                record 1 1 "ambient.enabled = true" "ambient.enabled = true in $CONFIG"
+            else
+                record 1 0 "ambient.enabled = true" "ambient.enabled = '$v' (need true; run ./scripts/use-profile)"
+            fi
+        fi
+    fi
+}
+
+# ---------- check 2: ~/AGENTS.md ----------
+
+check_agents() {
+    if should_run 2; then
+        if [[ -f "$HOME/AGENTS.md" ]]; then
+            record 2 1 "~/AGENTS.md present" "found at $HOME/AGENTS.md"
+        else
+            record 2 0 "~/AGENTS.md present" "missing; run cd ~/Project/lazible-jcode && ./scripts/install (only writes if absent)"
+        fi
+    fi
+}
+
+# ---------- check 3: long-task-discipline skill ----------
+
+check_skill() {
+    if should_run 3; then
+        if [[ -f "$SKILL_DIR/SKILL.md" ]]; then
+            record 3 1 "long-task-discipline skill installed" "found at $SKILL_DIR/SKILL.md"
+        else
+            record 3 0 "long-task-discipline skill installed" "missing; reinstall via ./scripts/install or rm -rf $SKILL_DIR && ./scripts/install"
+        fi
+    fi
+}
+
+# ---------- check 4: jcode-goal CLI ----------
+
+check_goal_cli() {
+    if should_run 4; then
+        if [[ -x "$GOAL_BIN" ]]; then
+            record 4 1 "jcode-goal CLI installed" "$GOAL_BIN is executable"
+        else
+            record 4 0 "jcode-goal CLI installed" "missing or not executable; reinstall via ./scripts/install"
+        fi
+    fi
+}
+
+# ---------- check 5: active goal for current project ----------
+
+check_active_goal() {
+    if should_run 5; then
+        # compute project_hash the same way jcode-goal does
+        local root hash dir active
+        root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+        if [[ -n "$root" ]]; then
+            hash=$(printf '%s' "$root" | sha256sum | cut -c1-16)
+            dir="$GOAL_HOME/projects/$hash"
+        else
+            dir="$GOAL_HOME/user"
+            hash="_user"
+        fi
+        if [[ -d "$dir" ]]; then
+            active=$(grep -l '"status"[[:space:]]*:[[:space:]]*"active"' "$dir"/*.json 2>/dev/null | head -1 || true)
+        else
+            active=""
+        fi
+        if [[ -n "$active" ]]; then
+            local id
+            id=$(basename "$active" .json)
+            record 5 1 "active goal exists for current project (hash=$hash)" "found: $id"
+        else
+            record 5 0 "active goal exists for current project (hash=$hash)" \
+                "no active goal; run: jcode-goal add \"<title>\" --priority high"
+        fi
+    fi
+}
+
+# ---------- check 6: cycle interval sane ----------
+
+check_interval() {
+    if should_run 6; then
+        if [[ ! -f "$CONFIG" ]]; then
+            record 6 0 "max_interval_minutes sane" "config missing"
+            return
+        fi
+        local v
+        v=$(awk -F'=' '/^\[ambient\]/{a=1; next} /^\[/{a=0} a && /max_interval_minutes/{
+            gsub(/[[:space:]]/,"",$2); print $2; exit}' "$CONFIG" 2>/dev/null || echo "")
+        if [[ -z "$v" ]]; then
+            record 6 0 "max_interval_minutes sane" "field not found in [ambient]"
+        elif [[ "$v" -gt 60 ]]; then
+            record 6 0 "max_interval_minutes sane" "max_interval_minutes = $v (>60; edit config/profiles/autonomous.toml)"
+        else
+            record 6 1 "max_interval_minutes sane" "max_interval_minutes = $v"
+        fi
+    fi
+}
+
+# ---------- run ----------
+
+[[ $json_mode -eq 0 && $quiet_mode -eq 0 ]] && echo "=== L2 ambient goal-driven readiness check ==="
+
+check_ambient
+check_agents
+check_skill
+check_goal_cli
+check_active_goal
+check_interval
+
+# ---------- report ----------
+
+total_passed=${#passed_ids[@]}
+total_failed=${#failed_ids[@]}
+
+if [[ $json_mode -eq 1 ]]; then
+    # emit JSON
+    printf '{"passed":['
+    sep=""
+    for id in "${passed_ids[@]:-}"; do
+        [[ -z "$id" ]] && continue
+        printf '%s%d' "$sep" "$id"
+        sep=","
+    done
+    printf '],"failed":['
+    sep=""
+    for id in "${failed_ids[@]:-}"; do
+        [[ -z "$id" ]] && continue
+        printf '%s{"id":%d,"reason":"%s"}' "$sep" "$id" "${fail_reason[$id]//\"/\\\"}"
+        sep=","
+    done
+    printf '],"summary":{"passed":%d,"failed":%d}}\n' "$total_passed" "$total_failed"
+fi
+
+if [[ $total_failed -eq 0 ]]; then
+    [[ $json_mode -eq 0 && $quiet_mode -eq 0 ]] && echo "" && echo "✓ L2 ambient is goal-driven ($total_passed/$total_passed checks passed)"
+    exit 0
+fi
+
+[[ $json_mode -eq 0 && $quiet_mode -eq 0 ]] && {
+    echo ""
+    echo "✗ L2 ambient is NOT fully goal-driven ($total_passed/$((total_passed + total_failed)) checks passed)"
+    echo "  first failure: [${failed_ids[0]}] ${fail_reason[${failed_ids[0]}]}"
+    echo "  full remediation in install --help and config/templates/AGENTS.md"
+}
+
+# exit code = first failed check id (1..6)
+exit "${failed_ids[0]}"

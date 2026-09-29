@@ -1,0 +1,411 @@
+#!/usr/bin/env python3
+# jcode-goal : manage ~/.jcode/goals/ entries.
+#
+# Storage layout:
+#   ~/.jcode/goals/
+#   ├── projects/<project_hash>/<goal_id>.json    # project-scoped goals
+#   ├── user/<goal_id>.json                       # user-scoped goals
+#   └── projects/<project_hash>/history.jsonl     # cycle history (append-only)
+#
+# JSON schema (matches the existing 2026-09-23 tui-chat-pane-jcode-alignment.json
+# round-trip; do not break field names or status values):
+#   {
+#     "id":          "<goal-id>",
+#     "title":       "<short title>",
+#     "scope":       "project" | "user",
+#     "status":      "active" | "paused" | "complete" | "abandoned" | "needs_decision",
+#     "priority":    "high" | "medium" | "low",
+#     "description": "<long-form description>",
+#     "why":         "<rationale>",
+#     "milestones":  [{"id":..., "title":..., "status":..., "steps":[...]}],
+#     "created_at":  "<ISO8601>",
+#     "updated_at":  "<ISO8601>"
+#   }
+#
+# Subcommands:
+#   add <title> [--scope project|user] [--priority high|medium|low] [--content <text>]
+#   list [--scope <scope>] [--status <status>] [--json]
+#   show <goal-id>
+#   rm <goal-id>
+#   milestone <goal-id> add <title>
+#   step <goal-id> <milestone-id> add <content>
+#   status <goal-id> <new-status>
+#
+# Environment:
+#   JCODE_GOAL_HOME    override ~/.jcode/goals (default: ~/.jcode/goals)
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+VALID_STATUSES = {"active", "paused", "complete", "abandoned", "needs_decision"}
+VALID_PRIORITIES = {"high", "medium", "low"}
+VALID_SCOPES = {"project", "user"}
+
+
+def goal_home() -> Path:
+    return Path(os.environ.get("JCODE_GOAL_HOME", os.path.expanduser("~/.jcode/goals")))
+
+
+def project_hash(cwd: str | None = None) -> str:
+    """16-hex-char sha256 of git toplevel (or '_user' if not in a repo)."""
+    cwd = cwd or os.getcwd()
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        root = out.stdout.strip() if out.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        root = ""
+    if root:
+        return hashlib.sha256(root.encode()).hexdigest()[:16]
+    return "_user"
+
+
+def goal_dir_for(scope: str, cwd: str | None = None) -> Path:
+    """Where goal JSON files live for a given scope + cwd."""
+    home = goal_home()
+    if scope == "user":
+        return home / "user"
+    h = project_hash(cwd)
+    d = home / "projects" / h
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def now_iso() -> str:
+    """ISO8601 with microsecond precision, matching existing files."""
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def generate_id() -> str:
+    """Format: goal-<unix_seconds>-<4hex>. Matches existing convention pattern."""
+    suffix = f"{os.urandom(2).hex()[:4]}"
+    return f"goal-{int(dt.datetime.now().timestamp())}-{suffix}"
+
+
+def load_goal(path: Path) -> dict:
+    with path.open() as f:
+        return json.load(f)
+
+
+def save_goal(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data["updated_at"] = now_iso()
+    tmp = path.with_suffix(".json.tmp")
+    with tmp.open("w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    tmp.replace(path)
+
+
+def find_goal(goal_id: str) -> Path | None:
+    """Search all goal dirs for a goal by id."""
+    home = goal_home()
+    candidates = []
+    for d in [home / "user", *home.glob("projects/*")]:
+        if d.is_dir():
+            candidates.extend(d.glob("*.json"))
+    for c in candidates:
+        try:
+            if load_goal(c).get("id") == goal_id:
+                return c
+        except (json.JSONDecodeError, OSError):
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Subcommand implementations
+# ---------------------------------------------------------------------------
+
+def cmd_add(args) -> int:
+    if not args.title:
+        print("error: title is required", file=sys.stderr)
+        return 2
+    scope = args.scope or "project"
+    if scope not in VALID_SCOPES:
+        print(f"error: scope must be one of {VALID_SCOPES}", file=sys.stderr)
+        return 2
+    priority = args.priority or "medium"
+    if priority not in VALID_PRIORITIES:
+        print(f"error: priority must be one of {VALID_PRIORITIES}", file=sys.stderr)
+        return 2
+
+    goal_id = generate_id()
+    d = goal_dir_for(scope, cwd=args.cwd)
+    ts = now_iso()
+    data = {
+        "id": goal_id,
+        "title": args.title,
+        "scope": scope,
+        "status": "active",
+        "priority": priority,
+        "description": args.content or "",
+        "why": args.why or "",
+        "milestones": [],
+        "created_at": ts,
+        "updated_at": ts,
+    }
+    path = d / f"{goal_id}.json"
+    save_goal(path, data)
+    print(f"created {path}")
+    print(f"  id:      {goal_id}")
+    print(f"  scope:   {scope}")
+    print(f"  priority: {priority}")
+    if args.content:
+        preview = args.content.splitlines()[0][:80]
+        print(f"  content: {preview}{'...' if len(args.content) > 80 else ''}")
+    return 0
+
+
+def cmd_list(args) -> int:
+    home = goal_home()
+    paths: list[Path] = []
+    if not args.scope or args.scope == "user":
+        paths.extend((home / "user").glob("*.json"))
+    if not args.scope or args.scope == "project":
+        paths.extend(home.glob("projects/*/*.json"))
+    if not paths:
+        print("(no goals)")
+        return 0
+
+    rows = []
+    for p in sorted(paths):
+        try:
+            g = load_goal(p)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"warning: skipping {p}: {e}", file=sys.stderr)
+            continue
+        if args.status and g.get("status") != args.status:
+            continue
+        rows.append(g)
+
+    if args.json:
+        json.dump(rows, sys.stdout, indent=2, ensure_ascii=False)
+        sys.stdout.write("\n")
+        return 0
+
+    if not rows:
+        print(f"(no goals with status={args.status})")
+        return 0
+
+    # Human-readable table
+    width_id = max(len("ID"), max(len(g["id"]) for g in rows))
+    width_status = max(len("STATUS"), max(len(g.get("status", "")) for g in rows))
+    width_prio = max(len("PRI"), max(len(g.get("priority", "")) for g in rows))
+    print(f"{'ID'.ljust(width_id)}  {'STATUS'.ljust(width_status)}  {'PRI'.ljust(width_prio)}  TITLE")
+    print("-" * (width_id + width_status + width_prio + 9))
+    for g in rows:
+        print(
+            f"{g['id'].ljust(width_id)}  "
+            f"{g.get('status','').ljust(width_status)}  "
+            f"{g.get('priority','').ljust(width_prio)}  "
+            f"{g.get('title','')}"
+        )
+    return 0
+
+
+def cmd_show(args) -> int:
+    p = find_goal(args.goal_id)
+    if not p:
+        print(f"error: goal '{args.goal_id}' not found", file=sys.stderr)
+        return 2
+    g = load_goal(p)
+    print(f"path:    {p}")
+    print(f"id:      {g.get('id')}")
+    print(f"title:   {g.get('title')}")
+    print(f"scope:   {g.get('scope')}")
+    print(f"status:  {g.get('status')}")
+    print(f"priority: {g.get('priority')}")
+    print(f"created: {g.get('created_at')}")
+    print(f"updated: {g.get('updated_at')}")
+    if g.get("description"):
+        print(f"\ndescription:\n  {g['description']}")
+    if g.get("why"):
+        print(f"\nwhy:\n  {g['why']}")
+    milestones = g.get("milestones") or []
+    if milestones:
+        print(f"\nmilestones ({len(milestones)}):")
+        for m in milestones:
+            mid = m.get("id", "?")
+            mtitle = m.get("title", "")
+            mstatus = m.get("status", "?")
+            print(f"  [{mstatus}] {mid}: {mtitle}")
+            for s in m.get("steps") or []:
+                print(f"      - [{s.get('status','?')}] {s.get('id','?')}: {s.get('content','')}")
+    return 0
+
+
+def cmd_rm(args) -> int:
+    p = find_goal(args.goal_id)
+    if not p:
+        print(f"error: goal '{args.goal_id}' not found", file=sys.stderr)
+        return 2
+    if not args.yes:
+        print(f"about to delete {p}")
+        print("use --yes to confirm")
+        return 1
+    p.unlink()
+    print(f"deleted {p}")
+    return 0
+
+
+def cmd_milestone(args) -> int:
+    p = find_goal(args.goal_id)
+    if not p:
+        print(f"error: goal '{args.goal_id}' not found", file=sys.stderr)
+        return 2
+    g = load_goal(p)
+    if args.subcmd == "add":
+        title = args.title
+        if not title:
+            print("error: milestone title is required", file=sys.stderr)
+            return 2
+        n = len(g.get("milestones") or [])
+        mid = f"m-{n}"
+        g.setdefault("milestones", []).append({
+            "id": mid,
+            "title": title,
+            "status": "pending",
+            "steps": [],
+        })
+        save_goal(p, g)
+        print(f"added milestone {mid} to {g['id']}")
+        return 0
+    print(f"error: unknown milestone subcommand '{args.subcmd}'", file=sys.stderr)
+    return 2
+
+
+def cmd_step(args) -> int:
+    p = find_goal(args.goal_id)
+    if not p:
+        print(f"error: goal '{args.goal_id}' not found", file=sys.stderr)
+        return 2
+    g = load_goal(p)
+    milestone = None
+    for m in g.get("milestones") or []:
+        if m.get("id") == args.milestone_id:
+            milestone = m
+            break
+    if not milestone:
+        print(f"error: milestone '{args.milestone_id}' not found in goal '{args.goal_id}'", file=sys.stderr)
+        return 2
+    if args.subcmd == "add":
+        content = args.content
+        if not content:
+            print("error: step content is required", file=sys.stderr)
+            return 2
+        n = len(milestone.get("steps") or [])
+        sid = f"{args.milestone_id}-step-{n}"
+        milestone.setdefault("steps", []).append({
+            "id": sid,
+            "content": content,
+            "status": "pending",
+        })
+        save_goal(p, g)
+        print(f"added step {sid} to milestone {args.milestone_id}")
+        return 0
+    print(f"error: unknown step subcommand '{args.subcmd}'", file=sys.stderr)
+    return 2
+
+
+def cmd_status(args) -> int:
+    if args.new_status not in VALID_STATUSES:
+        print(f"error: status must be one of {sorted(VALID_STATUSES)}", file=sys.stderr)
+        return 2
+    p = find_goal(args.goal_id)
+    if not p:
+        print(f"error: goal '{args.goal_id}' not found", file=sys.stderr)
+        return 2
+    g = load_goal(p)
+    old = g.get("status")
+    g["status"] = args.new_status
+    save_goal(p, g)
+    print(f"{g['id']}: {old} -> {args.new_status}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Argparse wiring
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="jcode-goal",
+        description="Manage ~/.jcode/goals/ entries (goal-driven L2 ambient)",
+    )
+    sub = p.add_subparsers(dest="command", metavar="<command>")
+
+    # add
+    pa = sub.add_parser("add", help="create a new goal")
+    pa.add_argument("title")
+    pa.add_argument("--scope", choices=list(VALID_SCOPES), default="project")
+    pa.add_argument("--priority", choices=list(VALID_PRIORITIES), default="medium")
+    pa.add_argument("--content", default="")
+    pa.add_argument("--why", default="")
+    pa.add_argument("--cwd", default=None, help="override cwd for project_hash")
+    pa.set_defaults(func=cmd_add)
+
+    # list
+    pl = sub.add_parser("list", help="list goals")
+    pl.add_argument("--scope", choices=list(VALID_SCOPES))
+    pl.add_argument("--status", choices=sorted(VALID_STATUSES))
+    pl.add_argument("--json", action="store_true")
+    pl.set_defaults(func=cmd_list)
+
+    # show
+    ps = sub.add_parser("show", help="show goal details")
+    ps.add_argument("goal_id")
+    ps.set_defaults(func=cmd_show)
+
+    # rm
+    pr = sub.add_parser("rm", help="remove a goal (requires --yes)")
+    pr.add_argument("goal_id")
+    pr.add_argument("--yes", action="store_true")
+    pr.set_defaults(func=cmd_rm)
+
+    # milestone
+    pm = sub.add_parser("milestone", help="manage milestones within a goal")
+    pm.add_argument("goal_id")
+    pm_sub = pm.add_subparsers(dest="subcmd", metavar="<action>")
+    pma = pm_sub.add_parser("add")
+    pma.add_argument("title")
+    pm.set_defaults(func=cmd_milestone)
+
+    # step
+    pst = sub.add_parser("step", help="manage steps within a milestone")
+    pst.add_argument("goal_id")
+    pst.add_argument("milestone_id")
+    pst_sub = pst.add_subparsers(dest="subcmd", metavar="<action>")
+    psta = pst_sub.add_parser("add")
+    psta.add_argument("content")
+    pst.set_defaults(func=cmd_step)
+
+    # status
+    psu = sub.add_parser("status", help="change goal status")
+    psu.add_argument("goal_id")
+    psu.add_argument("new_status", choices=sorted(VALID_STATUSES))
+    psu.set_defaults(func=cmd_status)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if not hasattr(args, "func"):
+        build_parser().print_help()
+        return 0
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

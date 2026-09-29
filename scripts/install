@@ -23,10 +23,13 @@
 #   6. Install binary: ~/.local/bin/jcode (back up existing)
 #   7. Wire config: config.toml + use-profile + sync-skills + install-shell-env
 #                  + jcode-audit-log
-#   8. Verify: 7 checks (binary callable / binary matches source /
+#   8. Scaffolding: install goal-driven L2 ambient pieces (long-task-discipline skill,
+#                  ~/AGENTS.md template, jcode-goal + jcode-l2-check CLIs). Each piece
+#                  is first-write-only (never overwrites user-edited files).
+#   9. Verify: 8 checks (binary callable / binary matches source /
 #                  origin is vanpipy fork / config not symlink /
-#                  autonomous profile / skills / shell env)
-#   9. Write state.json + print summary
+#                  autonomous profile / skills / shell env / scaffolding CLIs)
+#  10. Write state.json + print summary
 #
 # Exit codes:
 #   0  success
@@ -480,14 +483,74 @@ phase_wire_config() {
 }
 
 # ============================================================================
-# Phase 8: Verify
+# Phase 8: Scaffolding (goal-driven L2 ambient pieces)
+#
+# Installs four pieces that turn L2 ambient from "check-in + queue maintenance"
+# into truly goal-driven execution. Each piece is **first-write-only**:
+# subsequent installs NEVER overwrite user-edited files. To force regeneration
+# of any piece, delete the destination manually and rerun install.
+#
+#   8a. long-task-discipline skill → ~/.jcode/skills/long-task-discipline/SKILL.md
+#       (goal discipline: ambient workers must align commits with active goal)
+#   8b. ~/AGENTS.md user-level template (only if missing; project layer reads
+#       this via load_agents_md_files_from_dirs in jcode-base/src/prompt.rs:949)
+#   8c. jcode-goal CLI → ~/.local/bin/jcode-goal (Python; manages ~/.jcode/goals/)
+#   8d. jcode-l2-check CLI → ~/.local/bin/jcode-l2-check (bash; readiness verifier)
+# ============================================================================
+
+phase_scaffolding() {
+    section "phase 8: scaffolding"
+
+    # 8a. long-task-discipline skill (skip if exists)
+    local skill_dst="$HOME/.jcode/skills/long-task-discipline"
+    if [[ -f "$skill_dst/SKILL.md" ]]; then
+        log "long-task-discipline skill already installed (skipped)"
+    else
+        run mkdir -p "$skill_dst"
+        run cp "$REPO/config/skills/long-task-discipline/SKILL.md" \
+               "$skill_dst/SKILL.md"
+        log "long-task-discipline skill installed: $skill_dst/SKILL.md"
+    fi
+
+    # 8b. ~/AGENTS.md (only if missing — never overwrite user edits)
+    if [[ -f "$HOME/AGENTS.md" ]]; then
+        log "~/AGENTS.md already exists (skipped; install never overwrites user files)"
+    else
+        run cp "$REPO/config/templates/AGENTS.md" "$HOME/AGENTS.md"
+        log "~/AGENTS.md installed from template (customize freely; install won't overwrite)"
+    fi
+
+    # 8c + 8d. CLI binaries → ~/.local/bin/
+    local cli_src_dir="$REPO/config/bin"
+    for cli in jcode-goal jcode-l2-check; do
+        local dst="$HOME/.local/bin/$cli"
+        run install -m 0755 "$cli_src_dir/$cli" "$dst"
+        log "CLI installed: $dst"
+    done
+
+    # Optional readiness check (informational; does NOT block install)
+    if [[ $dry_run -eq 0 ]]; then
+        echo ""
+        echo "  --- readiness check (informational) ---"
+        "$HOME/.local/bin/jcode-l2-check" --quiet 2>/dev/null || true
+        local rc=$?
+        if [[ $rc -eq 0 ]]; then
+            echo "  → L2 ambient is goal-driven"
+        else
+            echo "  → readiness check exit=$rc (run ~/.local/bin/jcode-l2-check for details)"
+        fi
+    fi
+}
+
+# ============================================================================
+# Phase 9: Verify
 # ============================================================================
 
 phase_verify() {
-    section "phase 8: verify"
+    section "phase 9: verify"
 
     if [[ $dry_run -eq 1 ]]; then
-        echo "  would run 7 checks (skipped in --dry-run)"
+        echo "  would run 8 checks (skipped in --dry-run)"
         return 0
     fi
 
@@ -543,6 +606,12 @@ phase_verify() {
     grep -q "JCODE_OPENROUTER_MODEL" "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null
     check "shell env installed (JCODE_OPENROUTER_MODEL)"
 
+    [[ -x "$HOME/.local/bin/jcode-goal" ]]
+    check "jcode-goal CLI installed (~/.local/bin/jcode-goal)"
+
+    [[ -x "$HOME/.local/bin/jcode-l2-check" ]]
+    check "jcode-l2-check CLI installed (~/.local/bin/jcode-l2-check)"
+
     # Restore the caller's shell options (e.g. errexit / pipefail).
     set -${saved_opts}
 
@@ -553,11 +622,11 @@ phase_verify() {
 }
 
 # ============================================================================
-# Phase 9: State + summary
+# Phase 10: State + summary
 # ============================================================================
 
 phase_finalize() {
-    section "phase 9: state + summary"
+    section "phase 10: state + summary"
 
     if [[ $dry_run -eq 1 ]]; then
         echo "  would write: $STATE_FILE"
@@ -612,6 +681,13 @@ PY
     echo "  3. Start serve:    nohup $BIN_DST serve &  # or systemd (see scripts/README.md)"
     echo "  4. Watch cycles:   tail -f ~/.jcode/logs/ambient.log"
     echo ""
+    echo "Goal-driven L2 ambient (installed this run):"
+    echo "  • ~/AGENTS.md                 — user-level global instructions"
+    echo "  • ~/.jcode/skills/long-task-discipline/SKILL.md  — goal discipline"
+    echo "  • ~/.local/bin/jcode-goal     — manage ~/.jcode/goals/"
+    echo "  • ~/.local/bin/jcode-l2-check — readiness verifier (6 checks)"
+    echo "  To activate: cd <your-project> && ~/.local/bin/jcode-goal add \"<goal>\" --priority high"
+    echo ""
     echo "To update later (after more commits):"
     echo "  cd $SOURCE_DIR"
     echo "  # commit your new patches first"
@@ -641,6 +717,7 @@ main() {
     phase_build
     phase_install_binary
     phase_wire_config
+    phase_scaffolding
     phase_verify
     phase_finalize
 }
