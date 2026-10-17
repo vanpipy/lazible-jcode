@@ -26,9 +26,10 @@
 #   8. Scaffolding: install goal-driven L2 ambient pieces (long-task-discipline skill,
 #                  ~/AGENTS.md template, jcode-goal + jcode-l2-check CLIs). Each piece
 #                  is first-write-only (never overwrites user-edited files).
-#   9. Verify: 8 checks (binary callable / binary matches source /
+#   9. Verify: 13 checks (binary callable / binary matches source /
 #                  origin is vanpipy fork / config not symlink /
-#                  autonomous profile / skills / shell env / scaffolding CLIs)
+#                  autonomous profile / skills / shell env /
+#                  4 CLIs installed / 2 slash command skills)
 #  10. Write state.json + print summary
 #
 # Exit codes:
