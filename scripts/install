@@ -181,6 +181,21 @@ phase_preflight() {
     command -v git      >/dev/null || missing+=("git")
     command -v cargo    >/dev/null || missing+=("cargo (install rustup)")
     command -v rustc    >/dev/null || missing+=("rustc")
+    command -v pkg-config >/dev/null || missing+=("pkg-config (apt: pkg-config)")
+
+    # cargo's openssl-sys build script probes for OpenSSL via pkg-config.
+    # Without libssl-dev (or distro equivalent), the probe fails deep inside
+    # 'cargo build --release' (~8 minutes of dependency compilation) instead
+    # of failing fast here. Catch it up front.
+    if command -v pkg-config >/dev/null && ! pkg-config --exists openssl; then
+        if [[ -f /etc/debian_version ]]; then
+            missing+=("libssl-dev (apt: libssl-dev)")
+        elif [[ -f /etc/redhat-release ]]; then
+            missing+=("openssl-devel (dnf: openssl-devel)")
+        else
+            missing+=("OpenSSL development headers (pkg-config openssl)")
+        fi
+    fi
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "missing deps: ${missing[*]}"
