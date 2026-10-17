@@ -20,6 +20,8 @@
 #      baseline auto-detected: symbolic-ref HEAD → origin/main → origin/master
 #   4. Rebase: git rebase <baseline> (runs every install; conflict = exit 4)
 #   5. Build: cargo build --release --bin jcode
+#                  (adds --features linux-compat-vendored-openssl when libssl-dev is
+#                   absent; OPENSSL_VENDORED env override for testing)
 #   6. Install binary: ~/.local/bin/jcode (back up existing)
 #   7. Wire config: config.toml + use-profile + sync-skills + install-shell-env
 #                  + jcode-audit-log
