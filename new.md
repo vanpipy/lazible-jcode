@@ -2,9 +2,13 @@ OK. Going forward I will use **Mermaid** consistently to describe the architectu
 
 Below is the previous core design rewritten in Mermaid.
 
-> **Implementation status note** (2026-09-28): the original architecture envisioned 4 profiles (default / autonomous / conservative / research).
-> In practice only the `autonomous` profile remains : the others were no-ops or referenced unimplemented hooks.
-> The multi-profile architecture below is kept as the **vision**; the current actual state is at [`config/profiles/README.md`](config/profiles/README.md).
+> **Implementation status note**: the original architecture envisioned 4 profiles
+> (default / autonomous / conservative / research). The others were no-ops or
+> referenced unimplemented hooks. The profile layer has since been removed
+> entirely: this repo is now a config-only repository where `config/config.toml`
+> is a verbatim snapshot of the live config. Everything below describing multiple
+> profiles is kept as **vision**, not as current behavior. See
+> [`design.md`](design.md) and [`config/policies/autonomy.md`](config/policies/autonomy.md).
 
 ## 1. Overall architecture
 
