@@ -42,22 +42,12 @@
 
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
-
-JCODE_CONFIG="$HOME/.jcode/config.toml"
-SKILLS_HOME="$HOME/.jcode/skills"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lazible-jcode"
-STATE_FILE="$STATE_DIR/state.json"
+# shellcheck source=scripts/common.sh
+. "$(dirname "$0")/common.sh"
 
 full=0
 yes=0
 dry_run=0
-
-usage() {
-    # Print the leading comment block, whatever length it happens to be.
-    awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
-    exit 0
-}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -68,8 +58,6 @@ while [[ $# -gt 0 ]]; do
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
-
-log() { echo "[uninstall] $*"; }
 
 # remove a path if present, no error when absent
 rm_safe() {

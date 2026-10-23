@@ -23,6 +23,7 @@ scripts/install        ->  wires the two above
 | `config/skills/swarm-engineering/` | The swarm coordination skill |
 | `scripts/install` | Copies config and skills into `~/.jcode` |
 | `scripts/uninstall` | Reverses install |
+| `scripts/common.sh` | Shared paths and helpers, sourced by both scripts |
 
 ## Install
 
@@ -37,6 +38,17 @@ Five phases: preflight, config, skills, verify, state. Preflight fails if
 this repo. Verify ends with 5 checks.
 
 Preview first with `./scripts/install --dry-run`.
+
+Check the current state without touching anything, using
+`./scripts/install --check`. It runs the same 5 checks and writes nothing at
+all, not even the state file. Unlike `--dry-run`, which previews an install
+and skips verification, `--check` actually verifies.
+
+Prompt drift is reported as a warning, not a failure. `install` never writes
+`prompt-overlay.md` or `swarm-prompt.md`, so drift is not something a run of
+`install` can fix, and a successful install should not report failure over it.
+Under `--check` the question is whether anything at all is off, so drift exits
+non-zero there.
 
 ## Editing
 

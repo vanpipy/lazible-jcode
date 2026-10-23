@@ -4,6 +4,7 @@
 # Usage:
 #   ./scripts/install                 # install config (default)
 #   ./scripts/install --dry-run       # show what would happen, no side effects
+#   ./scripts/install --check         # verify live state, write nothing at all
 #   ./scripts/install --help          # show this header
 #
 # This repo is CONFIG ONLY. It never builds, patches or installs jcode.
@@ -23,39 +24,31 @@
 #     install only checks it against live and never overwrites live.
 #
 # Exit codes:
-#   0  success
+#   0  install succeeded, or --check found nothing wrong
 #   1  preflight failed
-#   6  verify failed
+#   6  a check failed. Under --check, prompt drift counts as a failure
+#      too, since that mode asks whether anything at all is off.
 
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/common.sh
+. "$(dirname "$0")/common.sh"
 
-JCODE_CONFIG="$HOME/.jcode/config.toml"
-SKILLS_HOME="$HOME/.jcode/skills"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lazible-jcode"
-STATE_FILE="$STATE_DIR/state.json"
+dry_run=0
+check_only=0
 
 # Live prompt files. Mirrored into config/ for review, never written here.
 LIVE_PROMPTS=(prompt-overlay.md swarm-prompt.md)
 
-dry_run=0
-
-usage() {
-    # Print the leading comment block, whatever length it happens to be.
-    awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
-    exit 0
-}
-
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) dry_run=1; shift ;;
+        --check)   check_only=1; shift ;;
         -h|--help) usage ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
 
-log()  { echo "[install] $*"; }
 err()  { echo "[install] ERR: $*" >&2; }
 section() { echo ""; echo "=== $* ==="; }
 
@@ -152,18 +145,37 @@ phase_verify() {
         return 0
     fi
 
-    local ok=0 fail=0
+    local ok=0 fail=0 warn=0
 
     # Checks must survive individual failures so the full report prints.
     local saved_opts
     saved_opts="$-"
     set +e +o pipefail
 
+    # check() and warn_check() below read $? from whatever command ran just
+    # before them. That is this script's existing idiom, and it is correct
+    # here: the tests immediately above each call site exit 0 or 1, and the
+    # argument expansion does not clobber $?. shellcheck reads it as
+    # ambiguous anyway, so the warning is disabled on purpose.
     check() {
+        # shellcheck disable=SC2319
         if [[ $? -eq 0 ]]; then
             ok=$((ok+1)); echo "  ok   $1"
         else
             fail=$((fail+1)); echo "  FAIL $1"
+        fi
+    }
+
+    # Prompt drift is not install's doing. install never writes these two
+    # files, so a mismatch is something only the user can resolve, and
+    # re-running install cannot fix it. Report it, but do not let it fail
+    # an install whose own work all succeeded.
+    warn_check() {
+        # shellcheck disable=SC2319
+        if [[ $? -eq 0 ]]; then
+            ok=$((ok+1)); echo "  ok   $1"
+        else
+            warn=$((warn+1)); echo "  WARN $1"
         fi
     }
 
@@ -194,12 +206,20 @@ phase_verify() {
         cmp -s "$REPO/config/$f" "$HOME/.jcode/$f" || drift=1
     done
     [[ $drift -eq 0 ]]
-    check "prompt-overlay.md and swarm-prompt.md match live (drift = edit live, then re-copy into config/)"
+    warn_check "prompt-overlay.md / swarm-prompt.md vs live (drift = edit live, then re-copy into config/)"
 
     set -${saved_opts}
 
     echo ""
-    echo "verify: $ok passed, $fail failed"
+    echo "verify: $ok passed, $fail failed, $warn warning$([[ $warn -eq 1 ]] || echo s)"
+    if [[ $warn -gt 0 ]]; then
+        echo "note: prompt drift is not fixed by install. Copy the live file back:"
+        echo "  cp ~/.jcode/prompt-overlay.md $REPO/config/prompt-overlay.md"
+        echo "  cp ~/.jcode/swarm-prompt.md   $REPO/config/swarm-prompt.md"
+    fi
+    # Under --check the question is "is anything wrong?", so drift is a
+    # failure there even though it is only a warning during a real install.
+    [[ $check_only -eq 0 ]] || [[ $warn -eq 0 ]] || exit 6
     [[ $fail -eq 0 ]] || exit 6
 }
 
@@ -263,7 +283,17 @@ main() {
     echo "  state:   $STATE_FILE"
     echo ""
     [[ $dry_run -eq 1 ]] && echo "  mode: DRY-RUN (no side effects)"
+    if [[ $check_only -eq 1 ]]; then
+        echo "  mode: CHECK-ONLY (no side effects)"
+    fi
     echo ""
+
+    # --check is strictly read-only, so it skips preflight too: preflight
+    # creates ~/.jcode and the state dir, which would not be read-only.
+    if [[ $check_only -eq 1 ]]; then
+        phase_verify
+        exit 0
+    fi
 
     phase_preflight
     phase_config
