@@ -1,8 +1,8 @@
 # Long-Task Discipline
 
 > Goal-driven constraint for L2 ambient workers.
-> Loaded by jcode at session start when ambient is enabled
-> (see `~/.jcode/skills/` resolution order in `crates/jcode-base/src/skill.rs`).
+> Loaded by jcode at session start when ambient is enabled.
+> This repo's copy installs to `~/.jcode/skills/long-task-discipline/`.
 
 ## Purpose
 
