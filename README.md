@@ -71,18 +71,14 @@ you lose the skill.
 - `~/AGENTS.md`, yours to edit
 - everything else under `~/.jcode`, including runtime state and goal history
 
-Earlier versions of this repo also installed helper CLIs to `~/.local/bin`
-(`jcode-goal`, `jcode-l2-check`, `jcode-tool-policy`, `jcode-orchestrate`,
-`jcode-audit-log`) and orchestrator prompts to
-`~/.local/share/jcode-orchestrate/`. This repo no longer manages them, and all
-of them have since been deleted from the machine. `uninstall` never touched
-them, then or now.
+Earlier versions of this repo installed helper CLIs to `~/.local/bin` and
+orchestrator prompts to `~/.local/share/jcode-orchestrate/`. This repo no
+longer manages them; all of them have since been deleted from the machine, and
+`uninstall` never touched them.
 
-`config/config.toml` still carries a `[hooks]` block naming the two deleted
-binaries, so that block is inert. jcode loads it without complaint and silently
-does nothing: there is no `pre_tool` gate on remote pushes or on `ambient/*`
-commits, and nothing writes `~/.jcode/audit.log` any more. Drop the block, or
-reinstall the CLIs, to make either one live again.
+The `[hooks]` block that referenced two of those CLIs is gone too. Nothing now
+gates a remote push or a commit on an `ambient/*` branch, and
+`~/.jcode/audit.log` is frozen at its last write.
 
 ## Uninstall
 

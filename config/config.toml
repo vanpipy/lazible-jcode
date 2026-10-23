@@ -147,19 +147,10 @@ swarm_max_concurrent_agents = 32
 
 [terminal]
 
-[hooks]
-# INERT: both hook binaries were deleted from ~/.local/bin. jcode loads this
-# block without complaint and silently does nothing, so there is no pre_tool
-# gate and no audit trail. Drop the block, or reinstall the CLIs.
-# What the hooks used to do:
-# pre_tool is a synchronous gate: exit 0 allows, exit 2 rejects the call.
-# jcode-tool-policy blocked remote pushes and blocked commits on ambient/*
-# branches that had no active goal.
-pre_tool = ["~/.local/bin/jcode-tool-policy"]
-# post_tool is a fire-and-forget observer: jcode-audit-log recorded every
-# tool call to ~/.jcode/audit.log. It cannot block anything.
-post_tool = ["~/.local/bin/jcode-audit-log"]
-pre_tool_timeout_ms = 8000
+# [hooks] was removed. It pointed at jcode-tool-policy (pre_tool) and
+# jcode-audit-log (post_tool), both since deleted from ~/.local/bin. They
+# gated remote pushes and commits on ambient/* branches, and appended every
+# tool call to ~/.jcode/audit.log. Nothing gates any of that now.
 
 [ambient]
 enabled = true
