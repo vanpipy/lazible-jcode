@@ -16,7 +16,7 @@ to `~/.jcode/skills/` or to a project-level overlay by `scripts/sync-skills`.
 
 | Name | Purpose | Origin |
 | --- | --- | --- |
-| `optimization` | Performance optimization workflow (define metric → measure → attribute → static analysis → macro-first) | Borrowed from `~/Project/patched-jcode/.jcode/skills/optimization/SKILL.md` |
+| `optimization` | Performance optimization workflow (define metric → measure → attribute → static analysis → macro-first) | Borrowed from the jcode repo's `.jcode/skills/optimization/SKILL.md` |
 
 ## Sync commands
 

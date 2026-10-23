@@ -48,7 +48,7 @@ cp scripts/jcode-audit-log ~/.local/bin/jcode-audit-log
 chmod +x ~/.local/bin/jcode-audit-log
 ```
 
-`use-profile` writes `hooks.post_tool = ["~/.local/bin/jcode-audit-log"]`;
+`config/config.toml` sets `hooks.post_tool = ["~/.local/bin/jcode-audit-log"]`;
 if the script path isn't in PATH, the hook is still spawned by jcode (jcode
 calls `exec` directly), so no explicit registration is needed.
 
