@@ -77,8 +77,8 @@ longer manages them; all of them have since been deleted from the machine, and
 `uninstall` never touched them.
 
 The `[hooks]` block that referenced two of those CLIs is gone too. Nothing now
-gates a remote push or a commit on an `ambient/*` branch, and
-`~/.jcode/audit.log` is frozen at its last write.
+gates a remote push or a commit on an `ambient/*` branch, and the
+`~/.jcode/audit.log` trail those hooks maintained has been deleted.
 
 ## Uninstall
 

@@ -7,8 +7,8 @@
 #
 # Secrets are never committed. Values that must hold a real secret stay empty
 # here and are injected at runtime by jcode's own env overrides
-# (JCODE_NTFY_TOPIC, JCODE_BING_API_KEY, ...). The tool-call audit trail is
-# ~/.jcode/audit.log, but its writer hook is gone, so it no longer grows.
+# (JCODE_NTFY_TOPIC, JCODE_BING_API_KEY, ...). There is no tool-call audit
+# trail any more: the post_tool hook and ~/.jcode/audit.log are both gone.
 
 [keybindings]
 scroll_up = "ctrl+shift+k"
