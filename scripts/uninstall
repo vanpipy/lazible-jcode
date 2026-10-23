@@ -35,11 +35,10 @@
 #
 # Notes:
 #   - any missing path is not an error, the script is idempotent
-#   - this script only reverses the CURRENT install. Earlier versions of this
-#     repo also installed helper CLIs to ~/.local/bin and orchestrator prompts
-#     to ~/.local/share/jcode-orchestrate/. Those are not touched here because
-#     this repo no longer manages them. Remove them by hand if you want them
-#     gone.
+#   - this script only reverses the CURRENT install: config.toml, the repo's
+#     own skills, and state.json. The legacy helper CLIs and orchestrator
+#     prompts from earlier versions are long gone from the machine and are
+#     not referenced here.
 
 set -euo pipefail
 
