@@ -42,7 +42,8 @@ LIVE_PROMPTS=(prompt-overlay.md swarm-prompt.md)
 dry_run=0
 
 usage() {
-    sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
+    # Print the leading comment block, whatever length it happens to be.
+    awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
     exit 0
 }
 
@@ -176,8 +177,8 @@ phase_verify() {
     check "live config matches config/config.toml"
 
     # Every repo skill must be present under ~/.jcode/skills. Extra live skills
-    # are fine and expected: jcode ships its own (for example swarm-engineering)
-    # that this repo does not own and must never overwrite.
+    # are fine: this repo owns only what is under config/skills/, so anything
+    # else jcode provides is left untouched.
     local missing_skills=() src name
     for src in "$REPO"/config/skills/*/; do
         src="${src%/}"

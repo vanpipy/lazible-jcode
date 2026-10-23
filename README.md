@@ -3,7 +3,7 @@
 My [jcode](https://github.com/1jehuang/jcode) configuration.
 
 This repository is **configuration only**. It holds the values that make jcode
-run the way I want, plus four skills. It does not build, patch or install the
+run the way I want, plus one skill. It does not build, patch or install the
 jcode binary.
 
 ```text
@@ -20,10 +20,7 @@ scripts/install        ->  wires the two above
 | `config/prompt-overlay.md` | Copy of `~/.jcode/prompt-overlay.md`, for review |
 | `config/swarm-prompt.md` | Copy of `~/.jcode/swarm-prompt.md`, for review |
 | `config/mcp.example.json` | MCP server shape, with placeholder values |
-| `config/skills/goal/` | `/goal` skill |
-| `config/skills/orchestrator/` | `/orchestrate` skill |
-| `config/skills/long-task-discipline/` | Rules ambient workers must follow |
-| `config/skills/optimization/` | Performance workflow notes |
+| `config/skills/swarm-engineering/` | The swarm coordination skill |
 | `scripts/install` | Copies config and skills into `~/.jcode` |
 | `scripts/uninstall` | Reverses install |
 
@@ -63,8 +60,10 @@ cp ~/.jcode/prompt-overlay.md config/prompt-overlay.md
 cp ~/.jcode/swarm-prompt.md   config/swarm-prompt.md
 ```
 
-`swarm-engineering` is not in this repo. It ships with jcode, so adopting it
-here would make `install` overwrite a jcode-provided skill.
+`swarm-engineering` is tracked here even though jcode also ships it. That
+makes this repo authoritative for it: if jcode updates its bundled copy,
+`./scripts/install` puts this version back. Delete
+`config/skills/swarm-engineering/` if you would rather always take jcode's.
 
 ## Not managed here
 
@@ -87,7 +86,9 @@ Earlier versions of this repo also installed helper CLIs to `~/.local/bin`
 ./scripts/uninstall --full --yes  # also config.toml and this repo's skills
 ```
 
-The jcode binary and `~/AGENTS.md` are never removed.
+The jcode binary and `~/AGENTS.md` are never removed. `--full` does remove
+`~/.jcode/skills/swarm-engineering/`, which jcode also ships, so reinstall or
+re-copy it if you want it back.
 
 ## Requirements
 

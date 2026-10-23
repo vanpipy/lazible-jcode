@@ -22,9 +22,12 @@
 # Never removed:
 #   - $HOME/.local/bin/jcode       the binary. This repo never installed it.
 #   - $HOME/AGENTS.md              your personal global instructions
-#   - skills this repo does not own (for example swarm-engineering, which
-#     ships with jcode)
+#   - any skill not listed in config/skills/
 #   - anything else under ~/.jcode
+#
+# Note: config/skills/swarm-engineering is listed there, so --full removes it
+# even though jcode also ships that skill. Re-copy it from the repo to get it
+# back, or reinstall jcode.
 #
 # Exit codes:
 #   0  success or user declined
@@ -52,7 +55,8 @@ yes=0
 dry_run=0
 
 usage() {
-    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+    # Print the leading comment block, whatever length it happens to be.
+    awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
     exit 0
 }
 
