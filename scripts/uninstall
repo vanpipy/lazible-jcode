@@ -25,9 +25,9 @@
 #   - any skill not listed in config/skills/
 #   - anything else under ~/.jcode
 #
-# Note: config/skills/swarm-engineering is listed there, so --full removes it
-# even though jcode also ships that skill. Re-copy it from the repo to get it
-# back, or reinstall jcode.
+# Note: config/skills/swarm-engineering is listed there, so --full removes it.
+# jcode does not ship that skill, so this repo is its only source. Run
+# ./scripts/install to get it back.
 #
 # Exit codes:
 #   0  success or user declined

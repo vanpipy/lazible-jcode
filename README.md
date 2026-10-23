@@ -47,7 +47,7 @@ repo, then run `./scripts/install`.
 $EDITOR config/config.toml && ./scripts/install
 ```
 
-Skills are rewritten on every install, so a stale or hand-edited copy under
+Skills in this repo are rewritten on every install, so a hand-edited copy under
 `~/.jcode/skills/` cannot drift.
 
 The two prompt files go the other way. `~/.jcode/prompt-overlay.md` and
@@ -60,10 +60,9 @@ cp ~/.jcode/prompt-overlay.md config/prompt-overlay.md
 cp ~/.jcode/swarm-prompt.md   config/swarm-prompt.md
 ```
 
-`swarm-engineering` is tracked here even though jcode also ships it. That
-makes this repo authoritative for it: if jcode updates its bundled copy,
-`./scripts/install` puts this version back. Delete
-`config/skills/swarm-engineering/` if you would rather always take jcode's.
+`swarm-engineering` exists only here. jcode does not ship it, so this repo
+is its only source. Keep it under `config/skills/` and do not delete it, or
+you lose the skill.
 
 ## Not managed here
 
@@ -87,8 +86,8 @@ Earlier versions of this repo also installed helper CLIs to `~/.local/bin`
 ```
 
 The jcode binary and `~/AGENTS.md` are never removed. `--full` does remove
-`~/.jcode/skills/swarm-engineering/`, which jcode also ships, so reinstall or
-re-copy it if you want it back.
+`~/.jcode/skills/swarm-engineering/`. jcode does not ship that skill, so
+this repo is its only source. To get it back, run `./scripts/install`.
 
 ## Requirements
 
