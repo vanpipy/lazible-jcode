@@ -1,6 +1,6 @@
 # Mermaid Rendering Conventions
 
-Reference: `~/Project/patched-jcode/docs/MERMAID_RENDERING_REDESIGN.md` and the
+Reference: the jcode repo's `docs/MERMAID_RENDERING_REDESIGN.md` and the
 `features.mermaid = true` field (`jcode-config-types/src/lib.rs:1084`).
 
 ## Rules followed by design docs in this repo (`new.md`, `design.md`)
@@ -12,8 +12,8 @@ Reference: `~/Project/patched-jcode/docs/MERMAID_RENDERING_REDESIGN.md` and the
   - **Git history**: use `gitGraph`
   - **Class / sequence diagrams**: only use `classDiagram` / `sequenceDiagram` when truly necessary
 - Node labels use `\n` for line breaks; use `<br/>` for TUI readability
-- Cross-doc references: ``` `~/Project/patched-jcode/docs/X.md` ```
-- Do not embed emoji inside Mermaid : keep it plain text for better search indexability
+- Cross-doc references: ``` `jcode/docs/X.md` ```
+- Do not embed emoji inside Mermaid: keep it plain text for better search indexability
 
 ## When mermaid is disabled
 

@@ -1,3 +1,14 @@
+# lazible-jcode : jcode configuration (single source of truth)
+#
+# This file IS the config that runs. It is a verbatim snapshot of the live
+# ~/.jcode/config.toml, kept in git so the setup is reproducible.
+# `./scripts/install` copies it to ~/.jcode/config.toml (it never merges an
+# overlay, so there is nothing to keep in sync besides this file).
+#
+# Secrets are never committed. Values that must hold a real secret stay empty
+# here and are injected at runtime by jcode's own env overrides
+# (JCODE_NTFY_TOPIC, JCODE_BING_API_KEY, ...). See config/policies/audit.md.
+
 [keybindings]
 scroll_up = "ctrl+shift+k"
 scroll_down = "ctrl+shift+j"
@@ -123,7 +134,8 @@ retry_backoff_cap_secs = 30
 [providers]
 
 [agents]
-swarm_spawn_mode = "inline"
+# headless: ambient cycles and swarm workers must not spawn a kitty window.
+swarm_spawn_mode = "headless"
 swarm_strip_layout = "vertical"
 memory_sidecar_enabled = true
 memory_rerank_cadence = 3
@@ -135,17 +147,27 @@ swarm_max_concurrent_agents = 32
 [terminal]
 
 [hooks]
-pre_tool_timeout_ms = 5000
+# pre_tool is a synchronous gate: exit 0 allows, exit 2 rejects the call.
+# jcode-tool-policy blocks `git push` and blocks commits on ambient/* branches
+# that have no active goal with pending steps.
+pre_tool = ["~/.local/bin/jcode-tool-policy"]
+# post_tool is a fire-and-forget observer: jcode-audit-log records every
+# tool call to ~/.jcode/audit.log. It cannot block anything.
+post_tool = ["~/.local/bin/jcode-audit-log"]
+pre_tool_timeout_ms = 8000
 
 [ambient]
-enabled = false
-allow_api_keys = false
+enabled = true
+allow_api_keys = true
 min_interval_minutes = 5
-max_interval_minutes = 120
+max_interval_minutes = 30
 pause_on_active_session = true
 proactive_work = true
 work_branch_prefix = "ambient/"
-visible = true
+# visible = false runs the cycle directly (runner.rs:891 picks
+# run_cycle_direct over run_cycle_visible). visible = true would try to spawn
+# a kitty window and wait for TUI interaction on every cycle.
+visible = false
 
 [safety]
 ntfy_server = "https://ntfy.sh"
@@ -161,6 +183,8 @@ discord_reply_enabled = false
 jade_relay_enabled = false
 jade_relay_reply_enabled = false
 jade_relay_launch_enabled = false
+# Empty on purpose. The real topic comes from JCODE_NTFY_TOPIC at runtime.
+ntfy_topic = ""
 
 [notifications]
 turn_complete = true

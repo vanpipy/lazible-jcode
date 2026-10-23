@@ -1,94 +1,88 @@
 # lazible-jcode
 
-jcode config + patch workflow. `./scripts/install` does it all in one command: clone fork → rebase → build → install binary → wire config.
+My [jcode](https://github.com/1jehuang/jcode) configuration.
 
-The source fork lives at `./patched-jcode` : a symlink at the repo root that defaults to `~/Project/patched-jcode` (vanpipy/jcode's `feat/patches` branch). Override with `JCODE_SOURCE_DIR=...` if you keep your clone elsewhere.
+This repository is **configuration only**. It holds the values that make jcode
+run the way I want it to, plus the skills, hooks and helper CLIs that turn
+ambient scheduling into goal-driven work.
 
----
+It does **not** build, patch or distribute the jcode binary.
 
-## One-shot install
+```text
+config/config.toml   →  ~/.jcode/config.toml          verbatim copy
+config/skills/*/     →  ~/.jcode/skills/*/            authoritative
+config/bin/*         →  ~/.local/bin/*                authoritative
+config/policies/     →  (documentation, not loaded at runtime)
+config/templates/    →  ~/AGENTS.md on first install only
+scripts/install      →  wires all of the above
+```
+
+There is no overlay layer. `config/config.toml` is a snapshot of the live
+config, and `./scripts/install` copies it into place. To adopt a change you
+made in jcode itself, run `./scripts/snapshot-config --apply`.
+
+## Requirements
+
+- `jcode` on `PATH` (installed separately, this repo does not manage it)
+- `bash`, `python3` (3.11+), `git`
+
+## Install
 
 ```bash
-git clone <repo> ~/Project/lazible-jcode
-cd ~/Project/lazible-jcode
-
-# First time only: clone the fork (install creates the patched-jcode symlink
-# automatically on first run if you point JCODE_SOURCE_DIR at the clone location)
-git clone https://github.com/vanpipy/jcode.git ~/Project/patched-jcode
-cd ~/Project/patched-jcode
-git checkout -B feat/patches
-# ... edit source + commit ...
-
-# Run install (creates patched-jcode symlink → ~/Project/patched-jcode,
-# fetch + rebase + build + wire + verify + state.json)
+git clone <this-repo> ~/Project/lazible-jcode
 cd ~/Project/lazible-jcode
 ./scripts/install
 ```
 
-After that, every time you commit new patches in `./patched-jcode` (or wherever `JCODE_SOURCE_DIR` points), just rerun `./scripts/install` : it auto-rebases onto the fork's default branch, rebuilds, and installs the new binary.
+`install` runs 10 phases (preflight, config, skills, shell env, audit hook,
+CLIs, prompts, `~/AGENTS.md`, verify, state) and ends with 12 checks. Preview
+it first with `./scripts/install --dry-run`.
 
----
+The repo is the source of truth for everything it owns. Skills, prompts and
+CLIs are rewritten on every install, so a stale or missing copy under
+`~/.jcode/` cannot drift. `~/AGENTS.md` is the exception: it is only written
+when absent, so personal instructions survive.
 
-## Common commands
-
-```bash
-./scripts/install                       # auto install
-./scripts/install --dry-run             # show what would happen, no side effects
-./scripts/install --help                # all flags
-JCODE_BUILD=debug ./scripts/install     # debug build (target/debug)
-JCODE_NO_PUSH=1   ./scripts/install     # skip auto push of feat/patches
-JCODE_SOURCE_DIR=~/work/jcode ./scripts/install   # use a fork clone at a custom path
-
-./scripts/uninstall --dry-run           # show what would be removed
-./scripts/uninstall                     # remove binary + state (with confirmation)
-./scripts/uninstall --full --yes        # also remove config + skills + shell env
-```
-
----
-
-## Install pipeline (runs every time)
-
-1. **Pre-flight**: check deps (bash / python3 / git / cargo)
-2. **Source**: ensure `./patched-jcode` symlink → `$JCODE_SOURCE_DIR`; clone fork if missing
-3. **Branch**: checkout `feat/patches` (create from fork's default branch if missing : **auto-detected**)
-4. **Rebase**: `git rebase <baseline>` (runs every time; conflict = exit 4)
-5. **Build**: `cargo build --release --bin jcode`
-6. **Install binary**: `~/.local/bin/jcode` (existing binary backed up as `.bak.<timestamp>`)
-7. **Wire config**: cp `config.toml` + profile + skills + shell env + audit log
-8. **Verify**: 7 checks (binary / source / origin / config / profile / skills / shell env)
-9. **State**: write `~/.local/state/lazible-jcode/state.json`
-
----
-
-## Key constraints
-
-- **`install` does not commit**. You must commit your patches in `$JCODE_SOURCE_DIR` first. A dirty working tree (tracked **or** untracked changes) → exit 3.
-- **`~/.jcode/config.toml` must not be a symlink** → exit 1. Fix: `rm ~/.jcode/config.toml && cp config/config.toml ~/.jcode/config.toml`
-- **`install` overwrites live config**. Snapshot first with `./scripts/snapshot-config`, then install.
-- **`~/Project/jcode` (upstream clone) is never touched** : install only operates on the fork at `./patched-jcode`.
-
----
-
-## Always preserved during uninstall
-
-- `./patched-jcode` symlink (and the fork clone it points at, default `~/Project/patched-jcode/`)
-- `~/Project/patched-jcode/` (real fork clone, source + all your patches)
-- `~/Project/jcode/` (upstream clone, if present)
-- `~/.jcode/ambient/, state/, sessions/, logs/` (runtime state)
-
----
-
-## Sub-tools
+## Everyday use
 
 ```bash
-./scripts/use-profile                    # apply profile (default: autonomous)
-./scripts/use-profile-reset              # revert to base
-./scripts/install-shell-env --apply      # write JCODE_OPENROUTER_MODEL into shell rc
-./scripts/install-shell-env --status     # check current state
-./scripts/sync-skills --to-home --apply  # config/skills → ~/.jcode/skills
-./scripts/snapshot-config                # live ~/.jcode/config.toml → repo (sanitized)
-./scripts/verify-sanitized               # pre-commit self-check
-./scripts/diff-live-base                 # diff live config vs repo base
+jcode-l2-check                 # is the setup ready?
+jcode-goal list                # goals for this project
+jcode-goal add "<title>" --priority high
+cd <project> && /orchestrate loop 10    # advance 10 control-loop cycles
 ```
 
-Full list: [`scripts/README.md`](scripts/README.md).
+`pre_tool` runs `jcode-tool-policy` on every shell call. It blocks `git push`
+and blocks commits on `ambient/*` branches that have no active goal. See
+[`config/policies/git.md`](config/policies/git.md).
+
+## Layout
+
+| Path | What it is |
+| --- | --- |
+| `config/config.toml` | The live config, verbatim. Edit this. |
+| `config/bin/` | `jcode-goal`, `jcode-l2-check`, `jcode-tool-policy`, `jcode-orchestrate`, plus their tests |
+| `config/skills/` | `/goal`, `/orchestrate`, goal discipline, optimization notes |
+| `config/policies/` | Why each setting has the value it has |
+| `config/templates/` | Artifact templates (`task.md`, `handoff.md`, `report.md`) |
+| `config/share/` | Orchestrator worker prompts (`coder.md`, `reviewer.md`) |
+| `scripts/` | install, uninstall, and maintenance helpers |
+| `design.md` | What jcode actually implements, and where this repo stops |
+| `new.md` | The original vision. Kept as history. |
+
+## Maintenance
+
+```bash
+./scripts/snapshot-config --diff     # live vs repo drift
+./scripts/snapshot-config --apply    # pull live into the repo
+./scripts/sync-skills --from-home --apply   # pull skill edits back into the repo
+./scripts/verify-sanitized           # pre-commit leak check
+./scripts/uninstall --dry-run        # what would be removed
+```
+
+## Docs
+
+- [`config/policies/`](config/policies/) — autonomy levels, git policy, repair loop, audit
+- [`scripts/README.md`](scripts/README.md) — every script, what it does, exit codes
+- [`design.md`](design.md) — source alignment and known gaps
+- [`docs/mermaid-style.md`](docs/mermaid-style.md) — diagram conventions

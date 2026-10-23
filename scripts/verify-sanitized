@@ -3,17 +3,17 @@
 #
 # Checks:
 #   1. config/config.toml is parseable
-#   2. No hardcoded /home/<user> paths
+#   2. No hardcoded /home/<user> paths in config.toml
 #   3. All known sensitive keys are empty or placeholders
-#   4. Profile files have no hardcoded paths
+#   4. No hardcoded /home/<user> paths in machine-consumed config
 #   5. Skill files have no long tokens (coarse check)
 #   6. ~/.jcode/config.toml is not a symlink (prevents live writes flowing back into repo)
+#   7. Live config vs repo config drift (warn, not fail)
 
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 config_toml="${repo}/config/config.toml"
-profiles_dir="${repo}/config/profiles"
 skills_dir="${repo}/config/skills"
 live_config="${JCODE_HOME:-$HOME/.jcode}/config.toml"
 
@@ -25,10 +25,15 @@ warn_msg() { printf "  ⚠ %s\n" "$*"; warn=1; }
 ok()   { printf "  ✓ %s\n" "$*"; }
 
 # 1. TOML parse
-python3 - "$config_toml" <<'PY' && ok "config/config.toml parses" || { err "config/config.toml parse failed"; }
+if python3 - "$config_toml" <<'PY'
 import sys, tomllib
 tomllib.load(open(sys.argv[1], 'rb'))
 PY
+then
+    ok "config/config.toml parses"
+else
+    err "config/config.toml parse failed"
+fi
 
 # 2. Hardcoded /home/<user>
 if grep -nE '/home/[a-z]+' "$config_toml" 2>/dev/null; then
@@ -62,16 +67,38 @@ walk(data)
 PY
 ok "config.toml secret scan"
 
-# 4. Profile files
-if [[ -d "$profiles_dir" ]]; then
-    for f in "$profiles_dir"/*.toml; do
-        [[ -f "$f" ]] || continue
-        if grep -nE '/home/[a-z]+' "$f" 2>/dev/null; then
-            err "$f: hardcoded path"
-        else
-            ok "$f clean"
-        fi
-    done
+# 4. No hardcoded /home/<user> in machine-consumed config.
+# policies/, templates/ and skills/ are prose: they legitimately show example
+# paths, so they are exempt.
+machine_paths=(
+    "$config_toml"
+    "$repo/config/mcp.example.json"
+)
+for d in "$repo/config/bin" "$repo/config/share"; do
+    [[ -d "$d" ]] && machine_paths+=("$d")
+done
+
+path_hits=0
+for target in "${machine_paths[@]}"; do
+    if [[ -f "$target" ]]; then
+        target_paths=("$target")
+    else
+        target_paths=()
+        while IFS= read -r f; do target_paths+=("$f"); done \
+            < <(find "$target" -type f -not -path '*/__pycache__/*' 2>/dev/null)
+    fi
+    if [[ ${#target_paths[@]} -eq 0 ]]; then
+        continue
+    fi
+    hits="$(grep -nE '/home/[a-z]+' "${target_paths[@]}" 2>/dev/null || true)"
+    if [[ -n "$hits" ]]; then
+        printf '%s\n' "$hits"
+        err "hardcoded /home/... in ${target#"$repo"/}"
+        path_hits=1
+    fi
+done
+if [[ $path_hits -eq 0 ]]; then
+    ok "no /home/... in machine-consumed config"
 fi
 
 # 5. Skill files long tokens (coarse)
@@ -83,15 +110,16 @@ if [[ -d "$skills_dir" ]]; then
     fi
 fi
 
-# 6. Live config must not be a symlink (otherwise use-profile flows back into repo)
+# 6. Live config must not be a symlink (a write through it lands in the repo base)
 if [[ -L "$live_config" ]]; then
-    warn_msg "$live_config is a symlink → $(readlink "$live_config"); use-profile will refuse to write"
-    echo "    (this is OK as long as you don't run use-profile)"
+    err "$live_config is a symlink -> $(readlink "$live_config")"
+    note "    install refuses to write through it. Fix:"
+    note "    rm $live_config && cp $repo/config/config.toml $live_config"
 else
     ok "live config is a regular file"
 fi
 
-# 7. Live vs base structural difference (quick estimate via diff-live-base logic)
+# 7. Live vs repo config drift (warn only: install is the thing that fixes it)
 if [[ -f "$live_config" && ! -L "$live_config" ]]; then
     diff_count=$(python3 - "$live_config" "$config_toml" 2>/dev/null <<'PYEOF'
 import sys, tomllib
@@ -107,11 +135,11 @@ def walk(a, b):
 print(walk(base_d, live_d))
 PYEOF
 )
-    if [[ "$diff_count" -gt 20 ]] 2>/dev/null; then
-        warn_msg "live vs base has $diff_count differing leaves (run ./scripts/diff-live-base for details)"
-        echo "    large drift usually means live was loaded with a profile and base wasn't updated"
+    if [[ "$diff_count" -gt 0 ]] 2>/dev/null; then
+        warn_msg "live config differs from repo config in $diff_count leaves"
+        note "    run ./scripts/diff-live-base for details, then ./scripts/install to resync"
     else
-        ok "live vs base drift: $diff_count leaves (see diff-live-base)"
+        ok "live config matches repo config/config.toml"
     fi
 fi
 

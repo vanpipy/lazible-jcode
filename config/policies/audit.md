@@ -34,7 +34,7 @@ When jcode calls the hook, it passes metadata via environment variables
 Each line in `audit.log`:
 
 ```
-[2026-09-28T18:23:44+08:00] event=post_tool tool=bash status=ok duration_ms=8 output_bytes=2396 cwd=/home/leroy/Project/lazible-jcode
+[2026-09-28T18:23:44+08:00] event=post_tool tool=bash status=ok duration_ms=8 output_bytes=2396 cwd=/home/user/Project/example
 ```
 
 Field order is fixed for easy `awk` / `cut` processing.
@@ -48,7 +48,7 @@ cp scripts/jcode-audit-log ~/.local/bin/jcode-audit-log
 chmod +x ~/.local/bin/jcode-audit-log
 ```
 
-`use-profile` writes `hooks.post_tool = ["~/.local/bin/jcode-audit-log"]`;
+`config/config.toml` sets `hooks.post_tool = ["~/.local/bin/jcode-audit-log"]`;
 if the script path isn't in PATH, the hook is still spawned by jcode (jcode
 calls `exec` directly), so no explicit registration is needed.
 

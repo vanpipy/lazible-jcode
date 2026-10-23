@@ -44,15 +44,16 @@ overlay state, until commit `59c5140` explicitly pulled the clean base back from
 
 Notes for my future self:
 
-- **Repo base** = `config/config.toml` (committed base). Update only via `snapshot-config`
-  (manual) or hand-edits; **never** via `use-profile` or any other script that writes live.
-- **Live** = `~/.jcode/config.toml` (runtime). Manipulated by `use-profile` /
-  `use-profile-reset`.
+- **Repo base** = `config/config.toml` (committed). Update it via `snapshot-config --apply`
+  or a hand edit, then `./scripts/install`. Nothing writes it implicitly.
+- **Live** = `~/.jcode/config.toml` (runtime). Written only by `scripts/install`,
+  which copies the repo base into place.
 - **Any script that writes live MUST first check `[[ -L $target ]]`**, otherwise the symlink
-  trap recurs.
+  trap recurs. `scripts/install` does this in preflight and exits 1.
 - **`snapshot-config` writing the repo base MUST also check for symlinks first**, otherwise
   pollution recurs through it.
-- **`verify-sanitized` always runs the drift check** (CI-friendly).
+- **`verify-sanitized` always runs the drift check** (CI-friendly), and now fails
+  outright if the live config is a symlink.
 
 ## Lessons
 

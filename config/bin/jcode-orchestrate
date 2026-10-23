@@ -494,13 +494,30 @@ def advance_goal(goal_path: Path, goal: dict,
             # Reviewer finished (success/failure). Parse verdict regardless.
             verdict = parse_verdict(status.get("latest_completion_report"))
             milestone["review_verdict"] = verdict["verdict"]
-            if verdict["verdict"] == "clean" or life in FAILURE_LIFECYCLE and verdict["confidence"] >= 0.9:
+
+            # A reviewer that crashed or failed has NOT completed its review. Never
+            # close a milestone on the strength of such a report, even when the
+            # report parses cleanly with high confidence: a crash means part of the
+            # review never ran, so "clean" cannot be trusted and findings may be
+            # missing entirely. This was previously expressed as
+            #     verdict == "clean" or life in FAILURE_LIFECYCLE and confidence >= 0.9
+            # which completed the milestone on a crashed reviewer that reported
+            # findings at high confidence. Only a reviewer that finished successfully
+            # can close a milestone.
+            reviewer_completed = life not in FAILURE_LIFECYCLE
+
+            if reviewer_completed and verdict["verdict"] == "clean":
                 milestone["status"] = "completed"
+                milestone.pop("review_crashed", None)
                 actions.append({"type": "review_done", "milestone_id": milestone.get("id"),
                                 "verdict": verdict["verdict"], "confidence": verdict["confidence"]})
                 save_goal(goal_path, goal)
                 continue
-            # findings — handle Repair loop
+
+            if not reviewer_completed:
+                milestone["review_crashed"] = life
+
+            # findings, or a reviewer that crashed — handle Repair loop
             milestone["review_retry_count"] = milestone.get("review_retry_count", 0) + 1
             milestone["review_findings"] = verdict["findings"]
             if milestone["review_retry_count"] >= milestone.get("review_max_retries", 3):
@@ -536,7 +553,8 @@ def advance_goal(goal_path: Path, goal: dict,
             actions.append({"type": "review_failed", "milestone_id": milestone.get("id"),
                             "findings_count": len(verdict["findings"]),
                             "retry_count": milestone["review_retry_count"],
-                            "max_retries": milestone.get("review_max_retries", 3)})
+                            "max_retries": milestone.get("review_max_retries", 3),
+                            "reviewer_lifecycle": life})
 
     # Phase D: goal completion check
     if all(m.get("status") == "completed" for m in goal.get("milestones") or []):
@@ -626,7 +644,7 @@ def cmd_once(args) -> int:
         goal_path, goal,
         dry_run=args.dry_run,
         spawn_fn=spawn_worker if not args.dry_run else (lambda **kw: "FAKE_SESSION_ID"),
-        status_fn=swarm_status if not args.dry_run else (lambda sid: {"status": "done",
+        status_fn=swarm_status if not args.dry_run else (lambda sid: {"status": args.fake_lifecycle,
                                                                        "latest_completion_report": args.fake_report}),
         verify_fn=run_shell if not args.dry_run else _dryrun_verify_fn(),
     )
@@ -733,6 +751,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="JSON output")
     p.add_argument("--fake-report", default='{"verdict":"clean","findings":[],"confidence":1.0,"reasoning":"dry-run"}',
                    help="fake reviewer completion_report for dry-run testing")
+    p.add_argument("--fake-lifecycle", default="done", metavar="STATE",
+                   help="fake worker lifecycle status for dry-run testing "
+                        "(e.g. done, failed, crashed, running)")
     return p
 
 

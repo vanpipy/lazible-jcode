@@ -1,8 +1,8 @@
 # Long-Task Discipline
 
 > Goal-driven constraint for L2 ambient workers.
-> Loaded by jcode at session start when ambient is enabled
-> (see `~/.jcode/skills/` resolution order in `crates/jcode-base/src/skill.rs`).
+> Loaded by jcode at session start when ambient is enabled.
+> This repo's copy installs to `~/.jcode/skills/long-task-discipline/`.
 
 ## Purpose
 
@@ -134,7 +134,7 @@ When the orchestrator emits `milestone_escalated`:
 - ❌ Worker invents its own goal not in `~/.jcode/goals/`
 - ❌ Worker modifies files outside the project root (use `git rev-parse --show-toplevel` to verify)
 - ❌ Worker bypasses the commit alignment check (Rule 2)
-- ❌ Worker writes directly to `~/Project/patched-jcode/crates/...`. That path goes through `./scripts/install` only.
+- ❌ Worker edits `~/.jcode/config.toml` by hand to "fix" a setting. Change `config/config.toml` in the repo and run `./scripts/install`.
 - ❌ Worker **manually advances steps / spawns workers / parses verdicts**.
    That is the orchestrator's job (Rule 1.5). Always call
    `jcode-orchestrate --once`.

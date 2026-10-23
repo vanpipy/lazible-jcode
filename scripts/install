@@ -1,214 +1,83 @@
 #!/usr/bin/env bash
-# install : orchestrator: clone/fetch patched-jcode → rebase → build → install binary → wire config
+# install : wire this config repo into ~/.jcode
 #
 # Usage:
-#   ./scripts/install                       # auto install (default)
-#   ./scripts/install --dry-run             # print what would happen, no side effects
-#   ./scripts/install --force               # allow overwriting existing binary, redirect wrong origin
-#   ./scripts/install --no-preflight        # skip dep check (for CI)
-#   ./scripts/install --help                # show help
+#   ./scripts/install                 # install config (default)
+#   ./scripts/install --dry-run       # show what would happen, no side effects
+#   ./scripts/install --help          # show this header
 #
-# Environment variables:
-#   JCODE_BUILD=release|debug      # default release; debug skips optimizations
-#   JCODE_NO_PUSH=1                # skip auto push of feat/patches (default pushes; no --force)
-#   JCODE_SOURCE_DIR=...           # override where the fork clone lives (default $HOME/Project/patched-jcode)
+# This repo is a CONFIG repo. It installs configuration, skills, policies and
+# helper CLIs. It does not build, patch or distribute the jcode binary. Install
+# jcode separately (see README.md).
 #
-# Workflow (runs every install):
-#   1. Pre-flight: check deps, path conflicts
-#   2. Source: clone fork if missing (default → $JCODE_SOURCE_DIR); symlink patched-jcode → that dir
-#   3. Branch: checkout feat/patches (create from fork default branch if missing)
-#      baseline auto-detected: symbolic-ref HEAD → origin/main → origin/master
-#   4. Rebase: git rebase <baseline> (runs every install; conflict = exit 4)
-#   5. Build: cargo build --release --bin jcode
-#                  (adds --features linux-compat-vendored-openssl when libssl-dev is
-#                   absent; OPENSSL_VENDORED env override for testing)
-#   6. Install binary: ~/.local/bin/jcode (back up existing)
-#   7. Wire config: config.toml + use-profile + sync-skills + install-shell-env
-#                  + jcode-audit-log
-#   8. Scaffolding: install goal-driven L2 ambient pieces (long-task-discipline skill,
-#                  ~/AGENTS.md template, jcode-goal + jcode-l2-check CLIs). Each piece
-#                  is first-write-only (never overwrites user-edited files).
-#   9. Verify: 13 checks (binary callable / binary matches source /
-#                  origin is vanpipy fork / config not symlink /
-#                  autonomous profile / skills / shell env /
-#                  4 CLIs installed / 2 slash command skills)
-#  10. Write state.json + print summary
+# What gets installed:
+#   1. preflight  : deps (bash / python3 / git), path writability, no symlinked config
+#   2. config     : config/config.toml                 -> ~/.jcode/config.toml
+#   3. skills     : config/skills/*/SKILL.md           -> ~/.jcode/skills/*/
+#   4. shell env  : JCODE_OPENROUTER_MODEL             -> ~/.zshrc + ~/.bashrc
+#   5. audit hook : scripts/jcode-audit-log            -> ~/.local/bin/
+#   6. CLIs       : config/bin/jcode-{goal,l2-check,tool-policy,orchestrate}
+#                                                          -> ~/.local/bin/
+#   7. prompts    : config/share/jcode-orchestrate/prompts/*.md
+#                                                          -> ~/.local/share/jcode-orchestrate/prompts/
+#   8. AGENTS.md  : config/templates/AGENTS.md          -> ~/AGENTS.md  (only if missing)
+#   9. verify     : 12 checks
+#  10. state      : ~/.local/state/lazible-jcode/state.json
 #
 # Exit codes:
 #   0  success
 #   1  preflight failed
-#   2  source dir origin mismatch (unless --force)
-#   3  working tree dirty (must commit before install)
-#   4  rebase conflict
-#   5  cargo build failed
 #   6  verify failed
 #
 # Design constraints:
-#   - install **does not commit**: user must commit patches in
-#     $JCODE_SOURCE_DIR (default ~/Project/patched-jcode) manually before running.
-#     Dirty working tree → exit 3
-#   - Every install rebases: user's patches are always replayed on the latest origin/main
-#   - ~/Project/jcode (existing upstream clone) is never touched
-#   - ~/.jcode/config.toml must not be a symlink (exit 6)
-#   - The repo has a `patched-jcode/` symlink at its root pointing at the local
-#     fork clone, so every script that needs the source tree just uses
-#     ${REPO}/patched-jcode rather than a hardcoded absolute path.
+#   - The repo is the source of truth for everything it owns. Skills, prompts
+#     and CLIs are rewritten on every install. If you edited a copy under
+#     ~/.jcode/skills by hand, pull it back first:
+#       ./scripts/sync-skills --from-home --apply
+#   - ~/AGENTS.md is the one exception: it is only written when absent, so your
+#     personal instructions are never clobbered.
+#   - ~/.jcode/config.toml must not be a symlink (exit 1). A symlink would let
+#     a write flow back into the repo base.
+#   - Nothing outside ~/.jcode, ~/.local/bin, ~/.local/share and ~/.zshrc or
+#     ~/.bashrc is touched.
 
 set -euo pipefail
 
-# ============================================================================
-# Constants
-# ============================================================================
-
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Set by detect_openssl_vendored() when system OpenSSL dev headers are absent.
-# Phase 5 reads this and passes --features linux-compat-vendored-openssl to
-# cargo. Override by exporting JCODE_NO_VENDORED_FALLBACK=1 (then missing
-# libssl-dev hard-fails). User can also force vendored by setting
-# OPENSSL_VENDORED=1 in the environment before invoking install.
-OPENSSL_VENDORED="${OPENSSL_VENDORED:-0}"
-
-# Distro-aware name of the OpenSSL development package. Used for hints in
-# preflight warnings and the JCODE_NO_VENDORED_FALLBACK=1 hard-fail path.
-_openssl_pkg_name() {
-    if [[ -f /etc/debian_version ]]; then
-        echo "libssl-dev (apt: libssl-dev)"
-    elif [[ -f /etc/redhat-release ]]; then
-        echo "openssl-devel (dnf: openssl-devel)"
-    else
-        echo "OpenSSL development headers (pkg-config openssl)"
-    fi
-}
-
-# Decide whether cargo should link against the system OpenSSL or vendor it.
-# Called from BOTH phase_preflight (fast-fail with a hint) AND phase_build
-# (so --no-preflight still gets the vendored feature when needed).
-#
-# Sets OPENSSL_VENDORED=1 when system OpenSSL is unusable and vendored fallback
-# is allowed. Idempotent: safe to call multiple times. Honors three env knobs:
-#   JCODE_NO_VENDORED_FALLBACK=1  → hard-fail via phase_preflight's missing[] list
-#                                   (this function is a no-op in that mode; preflight
-#                                   surfaces the error before phase_build runs).
-#   OPENSSL_VENDORED=1            → user-forced vendored (e.g., for compliance testing)
-#   OPENSSL_VENDORED=0 (default)  → auto-detect: vendored iff pkg-config can't find openssl.
-#
-# Returns 0 always; consumers check $OPENSSL_VENDORED.
-detect_openssl_vendored() {
-    # Honor user-forced vendored (e.g., for testing or reproducibility).
-    if [[ "${JCODE_NO_VENDORED_FALLBACK:-0}" == "1" ]]; then
-        # Caller (preflight) is responsible for surfacing this as a hard fail.
-        # We don't change OPENSSL_VENDORED here; preflight does the missing+= thing.
-        return 0
-    fi
-
-    # System OpenSSL is available → use it.
-    if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists openssl 2>/dev/null; then
-        OPENSSL_VENDORED=0
-        return 0
-    fi
-
-    # No system OpenSSL. Either user already forced vendored, or we set it now.
-    if [[ "${OPENSSL_VENDORED:-0}" != "1" ]]; then
-        OPENSSL_VENDORED=1
-    fi
-    return 0
-}
-
-# Canonical source location: a `patched-jcode` symlink at the repo root points
-# at the local fork clone (default: $HOME/Project/patched-jcode). The symlink
-# makes the repo self-contained : every script that needs the source tree can
-# just use ${REPO}/patched-jcode without hardcoding an absolute path.
-#
-# Override JCODE_SOURCE_DIR to point at a non-default location (e.g. an
-# existing clone you want to keep at a different path); install will then
-# create or refresh the patched-jcode symlink to match.
-JCODE_SOURCE_DIR="${JCODE_SOURCE_DIR:-$HOME/Project/patched-jcode}"
-SOURCE_LINK="$REPO/patched-jcode"
-SOURCE_DIR="$REPO/patched-jcode"   # canonical path used by all phases
-FORK_URL="https://github.com/vanpipy/jcode.git"
-UPSTREAM_URL="https://github.com/1jehuang/jcode.git"
-BRANCH="feat/patches"
-BASELINE_REF="auto-detect (origin/main or origin/master)"   # placeholder; phase_branch overwrites
-BIN_DST="$HOME/.local/bin/jcode"
+JCODE_CONFIG="$HOME/.jcode/config.toml"
+SKILLS_HOME="$HOME/.jcode/skills"
+LOCAL_BIN="$HOME/.local/bin"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lazible-jcode"
 STATE_FILE="$STATE_DIR/state.json"
-JCODE_CONFIG="$HOME/.jcode/config.toml"
-BUILD_LOG="/tmp/lazible-build.log"
-REBASE_LOG="/tmp/lazible-rebase.log"
+PROMPTS_SRC="$REPO/config/share/jcode-orchestrate/prompts"
+PROMPTS_DST="$HOME/.local/share/jcode-orchestrate/prompts"
 
-# Ensure the patched-jcode symlink points at JCODE_SOURCE_DIR. If the target
-# already exists as a real directory, leave it alone (legacy layout). If it's a
-# broken or stale symlink, recreate it.
-sync_source_link() {
-    if [[ -d "$JCODE_SOURCE_DIR" && ! -L "$JCODE_SOURCE_DIR" ]]; then
-        # real directory at JCODE_SOURCE_DIR : wire symlink to it
-        if [[ ! -e "$SOURCE_LINK" ]]; then
-            ln -s "$JCODE_SOURCE_DIR" "$SOURCE_LINK"
-            log "linked $SOURCE_LINK -> $JCODE_SOURCE_DIR"
-        elif [[ -L "$SOURCE_LINK" ]] && [[ "$(readlink "$SOURCE_LINK")" != "$JCODE_SOURCE_DIR" ]]; then
-            ln -sfn "$JCODE_SOURCE_DIR" "$SOURCE_LINK"
-            log "re-linked $SOURCE_LINK -> $JCODE_SOURCE_DIR"
-        fi
-    elif [[ ! -e "$JCODE_SOURCE_DIR" && ! -e "$SOURCE_LINK" ]]; then
-        # neither exists yet : create the parent dir and let phase_source clone
-        # into JCODE_SOURCE_DIR; then wire the symlink.
-        mkdir -p "$(dirname "$JCODE_SOURCE_DIR")"
-    fi
-}
-
-# Baseline detection: query the fork's default branch (auto-detect because
-# the user said "main" but vanpipy/jcode.git actually uses "master").
-# Falls back through: detected default → origin/main → origin/master → error.
-detect_baseline_ref() {
-    local ref
-    # 1. symbolic-ref from origin's HEAD (set after first fetch).
-    #    Must verify the target exists : sometimes HEAD points at a commit
-    #    that was deleted by a force-push.
-    ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || true
-    if [[ -n "$ref" ]] && git show-ref --verify --quiet "$ref"; then
-        echo "$ref"; return 0
-    fi
-
-    # 2. origin/main (GitHub's newer default)
-    git show-ref --verify --quiet refs/remotes/origin/main && { echo "origin/main"; return 0; }
-
-    # 3. origin/master (older default, what vanpipy/jcode currently uses)
-    git show-ref --verify --quiet refs/remotes/origin/master && { echo "origin/master"; return 0; }
-
-    return 1
-}
-
-# ============================================================================
-# Args
-# ============================================================================
+CLI_NAMES=(jcode-goal jcode-l2-check jcode-tool-policy jcode-orchestrate)
 
 dry_run=0
-force=0
-skip_preflight=0
 
 usage() {
-    sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dry-run)      dry_run=1; shift ;;
-        --force)        force=1; shift ;;
-        --no-preflight) skip_preflight=1; shift ;;
-        -h|--help)      usage ;;
+        --dry-run) dry_run=1; shift ;;
+        -h|--help) usage ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Helpers
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 log()  { echo "[install] $*"; }
 warn() { echo "[install] WARN: $*" >&2; }
 err()  { echo "[install] ERR: $*" >&2; }
+section() { echo ""; echo "=== $* ==="; }
 
 run() {
     if [[ $dry_run -eq 1 ]]; then
@@ -218,564 +87,217 @@ run() {
     fi
 }
 
-section() {
-    echo ""
-    echo "=== $* ==="
+copy_file() {
+    # copy_file <src> <dst> <mode>
+    local src="$1" dst="$2" mode="$3"
+    if [[ $dry_run -eq 1 ]]; then
+        echo "  would install: $src -> $dst"
+        return 0
+    fi
+    mkdir -p "$(dirname "$dst")"
+    install -m "$mode" "$src" "$dst"
 }
 
-# ============================================================================
-# Phase 1: Pre-flight
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Phase 1: preflight
+# ---------------------------------------------------------------------------
 
 phase_preflight() {
     section "phase 1: preflight"
 
     local missing=()
-
-    command -v bash     >/dev/null || missing+=("bash")
-    command -v python3  >/dev/null || missing+=("python3")
-    command -v git      >/dev/null || missing+=("git")
-    command -v cargo    >/dev/null || missing+=("cargo (install rustup)")
-    command -v rustc    >/dev/null || missing+=("rustc")
-    command -v pkg-config >/dev/null || missing+=("pkg-config (apt: pkg-config)")
-
-    # cargo's openssl-sys build script probes for OpenSSL via pkg-config.
-    # Without libssl-dev (or distro equivalent), the probe fails deep inside
-    # 'cargo build --release' (~8 minutes of dependency compilation) instead
-    # of failing fast here.
-    #
-    # We delegate the decision to detect_openssl_vendored() so that --no-preflight
-    # (CI mode) and phase_build get the same vendored fallback. Preflight's job
-    # here is just the fast-fail + hint; the actual feature-flag selection is
-    # done once in detect_openssl_vendored().
-    if command -v pkg-config >/dev/null && ! pkg-config --exists openssl; then
-        if [[ "${JCODE_NO_VENDORED_FALLBACK:-0}" == "1" ]]; then
-            missing+=("$(_openssl_pkg_name)")
-        else
-            # Probe again through the shared function so OPENSSL_VENDORED gets set
-            # even if a previous --no-preflight run already initialized it to 0.
-            detect_openssl_vendored
-            warn "$(_openssl_pkg_name) missing; falling back to vendored OpenSSL"
-            warn "  set JCODE_NO_VENDORED_FALLBACK=1 to require system OpenSSL instead"
-            warn "  first build will compile OpenSSL C sources from scratch (~5 min)"
-        fi
-    fi
-
+    command -v bash    >/dev/null || missing+=("bash")
+    command -v python3 >/dev/null || missing+=("python3")
+    command -v git     >/dev/null || missing+=("git")
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "missing deps: ${missing[*]}"
         exit 1
     fi
 
-    local py_version
-    py_version=$(python3 -c 'import sys; print(sys.version_info[:2])' | tr -d '()')
-    log "python3 $py_version, cargo $(cargo --version | awk '{print $2}'), git $(git --version | awk '{print $3}')"
-
-    # Path writability
-    for d in "$HOME/.local/bin" "$(dirname "$STATE_DIR")" "$HOME/.jcode" "$(dirname "$SOURCE_DIR")"; do
+    for d in "$HOME/.jcode" "$LOCAL_BIN" "$STATE_DIR"; do
         if [[ ! -d "$d" ]]; then
             run mkdir -p "$d"
         fi
         [[ -w "$d" ]] || { err "not writable: $d"; exit 1; }
     done
-    run mkdir -p "$STATE_DIR"
 
-    # config.toml must not be a symlink (prevents overwriting the repo base)
+    # A symlinked config would let a write land in the repo base.
     if [[ -L "$JCODE_CONFIG" ]]; then
-        err "$JCODE_CONFIG is a symlink → $(readlink "$JCODE_CONFIG")"
-        err "scripts refuse to overwrite. See notes/symlink-incident.md"
+        err "$JCODE_CONFIG is a symlink -> $(readlink "$JCODE_CONFIG")"
+        err "scripts refuse to write through it. Fix:"
+        err "  rm $JCODE_CONFIG && cp $REPO/config/config.toml $JCODE_CONFIG"
         exit 1
     fi
 
     log "preflight ok"
 }
 
-# ============================================================================
-# Phase 2: Source setup (clone or fetch)
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Phase 2: config
+# ---------------------------------------------------------------------------
 
-phase_source() {
-    section "phase 2: source"
-
-    sync_source_link
-
-    # Always operate on the actual clone (resolving through the symlink), not
-    # the symlink path itself. Cloning into the symlink would nest a new clone
-    # inside the existing target.
-    local real_source
-    real_source="$(cd "$JCODE_SOURCE_DIR" 2>/dev/null && pwd || true)"
-
-    if [[ -z "$real_source" || ! -d "$real_source/.git" ]]; then
-        log "cloning $FORK_URL → $JCODE_SOURCE_DIR"
-        run git clone --origin origin "$FORK_URL" "$JCODE_SOURCE_DIR"
-        if [[ $dry_run -eq 1 ]]; then
-            # dry-run: source dir doesn't exist, can't cd into it. All later phases are no-ops.
-            log "(dry-run: skipping phases 3-9 since source dir not materialized)"
-            echo ""
-            echo "dry-run complete (no clone performed). re-run without --dry-run to actually install."
-            exit 0
-        fi
-        sync_source_link
-        real_source="$(cd "$JCODE_SOURCE_DIR" && pwd)"
-        cd "$real_source"
-        run git remote add upstream "$UPSTREAM_URL"
-    else
-        cd "$real_source"
-
-        local current
-        current=$(git remote get-url origin 2>/dev/null || echo "")
-        if [[ "$current" != "$FORK_URL" ]]; then
-            if [[ $force -eq 1 ]]; then
-                warn "redirecting origin: $current → $FORK_URL"
-                run git remote set-url origin "$FORK_URL"
-            else
-                err "origin = $current, expected $FORK_URL"
-                err "use --force to redirect"
-                exit 2
-            fi
-        fi
-
-        if ! git remote get-url upstream >/dev/null 2>&1; then
-            run git remote add upstream "$UPSTREAM_URL"
-        fi
-    fi
-
-    log "fetching all remotes"
-    run git fetch --all --prune --tags
+phase_config() {
+    section "phase 2: config"
+    copy_file "$REPO/config/config.toml" "$JCODE_CONFIG" 0644
+    log "config installed: $JCODE_CONFIG"
 }
 
-# ============================================================================
-# Phase 3: Branch setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Phase 3: skills
+#
+# Repo-owned skills are authoritative. They are rewritten every install so a
+# deleted or stale copy under ~/.jcode/skills cannot silently drift.
+# ---------------------------------------------------------------------------
 
-phase_branch() {
-    section "phase 3: branch ($BRANCH)"
-
-    if [[ $dry_run -eq 0 ]]; then
-        # Detect baseline ref (runtime)
-        if ! BASELINE_REF=$(detect_baseline_ref); then
-            err "could not determine baseline ref (no origin/main or origin/master)"
-            err "is $FORK_URL fetchable? run 'git -C $SOURCE_DIR fetch origin'"
-            exit 2
-        fi
-    else
-        # dry-run: fetch didn't actually happen; assume master (vanpipy's current default)
-        BASELINE_REF="origin/master"
-    fi
-
-    if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-        log "checking out existing $BRANCH"
-        run git checkout "$BRANCH"
-
-        if [[ $dry_run -eq 0 ]]; then
-            # git diff --quiet only checks tracked files; untracked files must be queried separately via ls-files
-            local untracked
-            untracked=$(git ls-files --others --exclude-standard)
-            if ! git diff --quiet HEAD 2>/dev/null \
-               || ! git diff --cached --quiet HEAD 2>/dev/null \
-               || [[ -n "$untracked" ]]; then
-                err "working tree is dirty. Commit your patches first, then re-run install."
-                git status --short
-                exit 3
-            fi
-        fi
-    else
-        log "creating $BRANCH from $BASELINE_REF"
-        run git checkout -B "$BRANCH" "$BASELINE_REF"
-    fi
-
-    log "on branch: $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
+phase_skills() {
+    section "phase 3: skills"
+    local n=0
+    for src in "$REPO"/config/skills/*/; do
+        src="${src%/}"
+        [[ -d "$src" ]] || continue
+        [[ -f "$src/SKILL.md" ]] || continue
+        local name
+        name="$(basename "$src")"
+        copy_file "$src/SKILL.md" "$SKILLS_HOME/$name/SKILL.md" 0644
+        n=$((n+1))
+    done
+    log "skills installed: $n"
 }
 
-# ============================================================================
-# Phase 4: Rebase (every install)
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Phase 4: shell env
+# ---------------------------------------------------------------------------
 
-phase_rebase() {
-    section "phase 4: rebase onto $BASELINE_REF"
-
-    local before_sha
-    before_sha=$(git rev-parse HEAD)
-
-    log "git rebase $BASELINE_REF"
-    if [[ $dry_run -eq 1 ]]; then
-        echo "  would run: git rebase $BASELINE_REF"
-        return 0
-    fi
-
-    if ! git rebase "$BASELINE_REF" 2>&1 | tee "$REBASE_LOG"; then
-        warn "rebase conflict detected"
-        git rebase --abort 2>/dev/null || true
-        echo ""
-        err "rebase aborted. Resolve manually:"
-        echo ""
-        echo "  cd $SOURCE_DIR"
-        echo ""
-        echo "  # option 1: resolve conflicts"
-        echo "  #   (edit conflicted files)"
-        echo "  git add <resolved-files>"
-        echo "  git rebase --continue"
-        echo ""
-        echo "  # option 2: drop all patches and start from current main"
-        echo "  git rebase --abort"
-        echo "  git reset --hard $BASELINE_REF"
-        echo ""
-        echo "  # option 3: skip current patch"
-        echo "  git rebase --skip"
-        echo ""
-        echo "After resolving, re-run: ./scripts/install"
-        echo ""
-        echo "rebase log: $REBASE_LOG"
-        exit 4
-    fi
-
-    local after_sha
-    after_sha=$(git rev-parse HEAD)
-
-    if [[ "$before_sha" != "$after_sha" ]]; then
-        log "rebase moved: ${before_sha:0:7} → ${after_sha:0:7}"
-    else
-        log "rebase no-op (already up-to-date)"
-    fi
-
-    # Push the rebased branch to origin.
-    #
-    # Notes:
-    #   - We omit --ff-only: that flag is NOT a valid 'git push' option
-    #     (it only exists on 'git merge'). 'git push' defaults to refusing
-    #     non-fast-forward updates already, so dropping the bogus flag
-    #     keeps the desired safety.
-    #   - First push (origin/$BRANCH missing): creates the branch.
-    #   - Subsequent pushes: refuses non-ff unless --force is given (and
-    #     we never pass --force).
-    #   - JCODE_NO_PUSH=1 skips this entirely.
-    if [[ "${JCODE_NO_PUSH:-0}" != "1" ]]; then
-        log "pushing HEAD:refs/heads/$BRANCH to origin (no --force)"
-        run git push origin "HEAD:refs/heads/$BRANCH" || warn "push failed (non-ff? manual push needed)"
-    fi
-}
-
-# ============================================================================
-# Phase 5: Build
-# ============================================================================
-
-phase_build() {
-    section "phase 5: build"
-
-    local profile_flag="--release"
-    if [[ "${JCODE_BUILD:-release}" == "debug" ]]; then
-        profile_flag=""
-    fi
-
-    # Re-detect vendored status in case preflight was skipped (--no-preflight).
-    # detect_openssl_vendored() is idempotent and respects existing OPENSSL_VENDORED.
-    detect_openssl_vendored
-
-    local cargo_features=()
-    if [[ "$OPENSSL_VENDORED" == "1" ]]; then
-        cargo_features+=("--features" "linux-compat-vendored-openssl")
-    fi
-
-    local version_str
-    version_str="$(git describe --tags --always --dirty)-vanpipy.$(date +%Y%m%d)"
-    export JCODE_BUILD_VERSION="$version_str"
-    log "JCODE_BUILD_VERSION=$version_str"
-
-    # Force build-meta/build.rs to re-run by passing the current short SHA and
-    # commit date as env vars. Without this, cargo's incremental cache skips
-    # build-meta after the first build (it does not declare .git/HEAD as a
-    # rerun-if-changed input) and the embedded JCODE_GIT_HASH stays stale,
-    # so jcode --version reports the original HEAD rather than the patches we
-    # just added on top of it.
-    export JCODE_BUILD_GIT_HASH="$(git rev-parse --short HEAD)"
-    export JCODE_BUILD_GIT_DATE="$(git log -1 --format=%ci)"
-    log "JCODE_BUILD_GIT_HASH=$JCODE_BUILD_GIT_HASH"
-    log "JCODE_BUILD_GIT_DATE=$JCODE_BUILD_GIT_DATE"
-
-    local cargo_cmd=(cargo build $profile_flag --bin jcode "${cargo_features[@]}")
-
-    log "${cargo_cmd[*]}"
-    if [[ $dry_run -eq 1 ]]; then
-        echo "  would run: ${cargo_cmd[*]}"
-        return 0
-    fi
-
-    local bin_src="$SOURCE_DIR/target/release/jcode"
-    [[ "${JCODE_BUILD:-release}" == "debug" ]] && bin_src="$SOURCE_DIR/target/debug/jcode"
-
-    if ! "${cargo_cmd[@]}" 2>&1 | tee "$BUILD_LOG"; then
-        err "cargo build failed"
-        echo ""
-        echo "last 50 lines of build log:"
-        tail -50 "$BUILD_LOG"
-        exit 5
-    fi
-
-    log "build ok: $bin_src"
-}
-
-# ============================================================================
-# Phase 6: Install binary
-# ============================================================================
-
-phase_install_binary() {
-    section "phase 6: install binary"
-
-    local bin_src="$SOURCE_DIR/target/release/jcode"
-    [[ "${JCODE_BUILD:-release}" == "debug" ]] && bin_src="$SOURCE_DIR/target/debug/jcode"
-
-    if [[ $dry_run -eq 1 ]]; then
-        echo "  would install: $bin_src → $BIN_DST"
-        return 0
-    fi
-
-    [[ -f "$bin_src" ]] || { err "binary not found: $bin_src"; exit 5; }
-
-    # Back up existing
-    if [[ -e "$BIN_DST" && ! -L "$BIN_DST" ]]; then
-        local backup
-        backup="$BIN_DST.bak.$(date +%Y%m%d%H%M%S)"
-        log "backing up existing binary: $BIN_DST → $backup"
-        mv "$BIN_DST" "$backup"
-    fi
-
-    install -m 0755 "$bin_src" "$BIN_DST"
-    log "installed: $BIN_DST"
-
-    # PATH check
-    case ":$PATH:" in
-        *":$HOME/.local/bin:"*) ;;
-        *) warn "$HOME/.local/bin not in PATH : add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-    esac
-}
-
-# ============================================================================
-# Phase 7: Wire up config
-# ============================================================================
-
-phase_wire_config() {
-    section "phase 7: wire config"
-
-    run cp "$REPO/config/config.toml" "$JCODE_CONFIG"
-    log "config copied: $REPO/config/config.toml → $JCODE_CONFIG"
-
-    run "$REPO/scripts/use-profile"
-    log "profile applied: autonomous"
-
-    run "$REPO/scripts/sync-skills" --to-home --apply
-    log "skills synced to ~/.jcode/skills/"
-
+phase_shell_env() {
+    section "phase 4: shell env"
     run "$REPO/scripts/install-shell-env" --apply
     log "shell env installed (JCODE_OPENROUTER_MODEL)"
-
-    run cp "$REPO/scripts/jcode-audit-log" "$HOME/.local/bin/jcode-audit-log"
-    run chmod +x "$HOME/.local/bin/jcode-audit-log"
-    log "audit log hook installed: ~/.local/bin/jcode-audit-log"
 }
 
-# ============================================================================
-# Phase 8: Scaffolding (goal-driven L2 ambient pieces)
-#
-# Installs four pieces that turn L2 ambient from "check-in + queue maintenance"
-# into truly goal-driven execution. Each piece is **first-write-only**:
-# subsequent installs NEVER overwrite user-edited files. To force regeneration
-# of any piece, delete the destination manually and rerun install.
-#
-#   8a. long-task-discipline skill → ~/.jcode/skills/long-task-discipline/SKILL.md
-#       (goal discipline: ambient workers must align commits with active goal)
-#   8b. ~/AGENTS.md user-level template (only if missing; project layer reads
-#       this via load_agents_md_files_from_dirs in jcode-base/src/prompt.rs:949)
-#   8c. jcode-goal CLI → ~/.local/bin/jcode-goal (Python; manages ~/.jcode/goals/)
-#   8d. jcode-l2-check CLI → ~/.local/bin/jcode-l2-check (bash; readiness verifier)
-#   8e. jcode-tool-policy CLI → ~/.local/bin/jcode-tool-policy (pre_tool gate hook)
-#   8f. goal skill → ~/.jcode/skills/goal/SKILL.md
-#       (slash command: /goal wraps jcode-goal for in-chat goal creation/edits)
-#   8g. orchestrator skill → ~/.jcode/skills/orchestrator/SKILL.md
-#       (slash command: /orchestrate wraps jcode-orchestrate for in-chat loop runs)
-#   8h. jcode-orchestrate CLI → ~/.local/bin/jcode-orchestrate (Python; state
-#       machine for Autonomous Coding Control Loop, new.md §4)
-#   8i. orchestrator prompts → ~/.local/share/jcode-orchestrate/prompts/
-#       (coder.md, reviewer.md — the two worker role templates)
-#       NOTE: 8a is technically redundant with `sync-skills` in Phase 7 (which
-#       copies all skills including long-task-discipline). Kept as explicit
-#       first-write-only install so the skill exists even if Phase 7 is skipped
-#       (e.g. --skip-sync-skills flag, or future profile changes).
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Phase 5: audit hook
+# ---------------------------------------------------------------------------
 
-phase_scaffolding() {
-    section "phase 8: scaffolding"
+phase_audit_hook() {
+    section "phase 5: audit hook"
+    copy_file "$REPO/scripts/jcode-audit-log" "$LOCAL_BIN/jcode-audit-log" 0755
+    log "audit log hook installed: $LOCAL_BIN/jcode-audit-log"
+}
 
-    # 8a. long-task-discipline skill (skip if exists)
-    local skill_dst="$HOME/.jcode/skills/long-task-discipline"
-    if [[ -f "$skill_dst/SKILL.md" ]]; then
-        log "long-task-discipline skill already installed (skipped)"
-    else
-        run mkdir -p "$skill_dst"
-        run cp "$REPO/config/skills/long-task-discipline/SKILL.md" \
-               "$skill_dst/SKILL.md"
-        log "long-task-discipline skill installed: $skill_dst/SKILL.md"
-    fi
+# ---------------------------------------------------------------------------
+# Phase 6: CLIs
+# ---------------------------------------------------------------------------
 
-    # 8f. goal skill — /goal slash command wrapper (skip if exists)
-    local goal_skill_dst="$HOME/.jcode/skills/goal"
-    if [[ -f "$goal_skill_dst/SKILL.md" ]]; then
-        log "goal skill already installed (skipped)"
-    else
-        run mkdir -p "$goal_skill_dst"
-        run cp "$REPO/config/skills/goal/SKILL.md" \
-               "$goal_skill_dst/SKILL.md"
-        log "goal skill installed: $goal_skill_dst/SKILL.md"
-    fi
-
-    # 8g. orchestrator skill — /orchestrate slash command wrapper (skip if exists)
-    local orch_skill_dst="$HOME/.jcode/skills/orchestrator"
-    if [[ -f "$orch_skill_dst/SKILL.md" ]]; then
-        log "orchestrator skill already installed (skipped)"
-    else
-        run mkdir -p "$orch_skill_dst"
-        run cp "$REPO/config/skills/orchestrator/SKILL.md" \
-               "$orch_skill_dst/SKILL.md"
-        log "orchestrator skill installed: $orch_skill_dst/SKILL.md"
-    fi
-
-    # 8b. ~/AGENTS.md (only if missing — never overwrite user edits)
-    if [[ -f "$HOME/AGENTS.md" ]]; then
-        log "~/AGENTS.md already exists (skipped; install never overwrites user files)"
-    else
-        run cp "$REPO/config/templates/AGENTS.md" "$HOME/AGENTS.md"
-        log "~/AGENTS.md installed from template (customize freely; install won't overwrite)"
-    fi
-
-    # 8c + 8d + 8e + 8h. CLI binaries → ~/.local/bin/
-    local cli_src_dir="$REPO/config/bin"
-    for cli in jcode-goal jcode-l2-check jcode-tool-policy jcode-orchestrate; do
-        local dst="$HOME/.local/bin/$cli"
-        run install -m 0755 "$cli_src_dir/$cli" "$dst"
-        log "CLI installed: $dst"
+phase_clis() {
+    section "phase 6: CLIs"
+    for cli in "${CLI_NAMES[@]}"; do
+        copy_file "$REPO/config/bin/$cli" "$LOCAL_BIN/$cli" 0755
+        log "CLI installed: $LOCAL_BIN/$cli"
     done
+}
 
-    # 8i. orchestrator prompts → ~/.local/share/jcode-orchestrate/prompts/
-    # First-write-only; orchestrator falls back to repo path in dev mode.
-    local prompts_src="$REPO/config/share/jcode-orchestrate/prompts"
-    local prompts_dst="$HOME/.local/share/jcode-orchestrate/prompts"
-    if [[ -d "$prompts_dst" ]]; then
-        log "orchestrator prompts already installed (skipped)"
+# ---------------------------------------------------------------------------
+# Phase 7: orchestrator prompts
+# ---------------------------------------------------------------------------
+
+phase_prompts() {
+    section "phase 7: orchestrator prompts"
+    for f in "$PROMPTS_SRC"/*.md; do
+        [[ -f "$f" ]] || continue
+        copy_file "$f" "$PROMPTS_DST/$(basename "$f")" 0644
+    done
+    log "orchestrator prompts installed: $PROMPTS_DST"
+}
+
+# ---------------------------------------------------------------------------
+# Phase 8: ~/AGENTS.md
+#
+# Only written when absent. The user's personal global instructions win.
+# ---------------------------------------------------------------------------
+
+phase_agents_md() {
+    section "phase 8: ~/AGENTS.md"
+    if [[ -f "$HOME/AGENTS.md" ]]; then
+        log "\$HOME/AGENTS.md already exists (skipped; install never overwrites it)"
     else
-        run mkdir -p "$prompts_dst"
-        for f in "$prompts_src"/*.md; do
-            [[ -f "$f" ]] || continue
-            run install -m 0644 "$f" "$prompts_dst/"
-        done
-        log "orchestrator prompts installed: $prompts_dst/{coder,reviewer}.md"
-    fi
-
-    # Optional readiness check (informational; does NOT block install)
-    if [[ $dry_run -eq 0 ]]; then
-        echo ""
-        echo "  --- readiness check (informational) ---"
-        "$HOME/.local/bin/jcode-l2-check" --quiet 2>/dev/null || true
-        local rc=$?
-        if [[ $rc -eq 0 ]]; then
-            echo "  → L2 ambient is goal-driven"
-        else
-            echo "  → readiness check exit=$rc (run ~/.local/bin/jcode-l2-check for details)"
-        fi
+        copy_file "$REPO/config/templates/AGENTS.md" "$HOME/AGENTS.md" 0644
+        log "\$HOME/AGENTS.md installed from template (customize freely)"
     fi
 }
 
-# ============================================================================
-# Phase 9: Verify
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Phase 9: verify
+# ---------------------------------------------------------------------------
 
 phase_verify() {
     section "phase 9: verify"
 
     if [[ $dry_run -eq 1 ]]; then
-        echo "  would run 13 checks (skipped in --dry-run)"
+        echo "  would run 12 checks (skipped in --dry-run)"
         return 0
     fi
 
     local ok=0 fail=0
 
-    check() {
-        if [[ $? -eq 0 ]]; then
-            ok=$((ok+1))
-            echo "  ✓ $1"
-        else
-            fail=$((fail+1))
-            echo "  ✗ $1"
-        fi
-    }
-
-    # Verify checks MUST survive individual failures (we want to print the
-    # full report, not abort on the first ✗). Disable -e / pipefail around
-    # this block; restore on exit.
+    # Checks must survive individual failures so the full report prints.
     local saved_opts
     saved_opts="$-"
     set +e +o pipefail
 
-    $BIN_DST --version >/dev/null 2>&1
-    check "jcode binary callable"
+    check() {
+        if [[ $? -eq 0 ]]; then
+            ok=$((ok+1)); echo "  ✓ $1"
+        else
+            fail=$((fail+1)); echo "  ✗ $1"
+        fi
+    }
 
-    # Build provenance: installed binary must be byte-identical to the source
-    # build artifact. Combined with `git remote get-url origin | grep vanpipy`
-    # this proves the running binary came from the user's fork at HEAD.
-    local bin_src
-    if [[ "${JCODE_BUILD:-release}" == "debug" ]]; then
-        bin_src="$SOURCE_DIR/target/debug/jcode"
-    else
-        bin_src="$SOURCE_DIR/target/release/jcode"
-    fi
-    if [[ -f "$bin_src" ]] && diff -q "$BIN_DST" "$bin_src" >/dev/null 2>&1; then
-        ok=$((ok+1)); echo "  ✓ binary matches $bin_src"
-    else
-        fail=$((fail+1)); echo "  ✗ binary matches $bin_src"
-    fi
-
-    (git -C "$SOURCE_DIR" remote get-url origin 2>/dev/null | grep -q "vanpipy")
-    check "source origin is vanpipy fork"
+    python3 -c "import tomllib,sys; tomllib.load(open('$JCODE_CONFIG','rb'))"
+    check "$JCODE_CONFIG parses"
 
     [[ ! -L "$JCODE_CONFIG" ]]
-    check "$JCODE_CONFIG is regular file"
+    check "$JCODE_CONFIG is a regular file"
 
-    grep -q "proactive_work = true" "$JCODE_CONFIG"
-    check "autonomous profile active"
+    diff -q "$REPO/config/config.toml" "$JCODE_CONFIG" >/dev/null 2>&1
+    check "live config matches repo config/config.toml"
 
-    [[ -d "$HOME/.jcode/skills/optimization" ]]
-    check "skills synced (optimization present)"
+    grep -q "enabled = true" "$JCODE_CONFIG"
+    check "ambient enabled"
+
+    [[ -f "$SKILLS_HOME/goal/SKILL.md" ]]
+    check "goal skill installed"
+
+    [[ -f "$SKILLS_HOME/orchestrator/SKILL.md" ]]
+    check "orchestrator skill installed"
+
+    [[ -f "$SKILLS_HOME/long-task-discipline/SKILL.md" ]]
+    check "long-task-discipline skill installed"
+
+    [[ -x "$LOCAL_BIN/jcode-goal" ]]
+    check "jcode-goal CLI installed"
+
+    [[ -x "$LOCAL_BIN/jcode-l2-check" ]]
+    check "jcode-l2-check CLI installed"
+
+    [[ -x "$LOCAL_BIN/jcode-tool-policy" ]]
+    check "jcode-tool-policy pre_tool gate installed"
+
+    [[ -x "$LOCAL_BIN/jcode-orchestrate" ]]
+    check "jcode-orchestrate CLI installed"
 
     grep -q "JCODE_OPENROUTER_MODEL" "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null
     check "shell env installed (JCODE_OPENROUTER_MODEL)"
 
-    [[ -x "$HOME/.local/bin/jcode-goal" ]]
-    check "jcode-goal CLI installed (~/.local/bin/jcode-goal)"
-
-    [[ -x "$HOME/.local/bin/jcode-l2-check" ]]
-    check "jcode-l2-check CLI installed (~/.local/bin/jcode-l2-check)"
-
-    [[ -x "$HOME/.local/bin/jcode-tool-policy" ]]
-    check "jcode-tool-policy pre_tool gate installed (~/.local/bin/jcode-tool-policy)"
-
-    [[ -x "$HOME/.local/bin/jcode-orchestrate" ]]
-    check "jcode-orchestrate CLI installed (~/.local/bin/jcode-orchestrate)"
-
-    [[ -f "$HOME/.jcode/skills/goal/SKILL.md" ]]
-    check "/goal slash command skill installed (~/.jcode/skills/goal/SKILL.md)"
-
-    [[ -f "$HOME/.jcode/skills/orchestrator/SKILL.md" ]]
-    check "/orchestrate slash command skill installed (~/.jcode/skills/orchestrator/SKILL.md)"
-
-    # Restore the caller's shell options (e.g. errexit / pipefail).
     set -${saved_opts}
 
     echo ""
     echo "verify: $ok passed, $fail failed"
-
     [[ $fail -eq 0 ]] || exit 6
 }
 
-# ============================================================================
-# Phase 10: State + summary
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Phase 10: state + summary
+# ---------------------------------------------------------------------------
 
 phase_finalize() {
     section "phase 10: state + summary"
@@ -787,30 +309,23 @@ phase_finalize() {
         exit 0
     fi
 
-    local commit_sha commit_short branch_name
-    commit_sha=$(git -C "$SOURCE_DIR" rev-parse HEAD)
-    commit_short=$(git -C "$SOURCE_DIR" rev-parse --short HEAD)
-    branch_name=$(git -C "$SOURCE_DIR" rev-parse --abbrev-ref HEAD)
-
     mkdir -p "$STATE_DIR"
 
-    python3 - "$STATE_FILE" "$SOURCE_DIR" "$FORK_URL" "$UPSTREAM_URL" \
-                  "$branch_name" "$commit_sha" "$commit_short" "$BIN_DST" \
-                  "${JCODE_BUILD:-release}" <<'PY'
-import json, sys, datetime
-path, src, fork, upstream, branch, sha, short, dst, profile = sys.argv[1:10]
+    python3 - "$STATE_FILE" "$REPO" "${CLI_NAMES[@]}" <<'PY'
+import hashlib, json, os, sys, datetime
+state_path, repo = sys.argv[1], sys.argv[2]
+clis = sys.argv[3:]
+
+cfg = os.path.join(repo, "config", "config.toml")
+with open(cfg, "rb") as f:
+    digest = hashlib.sha256(f.read()).hexdigest()
+
 data = {
-    "source_dir": src,
-    "source_remote_origin": fork,
-    "source_remote_upstream": upstream,
-    "source_branch": branch,
-    "source_commit": sha,
-    "source_short": short,
-    "binary_path": dst,
-    "build_profile": profile,
+    "config_sha256": digest,
     "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    "clis": clis,
 }
-with open(path, "w") as f:
+with open(state_path, "w") as f:
     json.dump(data, f, indent=2, sort_keys=True)
     f.write("\n")
 PY
@@ -819,67 +334,44 @@ PY
     echo ""
     echo "✓ install complete"
     echo ""
-    echo "  source:     $SOURCE_DIR"
-    echo "  branch:     $branch_name"
-    echo "  commit:     $commit_short ($commit_sha)"
-    echo "  baseline:   $BASELINE_REF"
-    echo "  binary:     $BIN_DST"
-    echo "  config:     $JCODE_CONFIG (autonomous profile)"
-    echo "  state:      $STATE_FILE"
-    echo ""
-    echo "Next steps:"
-    echo "  1. New shell, or:  source ~/.zshrc"
-    echo "  2. Smoke test:     $BIN_DST --version"
-    echo "  3. Start serve:    nohup $BIN_DST serve &  # or systemd (see scripts/README.md)"
-    echo "  4. Watch cycles:   tail -f ~/.jcode/logs/ambient.log"
-    echo ""
-    echo "Goal-driven L2 ambient (installed this run):"
-    echo "  • ~/AGENTS.md                 — user-level global instructions"
-    echo "  • ~/.jcode/skills/long-task-discipline/SKILL.md  — goal discipline"
-    echo "  • ~/.local/bin/jcode-goal     — manage ~/.jcode/goals/"
-    echo "  • ~/.local/bin/jcode-l2-check — readiness verifier (8 checks)"
-    echo "  • ~/.local/bin/jcode-tool-policy — pre_tool gate (blocks commits on"
-    echo "    ambient/* without an active goal; blocks git push)"
-    echo "  • ~/.local/bin/jcode-orchestrate — Autonomous Coding Control Loop"
-    echo "    (new.md §4): state machine + reviewer verdict protocol"
-    echo "  • ~/.local/share/jcode-orchestrate/prompts/{coder,reviewer}.md"
-    echo "  • ~/.jcode/skills/goal/SKILL.md   — /goal slash command (in-chat"
-    echo "    wrapper around jcode-goal: /goal \"<title>\" --priority high)"
-    echo "  • ~/.jcode/skills/orchestrator/SKILL.md   — /orchestrate slash command"
-    echo "    (in-chat wrapper around jcode-orchestrate: /orchestrate --once)"
-    echo "  To activate: cd <your-project> && /goal \"<title>\" --priority high"
-    echo "  Then advance: cd <your-project> && /orchestrate loop 10"
-    echo ""
-    echo "To update later (after more commits):"
-    echo "  cd $SOURCE_DIR"
-    echo "  # commit your new patches first"
-    echo "  ./scripts/install      # re-runs rebase + rebuild + reinstall"
-}
-
-# ============================================================================
-# Main
-# ============================================================================
-
-main() {
-    echo "lazible-jcode installer"
-    echo ""
-    echo "  source:   $SOURCE_DIR (will be created if missing)"
-    echo "  branch:   $BRANCH (rebased onto $BASELINE_REF)"
-    echo "  binary:   $BIN_DST"
+    echo "  config:   $JCODE_CONFIG"
+    echo "  skills:   $SKILLS_HOME"
+    echo "  clis:     $LOCAL_BIN/{jcode-goal,jcode-l2-check,jcode-tool-policy,jcode-orchestrate}"
+    echo "  prompts:  $PROMPTS_DST"
     echo "  state:    $STATE_FILE"
     echo ""
+    echo "Next steps:"
+    echo "  1. New shell, or: source ~/.zshrc"
+    echo "  2. Readiness check: jcode-l2-check"
+    echo "  3. Start a goal:    cd <your-project> && /goal \"<title>\" --priority high"
+    echo "  4. Advance a cycle: cd <your-project> && /orchestrate loop 10"
+    echo ""
+    echo "To reinstall after editing this repo: ./scripts/install"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+main() {
+    echo "lazible-jcode installer (config only)"
+    echo ""
+    echo "  config:  $JCODE_CONFIG"
+    echo "  skills:  $SKILLS_HOME"
+    echo "  clis:    $LOCAL_BIN"
+    echo "  state:   $STATE_FILE"
+    echo ""
     [[ $dry_run -eq 1 ]] && echo "  mode: DRY-RUN (no side effects)"
-    [[ $force -eq 1 ]]   && echo "  mode: FORCE (allow overwrite / redirect)"
     echo ""
 
-    [[ $skip_preflight -eq 0 ]] && phase_preflight
-    phase_source
-    phase_branch
-    phase_rebase
-    phase_build
-    phase_install_binary
-    phase_wire_config
-    phase_scaffolding
+    phase_preflight
+    phase_config
+    phase_skills
+    phase_shell_env
+    phase_audit_hook
+    phase_clis
+    phase_prompts
+    phase_agents_md
     phase_verify
     phase_finalize
 }

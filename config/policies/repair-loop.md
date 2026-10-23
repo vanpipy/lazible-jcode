@@ -1,26 +1,51 @@
-# Repair Loop Policy (v1)
+# Repair Loop Policy
 
-## Current state
+## Where the retry budget actually lives
 
-The jcode Task DAG engine (`jcode-plan/src/dag/ops.rs`) provides `requeue_failed`,
-but the retry upper bound **is not exposed as a configuration field** : it is controlled inside the engine.
+There is no config field for it. Two independent budgets exist, both owned by
+`jcode-orchestrate` and stored per goal in
+`~/.jcode/goals/projects/<hash>/<goal>.json`:
 
-## Our discipline
+| Budget | Default | Behaviour when exceeded |
+| --- | --- | --- |
+| `step.max_retries` | 3 | step goes `escalated`, human is notified |
+| `milestone.review_max_retries` | 3 | milestone goes `escalated`, human is notified |
 
-- A single verify / fix node that fails more than 3 times → escalate to a human
-- Escalation signals:
-  - Insert `Escalating after N retries` notice in the transcript
-  - The `[hooks].post_tool` hook records every failure
-  - On the 3rd failure, notify a human via `[safety].ntfy` / email
+Set them when the step or milestone is created:
 
-## Interim workaround
+```bash
+jcode-goal step <goal-id> <milestone-id> add "<content>" --max-retries 3
+jcode-goal milestone <goal-id> add "<title>" --review-max-retries 3
+```
 
-- The `jcode-tool-policy` script (pre_tool hook) intercepts the repeated-failure pattern of `delegate_task`
-- It maintains a per-session retry counter, stored at `~/.jcode/state/retry-counter/<session>.json`
-- When the threshold is exceeded, it forces exit 2 (refuse the retry)
+The orchestrator owns the counters. `config/skills/long-task-discipline/SKILL.md`
+records the outcome but never keeps its own count.
 
-## Long-term direction
+## Escalation signals
 
-- The jcode engine exposes a `MAX_DAG_REQUEUE` configuration field
-- This repo will add it to `config/profiles/autonomous.toml`
-- Until then, use the interim workaround above
+When a budget is exhausted the orchestrator emits `step_escalated` or
+`milestone_escalated` and prints a `NOTIFY:` line to stderr. The ambient cycle
+stops there and waits for the user. Nothing retries past that point.
+
+Recovery is manual and explicit:
+
+```bash
+jcode-goal step <goal-id> <milestone-id> add "<content>" --attach-findings "..."
+jcode-goal status <goal-id> pending      # re-queue
+jcode-goal rm <goal-id>                   # abandon
+```
+
+## The DAG's own requeue limit
+
+The jcode Task DAG engine (`jcode-plan/src/dag/ops.rs`) provides
+`requeue_failed`. Its retry ceiling lives inside the engine and is **not**
+exposed as a config field. `MAX_PLAN_ITEMS = 1024` and
+`MAX_SWARM_MEMBERS = 1000` bound the plan size, not the retry count.
+
+Exposing it would mean adding a field to `jcode-config-types` and reading it in
+`ops.rs`. That is a jcode source change and does not belong in this repo.
+
+## Interim rule
+
+A single verify or fix step that fails three times escalates to a human. Do
+not add workarounds that retry forever.
