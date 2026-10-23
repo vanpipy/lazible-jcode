@@ -1,45 +1,31 @@
 #!/usr/bin/env bash
-# install : wire this config repo into ~/.jcode
+# install : copy this config repo into ~/.jcode
 #
 # Usage:
 #   ./scripts/install                 # install config (default)
 #   ./scripts/install --dry-run       # show what would happen, no side effects
 #   ./scripts/install --help          # show this header
 #
-# This repo is a CONFIG repo. It installs configuration, skills, policies and
-# helper CLIs. It does not build, patch or distribute the jcode binary. Install
-# jcode separately (see README.md).
+# This repo is CONFIG ONLY. It never builds, patches or installs jcode.
 #
 # What gets installed:
-#   1. preflight  : deps (bash / python3 / git), path writability, no symlinked config
-#   2. config     : config/config.toml                 -> ~/.jcode/config.toml
-#   3. skills     : config/skills/*/SKILL.md           -> ~/.jcode/skills/*/
-#   4. shell env  : JCODE_OPENROUTER_MODEL             -> ~/.zshrc + ~/.bashrc
-#   5. audit hook : scripts/jcode-audit-log            -> ~/.local/bin/
-#   6. CLIs       : config/bin/jcode-{goal,l2-check,tool-policy,orchestrate}
-#                                                          -> ~/.local/bin/
-#   7. prompts    : config/share/jcode-orchestrate/prompts/*.md
-#                                                          -> ~/.local/share/jcode-orchestrate/prompts/
-#   8. AGENTS.md  : config/templates/AGENTS.md          -> ~/AGENTS.md  (only if missing)
-#   9. verify     : 12 checks
-#  10. state      : ~/.local/state/lazible-jcode/state.json
+#   1. preflight  : deps (bash / python3), writable paths, no symlinked config
+#   2. config     : config/config.toml              -> ~/.jcode/config.toml
+#   3. skills     : config/skills/*/SKILL.md        -> ~/.jcode/skills/*/
+#   4. verify     : 5 checks
+#   5. state      : ~/.local/state/lazible-jcode/state.json
+#
+# Not managed here:
+#   - the jcode binary (install it separately)
+#   - MCP servers (~/.jcode/servers.json, ~/.jcode/mcp.json)
+#   - ~/AGENTS.md (yours to edit)
+#   - prompt-overlay.md and swarm-prompt.md. config/ holds a copy for review,
+#     install only checks it against live and never overwrites live.
 #
 # Exit codes:
 #   0  success
 #   1  preflight failed
 #   6  verify failed
-#
-# Design constraints:
-#   - The repo is the source of truth for everything it owns. Skills, prompts
-#     and CLIs are rewritten on every install. If you edited a copy under
-#     ~/.jcode/skills by hand, pull it back first:
-#       ./scripts/sync-skills --from-home --apply
-#   - ~/AGENTS.md is the one exception: it is only written when absent, so your
-#     personal instructions are never clobbered.
-#   - ~/.jcode/config.toml must not be a symlink (exit 1). A symlink would let
-#     a write flow back into the repo base.
-#   - Nothing outside ~/.jcode, ~/.local/bin, ~/.local/share and ~/.zshrc or
-#     ~/.bashrc is touched.
 
 set -euo pipefail
 
@@ -47,18 +33,16 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 JCODE_CONFIG="$HOME/.jcode/config.toml"
 SKILLS_HOME="$HOME/.jcode/skills"
-LOCAL_BIN="$HOME/.local/bin"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lazible-jcode"
 STATE_FILE="$STATE_DIR/state.json"
-PROMPTS_SRC="$REPO/config/share/jcode-orchestrate/prompts"
-PROMPTS_DST="$HOME/.local/share/jcode-orchestrate/prompts"
 
-CLI_NAMES=(jcode-goal jcode-l2-check jcode-tool-policy jcode-orchestrate)
+# Live prompt files. Mirrored into config/ for review, never written here.
+LIVE_PROMPTS=(prompt-overlay.md swarm-prompt.md)
 
 dry_run=0
 
 usage() {
-    sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -70,22 +54,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 log()  { echo "[install] $*"; }
-warn() { echo "[install] WARN: $*" >&2; }
 err()  { echo "[install] ERR: $*" >&2; }
 section() { echo ""; echo "=== $* ==="; }
-
-run() {
-    if [[ $dry_run -eq 1 ]]; then
-        echo "  would run: $*"
-    else
-        "$@"
-    fi
-}
 
 copy_file() {
     # copy_file <src> <dst> <mode>
@@ -108,16 +79,14 @@ phase_preflight() {
     local missing=()
     command -v bash    >/dev/null || missing+=("bash")
     command -v python3 >/dev/null || missing+=("python3")
-    command -v git     >/dev/null || missing+=("git")
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        err "missing deps: ${missing[*]}"
-        exit 1
-    fi
+    [[ ${#missing[@]} -eq 0 ]] || { err "missing deps: ${missing[*]}"; exit 1; }
 
-    for d in "$HOME/.jcode" "$LOCAL_BIN" "$STATE_DIR"; do
-        if [[ ! -d "$d" ]]; then
-            run mkdir -p "$d"
-        fi
+    [[ -f "$REPO/config/config.toml" ]] || {
+        err "missing $REPO/config/config.toml"; exit 1; }
+
+    local d
+    for d in "$HOME/.jcode" "$SKILLS_HOME" "$STATE_DIR"; do
+        [[ -d "$d" ]] || run_mkdir "$d"
         [[ -w "$d" ]] || { err "not writable: $d"; exit 1; }
     done
 
@@ -130,6 +99,14 @@ phase_preflight() {
     fi
 
     log "preflight ok"
+}
+
+run_mkdir() {
+    if [[ $dry_run -eq 1 ]]; then
+        echo "  would mkdir: $1"
+    else
+        mkdir -p "$1"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -145,18 +122,16 @@ phase_config() {
 # ---------------------------------------------------------------------------
 # Phase 3: skills
 #
-# Repo-owned skills are authoritative. They are rewritten every install so a
-# deleted or stale copy under ~/.jcode/skills cannot silently drift.
+# Repo skills are authoritative and rewritten every install, so a stale or
+# deleted copy under ~/.jcode/skills cannot silently drift.
 # ---------------------------------------------------------------------------
 
 phase_skills() {
     section "phase 3: skills"
-    local n=0
+    local n=0 src name
     for src in "$REPO"/config/skills/*/; do
         src="${src%/}"
-        [[ -d "$src" ]] || continue
         [[ -f "$src/SKILL.md" ]] || continue
-        local name
         name="$(basename "$src")"
         copy_file "$src/SKILL.md" "$SKILLS_HOME/$name/SKILL.md" 0644
         n=$((n+1))
@@ -165,75 +140,14 @@ phase_skills() {
 }
 
 # ---------------------------------------------------------------------------
-# Phase 4: shell env
-# ---------------------------------------------------------------------------
-
-phase_shell_env() {
-    section "phase 4: shell env"
-    run "$REPO/scripts/install-shell-env" --apply
-    log "shell env installed (JCODE_OPENROUTER_MODEL)"
-}
-
-# ---------------------------------------------------------------------------
-# Phase 5: audit hook
-# ---------------------------------------------------------------------------
-
-phase_audit_hook() {
-    section "phase 5: audit hook"
-    copy_file "$REPO/scripts/jcode-audit-log" "$LOCAL_BIN/jcode-audit-log" 0755
-    log "audit log hook installed: $LOCAL_BIN/jcode-audit-log"
-}
-
-# ---------------------------------------------------------------------------
-# Phase 6: CLIs
-# ---------------------------------------------------------------------------
-
-phase_clis() {
-    section "phase 6: CLIs"
-    for cli in "${CLI_NAMES[@]}"; do
-        copy_file "$REPO/config/bin/$cli" "$LOCAL_BIN/$cli" 0755
-        log "CLI installed: $LOCAL_BIN/$cli"
-    done
-}
-
-# ---------------------------------------------------------------------------
-# Phase 7: orchestrator prompts
-# ---------------------------------------------------------------------------
-
-phase_prompts() {
-    section "phase 7: orchestrator prompts"
-    for f in "$PROMPTS_SRC"/*.md; do
-        [[ -f "$f" ]] || continue
-        copy_file "$f" "$PROMPTS_DST/$(basename "$f")" 0644
-    done
-    log "orchestrator prompts installed: $PROMPTS_DST"
-}
-
-# ---------------------------------------------------------------------------
-# Phase 8: ~/AGENTS.md
-#
-# Only written when absent. The user's personal global instructions win.
-# ---------------------------------------------------------------------------
-
-phase_agents_md() {
-    section "phase 8: ~/AGENTS.md"
-    if [[ -f "$HOME/AGENTS.md" ]]; then
-        log "\$HOME/AGENTS.md already exists (skipped; install never overwrites it)"
-    else
-        copy_file "$REPO/config/templates/AGENTS.md" "$HOME/AGENTS.md" 0644
-        log "\$HOME/AGENTS.md installed from template (customize freely)"
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# Phase 9: verify
+# Phase 4: verify
 # ---------------------------------------------------------------------------
 
 phase_verify() {
-    section "phase 9: verify"
+    section "phase 4: verify"
 
     if [[ $dry_run -eq 1 ]]; then
-        echo "  would run 12 checks (skipped in --dry-run)"
+        echo "  would run 5 checks (skipped in --dry-run)"
         return 0
     fi
 
@@ -246,9 +160,9 @@ phase_verify() {
 
     check() {
         if [[ $? -eq 0 ]]; then
-            ok=$((ok+1)); echo "  ✓ $1"
+            ok=$((ok+1)); echo "  ok   $1"
         else
-            fail=$((fail+1)); echo "  ✗ $1"
+            fail=$((fail+1)); echo "  FAIL $1"
         fi
     }
 
@@ -256,37 +170,30 @@ phase_verify() {
     check "$JCODE_CONFIG parses"
 
     [[ ! -L "$JCODE_CONFIG" ]]
-    check "$JCODE_CONFIG is a regular file"
+    check "$JCODE_CONFIG is a regular file, not a symlink"
 
-    diff -q "$REPO/config/config.toml" "$JCODE_CONFIG" >/dev/null 2>&1
-    check "live config matches repo config/config.toml"
+    cmp -s "$REPO/config/config.toml" "$JCODE_CONFIG"
+    check "live config matches config/config.toml"
 
-    grep -q "enabled = true" "$JCODE_CONFIG"
-    check "ambient enabled"
+    # Every repo skill must be present under ~/.jcode/skills. Extra live skills
+    # are fine and expected: jcode ships its own (for example swarm-engineering)
+    # that this repo does not own and must never overwrite.
+    local missing_skills=() src name
+    for src in "$REPO"/config/skills/*/; do
+        src="${src%/}"
+        [[ -f "$src/SKILL.md" ]] || continue
+        name="$(basename "$src")"
+        [[ -f "$SKILLS_HOME/$name/SKILL.md" ]] || missing_skills+=("$name")
+    done
+    [[ ${#missing_skills[@]} -eq 0 ]]
+    check "all repo skills installed under ~/.jcode/skills${missing_skills:+ (missing: ${missing_skills[*]})}"
 
-    [[ -f "$SKILLS_HOME/goal/SKILL.md" ]]
-    check "goal skill installed"
-
-    [[ -f "$SKILLS_HOME/orchestrator/SKILL.md" ]]
-    check "orchestrator skill installed"
-
-    [[ -f "$SKILLS_HOME/long-task-discipline/SKILL.md" ]]
-    check "long-task-discipline skill installed"
-
-    [[ -x "$LOCAL_BIN/jcode-goal" ]]
-    check "jcode-goal CLI installed"
-
-    [[ -x "$LOCAL_BIN/jcode-l2-check" ]]
-    check "jcode-l2-check CLI installed"
-
-    [[ -x "$LOCAL_BIN/jcode-tool-policy" ]]
-    check "jcode-tool-policy pre_tool gate installed"
-
-    [[ -x "$LOCAL_BIN/jcode-orchestrate" ]]
-    check "jcode-orchestrate CLI installed"
-
-    grep -q "JCODE_OPENROUTER_MODEL" "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null
-    check "shell env installed (JCODE_OPENROUTER_MODEL)"
+    local f drift=0
+    for f in "${LIVE_PROMPTS[@]}"; do
+        cmp -s "$REPO/config/$f" "$HOME/.jcode/$f" || drift=1
+    done
+    [[ $drift -eq 0 ]]
+    check "prompt-overlay.md and swarm-prompt.md match live (drift = edit live, then re-copy into config/)"
 
     set -${saved_opts}
 
@@ -296,11 +203,11 @@ phase_verify() {
 }
 
 # ---------------------------------------------------------------------------
-# Phase 10: state + summary
+# Phase 5: state
 # ---------------------------------------------------------------------------
 
 phase_finalize() {
-    section "phase 10: state + summary"
+    section "phase 5: state"
 
     if [[ $dry_run -eq 1 ]]; then
         echo "  would write: $STATE_FILE"
@@ -311,19 +218,21 @@ phase_finalize() {
 
     mkdir -p "$STATE_DIR"
 
-    python3 - "$STATE_FILE" "$REPO" "${CLI_NAMES[@]}" <<'PY'
+    python3 - "$STATE_FILE" "$REPO" <<'PY'
 import hashlib, json, os, sys, datetime
 state_path, repo = sys.argv[1], sys.argv[2]
-clis = sys.argv[3:]
 
-cfg = os.path.join(repo, "config", "config.toml")
-with open(cfg, "rb") as f:
-    digest = hashlib.sha256(f.read()).hexdigest()
+def sha(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
 data = {
-    "config_sha256": digest,
+    "config_sha256": sha(os.path.join(repo, "config", "config.toml")),
+    "skills": sorted(
+        d for d in os.listdir(os.path.join(repo, "config", "skills"))
+        if os.path.isfile(os.path.join(repo, "config", "skills", d, "SKILL.md"))
+    ),
     "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
-    "clis": clis,
 }
 with open(state_path, "w") as f:
     json.dump(data, f, indent=2, sort_keys=True)
@@ -332,21 +241,13 @@ PY
     log "state written: $STATE_FILE"
 
     echo ""
-    echo "✓ install complete"
+    echo "install complete"
     echo ""
-    echo "  config:   $JCODE_CONFIG"
-    echo "  skills:   $SKILLS_HOME"
-    echo "  clis:     $LOCAL_BIN/{jcode-goal,jcode-l2-check,jcode-tool-policy,jcode-orchestrate}"
-    echo "  prompts:  $PROMPTS_DST"
-    echo "  state:    $STATE_FILE"
+    echo "  config:  $JCODE_CONFIG"
+    echo "  skills:  $SKILLS_HOME"
+    echo "  state:   $STATE_FILE"
     echo ""
-    echo "Next steps:"
-    echo "  1. New shell, or: source ~/.zshrc"
-    echo "  2. Readiness check: jcode-l2-check"
-    echo "  3. Start a goal:    cd <your-project> && /goal \"<title>\" --priority high"
-    echo "  4. Advance a cycle: cd <your-project> && /orchestrate loop 10"
-    echo ""
-    echo "To reinstall after editing this repo: ./scripts/install"
+    echo "The jcode binary is not managed here. Start a new shell to pick up changes."
 }
 
 # ---------------------------------------------------------------------------
@@ -358,7 +259,6 @@ main() {
     echo ""
     echo "  config:  $JCODE_CONFIG"
     echo "  skills:  $SKILLS_HOME"
-    echo "  clis:    $LOCAL_BIN"
     echo "  state:   $STATE_FILE"
     echo ""
     [[ $dry_run -eq 1 ]] && echo "  mode: DRY-RUN (no side effects)"
@@ -367,11 +267,6 @@ main() {
     phase_preflight
     phase_config
     phase_skills
-    phase_shell_env
-    phase_audit_hook
-    phase_clis
-    phase_prompts
-    phase_agents_md
     phase_verify
     phase_finalize
 }

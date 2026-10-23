@@ -1,55 +1,58 @@
 #!/usr/bin/env bash
-# uninstall : reverse: remove artifacts left behind by install
+# uninstall : reverse scripts/install
 #
 # Usage:
-#   ./scripts/uninstall                  # default: remove CLIs + hook + prompts + state
+#   ./scripts/uninstall                  # remove state.json (safe, reversible)
 #   ./scripts/uninstall --dry-run        # print what would be removed, do nothing
-#   ./scripts/uninstall --full           # also remove config + skills + shell env (requires --yes)
-#   ./scripts/uninstall --yes            # skip all confirmation prompts
+#   ./scripts/uninstall --full           # also remove config + skills (requires --yes)
+#   ./scripts/uninstall --yes            # skip the confirmation prompt
 #   ./scripts/uninstall --help           # show help
 #
-# Default behavior (low impact) removes:
-#   - $HOME/.local/bin/jcode-{goal,l2-check,tool-policy,orchestrate}
-#   - $HOME/.local/bin/jcode-audit-log
-#   - $HOME/.local/share/jcode-orchestrate/prompts/
+# install manages exactly three things:
+#   - $HOME/.jcode/config.toml
+#   - $HOME/.jcode/skills/<name>/SKILL.md for each skill in config/skills/
 #   - $XDG_STATE_HOME/lazible-jcode/state.json
 #
-# --full (high impact, requires --yes for a second confirmation) also removes:
+# Default (--full off) removes only state.json.
+#
+# --full (requires --yes) also removes:
 #   - $HOME/.jcode/config.toml
-#   - $HOME/.jcode/skills/<name> for every name in $REPO/config/skills/
-#   - the jcode env block in ~/.zshrc and ~/.bashrc
+#   - $HOME/.jcode/skills/<name>/ for each name in config/skills/
 #
-# Always preserved:
-#   - $HOME/AGENTS.md            # your personal global instructions, edited by you
-#   - $HOME/.local/bin/jcode     # the jcode binary. This repo does not install it.
-#   - $HOME/.jcode/ambient/, state/, sessions/, logs/   # runtime state
-#   - $HOME/.jcode/goals/        # goal history
+# Never removed:
+#   - $HOME/.local/bin/jcode       the binary. This repo never installed it.
+#   - $HOME/AGENTS.md              your personal global instructions
+#   - skills this repo does not own (for example swarm-engineering, which
+#     ships with jcode)
+#   - anything else under ~/.jcode
 #
-# Design constraints:
-#   - uninstall never removes the jcode binary. This repo does not own it.
-#   - default is the safe scope; --yes is required for the --full parts
-#   - any missing path is not an error (idempotent)
+# Exit codes:
+#   0  success or user declined
+#   2  bad arguments
+#
+# Notes:
+#   - any missing path is not an error, the script is idempotent
+#   - this script only reverses the CURRENT install. Earlier versions of this
+#     repo also installed helper CLIs to ~/.local/bin and orchestrator prompts
+#     to ~/.local/share/jcode-orchestrate/. Those are not touched here because
+#     this repo no longer manages them. Remove them by hand if you want them
+#     gone.
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
-LOCAL_BIN="$HOME/.local/bin"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lazible-jcode"
-STATE_FILE="$STATE_DIR/state.json"
 JCODE_CONFIG="$HOME/.jcode/config.toml"
 SKILLS_HOME="$HOME/.jcode/skills"
-AUDIT_LOG="$LOCAL_BIN/jcode-audit-log"
-PROMPTS_DST="$HOME/.local/share/jcode-orchestrate/prompts"
-
-CLI_NAMES=(jcode-goal jcode-l2-check jcode-tool-policy jcode-orchestrate)
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lazible-jcode"
+STATE_FILE="$STATE_DIR/state.json"
 
 full=0
 yes=0
 dry_run=0
 
 usage() {
-    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -65,7 +68,7 @@ done
 
 log() { echo "[uninstall] $*"; }
 
-# remove a file/dir if present (no error when absent)
+# remove a path if present, no error when absent
 rm_safe() {
     if [[ -e "$1" || -L "$1" ]]; then
         log "rm $1"
@@ -77,95 +80,67 @@ rm_safe() {
 }
 
 confirm() {
-    # confirm <prompt> ; returns 0 when allowed to proceed
     [[ $dry_run -eq 1 || $yes -eq 1 ]] && return 0
     read -r -p "  $1 [y/N] " reply
     [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-remove_default() {
-    log "scope: CLIs + audit hook + prompts + state"
-    echo ""
-    for cli in "${CLI_NAMES[@]}"; do
-        rm_safe "$LOCAL_BIN/$cli"
-    done
-    rm_safe "$AUDIT_LOG"
-    rm_safe "$PROMPTS_DST"
+remove_state() {
     rm_safe "$STATE_FILE"
 }
 
 remove_full() {
-    log "scope (additional): config + skills + shell env"
-    echo ""
     rm_safe "$JCODE_CONFIG"
 
     if [[ -d "$REPO/config/skills" && -d "$SKILLS_HOME" ]]; then
+        local skill_dir
         for skill_dir in "$REPO/config/skills"/*/; do
             [[ -d "$skill_dir" ]] || continue
             rm_safe "$SKILLS_HOME/$(basename "$skill_dir")"
         done
-    fi
-
-    if [[ -x "$REPO/scripts/install-shell-env" ]]; then
-        log "removing shell env block via install-shell-env --remove --apply"
-        if [[ $dry_run -eq 1 ]]; then
-            "$REPO/scripts/install-shell-env" --remove 2>&1 | sed 's/^/    /' || true
-        else
-            "$REPO/scripts/install-shell-env" --remove --apply
-        fi
     fi
 }
 
 main() {
     echo "lazible-jcode uninstaller"
     echo ""
-    echo "  config:   $JCODE_CONFIG"
-    echo "  skills:   $SKILLS_HOME"
-    echo "  clis:     $LOCAL_BIN"
-    echo "  prompts:  $PROMPTS_DST"
-    echo "  state:    $STATE_FILE"
+    echo "  config:  $JCODE_CONFIG"
+    echo "  skills:  $SKILLS_HOME"
+    echo "  state:   $STATE_FILE"
     echo ""
-
-    if [[ $dry_run -eq 1 ]]; then
-        echo "  mode: DRY-RUN (no side effects)"
-        echo ""
-    fi
+    [[ $dry_run -eq 1 ]] && { echo "  mode: DRY-RUN (no side effects)"; echo ""; }
 
     if [[ $full -eq 1 ]]; then
-        echo "  --full is destructive: it removes ~/.jcode/config.toml and the"
-        echo "  skills this repo installed. ~/AGENTS.md and the jcode binary stay."
+        echo "--full removes ~/.jcode/config.toml and every skill listed in"
+        echo "config/skills/. The jcode binary and ~/AGENTS.md stay."
         echo ""
-        if confirm "continue?"; then
-            remove_default
-            remove_full
-        else
+        if ! confirm "continue?"; then
             echo "aborted."
             exit 0
         fi
+        remove_state
+        remove_full
     else
-        echo "  This removes the helper CLIs, the audit-log hook, the orchestrator"
-        echo "  prompts and state.json. Config, skills and shell env stay."
+        echo "This removes state.json only. Config and skills stay."
         echo ""
-        echo "  Tip: --full also removes config.toml + skills + shell env."
+        echo "Tip: --full also removes config.toml and the repo's skills."
         echo ""
-        if confirm "continue?"; then
-            remove_default
-        else
+        if ! confirm "continue?"; then
             echo "aborted."
             exit 0
         fi
+        remove_state
     fi
 
     echo ""
-    echo "✓ uninstall complete"
+    echo "uninstall complete"
     echo ""
-    echo "Preserved (always):"
-    echo "  - $HOME/.local/bin/jcode       (the binary. this repo never installed it)"
-    echo "  - $HOME/AGENTS.md              (your personal global instructions)"
-    echo "  - $HOME/.jcode/ambient/, state/, sessions/, logs/, goals/  (runtime state)"
+    echo "always preserved:"
+    echo "  - \$HOME/.local/bin/jcode   (the binary, never installed here)"
+    echo "  - \$HOME/AGENTS.md          (your personal global instructions)"
+    echo "  - skills this repo does not own"
     echo ""
-    echo "To reinstall:"
-    echo "  ./scripts/install"
+    echo "to reinstall: ./scripts/install"
 }
 
 main
