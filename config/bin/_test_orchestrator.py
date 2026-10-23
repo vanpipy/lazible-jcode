@@ -8,9 +8,11 @@
 #   T7 : happy review (verified via CLI; same logic)
 #   T8 : reviewer findings -> precise step reset
 #   T9 : review_retry exhausted -> escalated
-#   T10: reviewer crashed -> handled as no-confidence (retry path)
+#   T10: reviewer report unparseable -> findings, retry path (lifecycle "done")
 #   T11: coder_session_id != reviewer_session_id (always true)
 #   T12: --no-review bypass
+#   T13: queue auto-promote
+#   T14: crashed reviewer must never complete a milestone
 
 import json
 import os
@@ -55,11 +57,13 @@ def setup_repo() -> tuple[Path, str]:
     return home, json.loads(run([str(GOAL), "list", "--json"], env=env).stdout)[0]["id"], cwd_backup
 
 
-def orchestrate(home: Path, fake_report: str = '{"verdict":"clean","findings":[],"confidence":1.0}') -> str:
+def orchestrate(home: Path, fake_report: str = '{"verdict":"clean","findings":[],"confidence":1.0}',
+                lifecycle: str = "done") -> str:
     env = os.environ.copy()
     env["JCODE_GOAL_HOME"] = str(home)
     out = run([str(ORCH), "--dry-run", "--cwd", str(home),
-               "--fake-report", fake_report], env=env)
+               "--fake-report", fake_report,
+               "--fake-lifecycle", lifecycle], env=env)
     return out.stdout
 
 
@@ -232,10 +236,11 @@ def test_t9_review_retry_exhausted():
 
 
 # ---------------------------------------------------------------------------
-# T10: reviewer crashed -> handled as findings (no-confidence)
+# T10: reviewer report unparseable -> findings, retry path
+# (a finished reviewer whose output cannot be parsed)
 # ---------------------------------------------------------------------------
 def test_t10_reviewer_crashed():
-    print("T10: reviewer crashed -> fallback to findings")
+    print("T10: reviewer report unparseable -> fallback to findings")
     home, gid, cwd_backup = setup_repo()
     try:
         env = os.environ.copy()
@@ -394,11 +399,64 @@ def setup_repo_with_pending() -> tuple[Path, str, str, str]:
     return home, active_gid, pending_gid, cwd_backup
 
 
+# ---------------------------------------------------------------------------
+# T14: a crashed reviewer must never complete a milestone, even when its
+# report parses and reports high-confidence findings.
+#
+# Regression: the guard used to be
+#     verdict == "clean" or life in FAILURE_LIFECYCLE and confidence >= 0.9
+# `and` binds tighter than `or`, so a reviewer that CRASHED while reporting
+# `{"verdict":"findings","confidence":0.95}` completed the milestone with its
+# findings silently discarded. Only a reviewer that finished successfully may
+# close a milestone.
+# ---------------------------------------------------------------------------
+def test_t14_crashed_reviewer_high_confidence_findings():
+    print("T14: crashed reviewer with findings must not complete the milestone")
+    home, gid, cwd_backup = setup_repo()
+    try:
+        env = os.environ.copy()
+        env["JCODE_GOAL_HOME"] = str(home)
+        run([str(GOAL), "milestone", gid, "add", "M0"], env=env)
+        run([str(GOAL), "step", gid, "m-0", "add", "step-A",
+             "--verify", "true"], env=env)
+
+        orchestrate(home)          # spawn_coder
+        orchestrate(home)          # step_done -> milestone in_progress
+        orchestrate(home)          # spawn_reviewer
+
+        # Cycle 4: reviewer lifecycle is "crashed" and it reported findings at
+        # confidence 0.95. This must take the findings path, not complete.
+        report = json.dumps({
+            "verdict": "findings",
+            "findings": [{"step_id": "m-0-step-0", "severity": "major",
+                          "location": "foo.py:1", "issue": "crashed mid-review"}],
+            "confidence": 0.95,
+        })
+        out = orchestrate(home, report, lifecycle="crashed")
+
+        g = get_goal(home, gid)
+        assert_in("review_failed", out, "T14 review_failed action")
+        assert "review_done" not in out, "T14 review_done must not be emitted"
+        assert_eq(milestone_status(g, "m-0"), "in_progress",
+                  "T14 milestone reopened, not completed")
+        assert_eq(g["milestones"][0]["review_retry_count"], 1,
+                  "T14 retry_count incremented on crashed reviewer")
+        assert_eq(g["milestones"][0].get("review_crashed"), "crashed",
+                  "T14 crash recorded on the milestone")
+        assert_eq(step_status(g, "m-0", "m-0-step-0"), "pending",
+                  "T14 step-A reset to pending")
+
+    finally:
+        os.chdir(cwd_backup)
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def main() -> int:
     for t in [test_t7_happy_review, test_t8_findings_precise_reset,
               test_t9_review_retry_exhausted, test_t10_reviewer_crashed,
               test_t11_coder_reviewer_different_ids, test_t12_no_review_bypass,
-              test_t13_queue_auto_promote]:
+              test_t13_queue_auto_promote,
+              test_t14_crashed_reviewer_high_confidence_findings]:
         try:
             t()
         except AssertionError as e:
