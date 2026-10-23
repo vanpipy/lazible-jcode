@@ -7,8 +7,8 @@
 #
 # Secrets are never committed. Values that must hold a real secret stay empty
 # here and are injected at runtime by jcode's own env overrides
-# (JCODE_NTFY_TOPIC, JCODE_BING_API_KEY, ...). The tool-call audit trail lives
-# in ~/.jcode/audit.log, written by the post_tool hook below.
+# (JCODE_NTFY_TOPIC, JCODE_BING_API_KEY, ...). The tool-call audit trail is
+# ~/.jcode/audit.log, but its writer hook is gone, so it no longer grows.
 
 [keybindings]
 scroll_up = "ctrl+shift+k"
@@ -148,14 +148,15 @@ swarm_max_concurrent_agents = 32
 [terminal]
 
 [hooks]
-# Both hook binaries are managed OUTSIDE this repo, by hand. This repo does
-# not install them. A fresh clone needs them in place already, otherwise the
-# git push gate goes silent.
+# INERT: both hook binaries were deleted from ~/.local/bin. jcode loads this
+# block without complaint and silently does nothing, so there is no pre_tool
+# gate and no audit trail. Drop the block, or reinstall the CLIs.
+# What the hooks used to do:
 # pre_tool is a synchronous gate: exit 0 allows, exit 2 rejects the call.
-# jcode-tool-policy blocks `git push` and blocks commits on ambient/* branches
-# that have no active goal with pending steps.
+# jcode-tool-policy blocked remote pushes and blocked commits on ambient/*
+# branches that had no active goal.
 pre_tool = ["~/.local/bin/jcode-tool-policy"]
-# post_tool is a fire-and-forget observer: jcode-audit-log records every
+# post_tool is a fire-and-forget observer: jcode-audit-log recorded every
 # tool call to ~/.jcode/audit.log. It cannot block anything.
 post_tool = ["~/.local/bin/jcode-audit-log"]
 pre_tool_timeout_ms = 8000

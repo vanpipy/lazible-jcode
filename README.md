@@ -74,19 +74,15 @@ you lose the skill.
 Earlier versions of this repo also installed helper CLIs to `~/.local/bin`
 (`jcode-goal`, `jcode-l2-check`, `jcode-tool-policy`, `jcode-orchestrate`,
 `jcode-audit-log`) and orchestrator prompts to
-`~/.local/share/jcode-orchestrate/`. This repo no longer manages them.
-`uninstall` leaves them alone. Remove them by hand if you want them gone.
+`~/.local/share/jcode-orchestrate/`. This repo no longer manages them, and all
+of them have since been deleted from the machine. `uninstall` never touched
+them, then or now.
 
-Two of them are still **required by `config/config.toml`**, so a fresh clone
-needs them in place by hand before starting jcode:
-
-- `~/.local/bin/jcode-tool-policy` — the `[hooks] pre_tool` gate. Blocks
-  `git push` and blocks commits on `ambient/*` branches with no active goal.
-- `~/.local/bin/jcode-audit-log` — the `[hooks] post_tool` observer. Appends
-  every tool call to `~/.jcode/audit.log`.
-
-Without them the config still loads, but the push gate goes silent and there
-is no audit trail.
+`config/config.toml` still carries a `[hooks]` block naming the two deleted
+binaries, so that block is inert. jcode loads it without complaint and silently
+does nothing: there is no `pre_tool` gate on remote pushes or on `ambient/*`
+commits, and nothing writes `~/.jcode/audit.log` any more. Drop the block, or
+reinstall the CLIs, to make either one live again.
 
 ## Uninstall
 
@@ -104,5 +100,3 @@ this repo is its only source. To get it back, run `./scripts/install`.
 
 - `jcode` on `PATH`, installed separately
 - `bash`, `python3` 3.11 or newer (for `tomllib`)
-- `~/.local/bin/jcode-tool-policy` and `~/.local/bin/jcode-audit-log`, installed
-  by hand, see [Not managed here](#not-managed-here)
