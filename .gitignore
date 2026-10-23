@@ -2,6 +2,10 @@
 # Allow the sanitized config.toml snapshot + example files
 config/*
 !config/config.toml
+# Live prompt policy files, mirrored from ~/.jcode. Prose only, no secrets,
+# so they are tracked and installable.
+!config/prompt-overlay.md
+!config/swarm-prompt.md
 # But NEVER let a real mcp.json with tokens slip in
 config/mcp.json
 
