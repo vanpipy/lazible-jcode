@@ -2,54 +2,54 @@
 # uninstall : reverse: remove artifacts left behind by install
 #
 # Usage:
-#   ./scripts/uninstall                  # default: only remove binary + state (requires confirmation)
+#   ./scripts/uninstall                  # default: remove CLIs + hook + prompts + state
 #   ./scripts/uninstall --dry-run        # print what would be removed, do nothing
 #   ./scripts/uninstall --full           # also remove config + skills + shell env (requires --yes)
 #   ./scripts/uninstall --yes            # skip all confirmation prompts
 #   ./scripts/uninstall --help           # show help
 #
-# Default behavior (low-impact) : removes:
-#   - $HOME/.local/bin/jcode
-#   - $HOME/.local/bin/jcode.bak.*
+# Default behavior (low impact) removes:
+#   - $HOME/.local/bin/jcode-{goal,l2-check,tool-policy,orchestrate}
 #   - $HOME/.local/bin/jcode-audit-log
+#   - $HOME/.local/share/jcode-orchestrate/prompts/
 #   - $XDG_STATE_HOME/lazible-jcode/state.json
 #
-# --full (high-impact, requires --yes for second confirmation) also:
+# --full (high impact, requires --yes for a second confirmation) also removes:
 #   - $HOME/.jcode/config.toml
-#   - $HOME/.jcode/skills/<install-contributed>  (from $REPO/config/skills/)
-#   - jcode env block in ~/.zshrc and ~/.bashrc
+#   - $HOME/.jcode/skills/<name> for every name in $REPO/config/skills/
+#   - the jcode env block in ~/.zshrc and ~/.bashrc
 #
-# Always preserved (regardless of default or --full):
-#   - $REPO/patched-jcode (symlink at repo root → JCODE_SOURCE_DIR, default
-#                          $HOME/Project/patched-jcode) : source + feat/patches branch + all your patches
+# Always preserved:
+#   - $HOME/AGENTS.md            # your personal global instructions, edited by you
+#   - $HOME/.local/bin/jcode     # the jcode binary. This repo does not install it.
 #   - $HOME/.jcode/ambient/, state/, sessions/, logs/   # runtime state
-#   - $HOME/Project/jcode/              # your upstream clone (if any)
-#
-# Note: uninstall only removes the `patched-jcode` symlink if it lives inside
-# $REPO. The real fork clone at $JCODE_SOURCE_DIR is never touched.
+#   - $HOME/.jcode/goals/        # goal history
 #
 # Design constraints:
-#   - uninstall **never deletes source**: your patches must be preserved
-#   - default is safe mode; --yes is required for the --full parts
+#   - uninstall never removes the jcode binary. This repo does not own it.
+#   - default is the safe scope; --yes is required for the --full parts
 #   - any missing path is not an error (idempotent)
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-JCODE_SOURCE_DIR="${JCODE_SOURCE_DIR:-$HOME/Project/patched-jcode}"
-BIN_DST="$HOME/.local/bin/jcode"
-AUDIT_LOG="$HOME/.local/bin/jcode-audit-log"
+
+LOCAL_BIN="$HOME/.local/bin"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lazible-jcode"
 STATE_FILE="$STATE_DIR/state.json"
 JCODE_CONFIG="$HOME/.jcode/config.toml"
 SKILLS_HOME="$HOME/.jcode/skills"
+AUDIT_LOG="$LOCAL_BIN/jcode-audit-log"
+PROMPTS_DST="$HOME/.local/share/jcode-orchestrate/prompts"
+
+CLI_NAMES=(jcode-goal jcode-l2-check jcode-tool-policy jcode-orchestrate)
 
 full=0
 yes=0
 dry_run=0
 
 usage() {
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -63,65 +63,49 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-log()  { echo "[uninstall] $*"; }
-warn() { echo "[uninstall] WARN: $*" >&2; }
+log() { echo "[uninstall] $*"; }
 
-# remove a file/symlink/dir (no error if absent)
+# remove a file/dir if present (no error when absent)
 rm_safe() {
     if [[ -e "$1" || -L "$1" ]]; then
         log "rm $1"
-        if [[ $dry_run -eq 0 ]]; then
-            rm -rf "$1"
-        fi
+        [[ $dry_run -eq 0 ]] && rm -rf "$1"
     else
         log "skip $1 (not present)"
     fi
+    return 0
 }
 
-# default removal list
+confirm() {
+    # confirm <prompt> ; returns 0 when allowed to proceed
+    [[ $dry_run -eq 1 || $yes -eq 1 ]] && return 0
+    read -r -p "  $1 [y/N] " reply
+    [[ "$reply" =~ ^[Yy]$ ]]
+}
+
 remove_default() {
-    log "default removal:"
+    log "scope: CLIs + audit hook + prompts + state"
     echo ""
-
-    rm_safe "$BIN_DST"
-
-    # backups
-    if [[ -d "$HOME/.local/bin" ]]; then
-        for bak in "$HOME/.local/bin"/jcode.bak.*; do
-            [[ -e "$bak" || -L "$bak" ]] || continue
-            rm_safe "$bak"
-        done
-    fi
-
+    for cli in "${CLI_NAMES[@]}"; do
+        rm_safe "$LOCAL_BIN/$cli"
+    done
     rm_safe "$AUDIT_LOG"
+    rm_safe "$PROMPTS_DST"
     rm_safe "$STATE_FILE"
 }
 
-# --full additional removal
 remove_full() {
-    log "full removal (additional):"
+    log "scope (additional): config + skills + shell env"
     echo ""
-
-    # config.toml
     rm_safe "$JCODE_CONFIG"
 
-    # install-contributed skills (reconciled against $REPO/config/skills/ directory listing)
     if [[ -d "$REPO/config/skills" && -d "$SKILLS_HOME" ]]; then
         for skill_dir in "$REPO/config/skills"/*/; do
             [[ -d "$skill_dir" ]] || continue
-            local name
-            name=$(basename "$skill_dir")
-            local target="$SKILLS_HOME/$name"
-            if [[ -d "$target" ]]; then
-                log "rm installed skill: $target"
-                if [[ $dry_run -eq 0 ]]; then
-                    rm -rf "$target"
-                fi
-            fi
+            rm_safe "$SKILLS_HOME/$(basename "$skill_dir")"
         done
     fi
 
-    # shell env block (reuses install-shell-env --remove logic)
     if [[ -x "$REPO/scripts/install-shell-env" ]]; then
         log "removing shell env block via install-shell-env --remove --apply"
         if [[ $dry_run -eq 1 ]]; then
@@ -135,9 +119,11 @@ remove_full() {
 main() {
     echo "lazible-jcode uninstaller"
     echo ""
-    echo "  binary:     $BIN_DST"
-    echo "  state:      $STATE_FILE"
-    echo "  config:     $JCODE_CONFIG"
+    echo "  config:   $JCODE_CONFIG"
+    echo "  skills:   $SKILLS_HOME"
+    echo "  clis:     $LOCAL_BIN"
+    echo "  prompts:  $PROMPTS_DST"
+    echo "  state:    $STATE_FILE"
     echo ""
 
     if [[ $dry_run -eq 1 ]]; then
@@ -146,40 +132,37 @@ main() {
     fi
 
     if [[ $full -eq 1 ]]; then
-        log "scope: --full (remove binary + state + config + skills + shell env)"
-        if [[ $dry_run -eq 0 && $yes -ne 1 ]]; then
-            echo ""
-            echo "  ⚠️  --full is destructive."
-            echo "      It removes ~/.jcode/config.toml and installed skills."
-            echo "      Source at $REPO/patched-jcode → $JCODE_SOURCE_DIR is preserved."
-            echo ""
-            read -r -p "  continue? [y/N] " reply
-            [[ "$reply" =~ ^[Yy]$ ]] || { echo "aborted."; exit 0; }
+        echo "  --full is destructive: it removes ~/.jcode/config.toml and the"
+        echo "  skills this repo installed. ~/AGENTS.md and the jcode binary stay."
+        echo ""
+        if confirm "continue?"; then
+            remove_default
+            remove_full
+        else
+            echo "aborted."
+            exit 0
         fi
-        remove_default
-        remove_full
     else
-        log "scope: default (binary + state + backups only)"
-        if [[ $dry_run -eq 0 && $yes -ne 1 ]]; then
-            echo ""
-            echo "  This removes ~/.local/bin/jcode (+ backups), audit-log hook,"
-            echo "  and state.json. Source dir and runtime state are preserved."
-            echo ""
-            echo "  Tip: --full also removes config.toml + skills + shell env."
-            echo ""
-            read -r -p "  continue? [y/N] " reply
-            [[ "$reply" =~ ^[Yy]$ ]] || { echo "aborted."; exit 0; }
+        echo "  This removes the helper CLIs, the audit-log hook, the orchestrator"
+        echo "  prompts and state.json. Config, skills and shell env stay."
+        echo ""
+        echo "  Tip: --full also removes config.toml + skills + shell env."
+        echo ""
+        if confirm "continue?"; then
+            remove_default
+        else
+            echo "aborted."
+            exit 0
         fi
-        remove_default
     fi
 
     echo ""
     echo "✓ uninstall complete"
     echo ""
     echo "Preserved (always):"
-    echo "  - $REPO/patched-jcode (symlink → $JCODE_SOURCE_DIR, source + your patches)"
-    echo "  - $HOME/.jcode/ambient/, state/, sessions/, logs/  (runtime state)"
-    echo "  - $HOME/Project/jcode/          (upstream clone, if present)"
+    echo "  - $HOME/.local/bin/jcode       (the binary. this repo never installed it)"
+    echo "  - $HOME/AGENTS.md              (your personal global instructions)"
+    echo "  - $HOME/.jcode/ambient/, state/, sessions/, logs/, goals/  (runtime state)"
     echo ""
     echo "To reinstall:"
     echo "  ./scripts/install"
