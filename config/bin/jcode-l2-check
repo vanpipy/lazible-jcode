@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jcode-l2-check : verify L2 ambient is goal-driven.
 #
-# Reports readiness for goal-driven L2 ambient (autonomous profile + scaffolding).
+# Reports readiness for goal-driven L2 ambient (config + skills + CLIs installed).
 # Exits 0 if all 8 checks pass, non-zero otherwise. Exit code is the first failed
 # check id, which script callers can rely on for fail-fast:
 #   1 = ambient not enabled
@@ -82,7 +82,7 @@ check_ambient() {
             if [[ "$v" == "true" ]]; then
                 record 1 1 "ambient.enabled = true" "ambient.enabled = true in $CONFIG"
             else
-                record 1 0 "ambient.enabled = true" "ambient.enabled = '$v' (need true; run ./scripts/use-profile)"
+                record 1 0 "ambient.enabled = true" "ambient.enabled = '$v' (need true; edit config/config.toml then ./scripts/install)"
             fi
         fi
     fi
@@ -93,9 +93,9 @@ check_ambient() {
 check_agents() {
     if should_run 2; then
         if [[ -f "$HOME/AGENTS.md" ]]; then
-            record 2 1 "~/AGENTS.md present" "found at $HOME/AGENTS.md"
+            record 2 1 "\$HOME/AGENTS.md present" "found at $HOME/AGENTS.md"
         else
-            record 2 0 "~/AGENTS.md present" "missing; run cd ~/Project/lazible-jcode && ./scripts/install (only writes if absent)"
+            record 2 0 "\$HOME/AGENTS.md present" "missing; run ./scripts/install in the repo (only writes when absent)"
         fi
     fi
 }
@@ -168,7 +168,7 @@ check_interval() {
         if [[ -z "$v" ]]; then
             record 6 0 "max_interval_minutes sane" "field not found in [ambient]"
         elif [[ "$v" -gt 60 ]]; then
-            record 6 0 "max_interval_minutes sane" "max_interval_minutes = $v (>60; edit config/profiles/autonomous.toml)"
+            record 6 0 "max_interval_minutes sane" "max_interval_minutes = $v (>60; edit config/config.toml then ./scripts/install)"
         else
             record 6 1 "max_interval_minutes sane" "max_interval_minutes = $v"
         fi

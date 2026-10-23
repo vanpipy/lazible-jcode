@@ -4,14 +4,13 @@ The standard library has tomllib (read-only) but no writer in 3.11+ : and
 tomli_w is unavailable in PEP 668 environments. This module implements a
 small, lossy but predictable TOML emitter used by:
 
-  - scripts/use-profile        (merge base + overlay → live)
   - scripts/snapshot-config    (live → repo with masking)
 
 Lossy means: comments are dropped (TOML spec doesn't define how to
 preserve them in a parsed dict), and section ordering is normalized to
 (scalars → list-of-scalars → subtables → arrays-of-tables). That's fine
-for our use : config files in this repo are commit-author-generated, not
-machine-edited, so the round-trip never has to preserve human formatting.
+for our use: snapshot-config is the only caller, it reads the live config
+and rewrites the repo copy, and the repo copy is reviewed in git afterwards.
 """
 from __future__ import annotations
 
@@ -118,19 +117,6 @@ def emit(data):
     for k, v in top_aots.items():
         emit_array(k, v, out)
     return '\n'.join(out) + '\n'
-
-
-def merge(base, overlay):
-    """Deep-merge: overlay sections override base sections.
-
-    Mutates `base` in place. Lists are replaced wholesale (not merged).
-    """
-    for k, v in overlay.items():
-        if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-            merge(base[k], v)
-        else:
-            base[k] = v
-    return base
 
 
 # --- secret masking (used by snapshot-config) -----------------------------
