@@ -7,7 +7,8 @@
 #
 # Secrets are never committed. Values that must hold a real secret stay empty
 # here and are injected at runtime by jcode's own env overrides
-# (JCODE_NTFY_TOPIC, JCODE_BING_API_KEY, ...). See config/policies/audit.md.
+# (JCODE_NTFY_TOPIC, JCODE_BING_API_KEY, ...). The tool-call audit trail lives
+# in ~/.jcode/audit.log, written by the post_tool hook below.
 
 [keybindings]
 scroll_up = "ctrl+shift+k"
@@ -147,6 +148,9 @@ swarm_max_concurrent_agents = 32
 [terminal]
 
 [hooks]
+# Both hook binaries are managed OUTSIDE this repo, by hand. This repo does
+# not install them. A fresh clone needs them in place already, otherwise the
+# git push gate goes silent.
 # pre_tool is a synchronous gate: exit 0 allows, exit 2 rejects the call.
 # jcode-tool-policy blocks `git push` and blocks commits on ambient/* branches
 # that have no active goal with pending steps.

@@ -10,7 +10,6 @@ config/*
 config/mcp.json
 
 # Allow explicit subdirs that contain sanitized content
-!config/hooks/
 !config/skills/
 !config/mcp.example.json
 

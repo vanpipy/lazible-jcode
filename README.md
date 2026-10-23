@@ -77,6 +77,17 @@ Earlier versions of this repo also installed helper CLIs to `~/.local/bin`
 `~/.local/share/jcode-orchestrate/`. This repo no longer manages them.
 `uninstall` leaves them alone. Remove them by hand if you want them gone.
 
+Two of them are still **required by `config/config.toml`**, so a fresh clone
+needs them in place by hand before starting jcode:
+
+- `~/.local/bin/jcode-tool-policy` — the `[hooks] pre_tool` gate. Blocks
+  `git push` and blocks commits on `ambient/*` branches with no active goal.
+- `~/.local/bin/jcode-audit-log` — the `[hooks] post_tool` observer. Appends
+  every tool call to `~/.jcode/audit.log`.
+
+Without them the config still loads, but the push gate goes silent and there
+is no audit trail.
+
 ## Uninstall
 
 ```bash
@@ -93,3 +104,5 @@ this repo is its only source. To get it back, run `./scripts/install`.
 
 - `jcode` on `PATH`, installed separately
 - `bash`, `python3` 3.11 or newer (for `tomllib`)
+- `~/.local/bin/jcode-tool-policy` and `~/.local/bin/jcode-audit-log`, installed
+  by hand, see [Not managed here](#not-managed-here)
