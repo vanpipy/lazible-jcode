@@ -34,7 +34,7 @@ When jcode calls the hook, it passes metadata via environment variables
 Each line in `audit.log`:
 
 ```
-[2026-09-28T18:23:44+08:00] event=post_tool tool=bash status=ok duration_ms=8 output_bytes=2396 cwd=/home/leroy/Project/lazible-jcode
+[2026-09-28T18:23:44+08:00] event=post_tool tool=bash status=ok duration_ms=8 output_bytes=2396 cwd=/home/user/Project/example
 ```
 
 Field order is fixed for easy `awk` / `cut` processing.

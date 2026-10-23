@@ -1,27 +1,54 @@
-# Autonomy Policy (v1)
+# Autonomy Policy
 
 ## Levels
 
-| Level | Meaning | Implementation in jcode |
+| Level | Meaning | How it is expressed |
 | --- | --- | --- |
-| **L0 Silent** | Agent is read-only; any write action must be confirmed by a human | `[hooks].pre_tool` + `~/.local/bin/jcode-tool-policy` |
-| **L1 Conservative** | Ambient disabled; locally reversible manual operations; inline swarm spawn | `[ambient].enabled = false`, `[agents].swarm_spawn_mode = "inline"` |
-| **L2 Autonomous** | Ambient + proactive + allow_api_keys; headless swarm spawn; local desktop notifications | `[ambient].enabled = true`, `[agents].swarm_spawn_mode = "headless"`, `[safety].desktop_notifications = true` |
-| **L3 Unattended** | L2 + remote push (ntfy / email / telegram), so notifications reach you even when away | `[safety].ntfy_topic != null`, `[safety].email_enabled = true`, `[safety].telegram_enabled = true` |
+| **L0 Silent** | Read-only. Any write needs a human. | `[hooks].pre_tool` + `jcode-tool-policy` |
+| **L1 Conservative** | Ambient off. Locally reversible work only. Inline swarm spawn. | `ambient.enabled = false`, `agents.swarm_spawn_mode = "inline"` |
+| **L2 Autonomous** | Ambient on, headless swarm, desktop notifications. | `ambient.enabled = true`, `agents.swarm_spawn_mode = "headless"`, `safety.desktop_notifications = true` |
+| **L3 Unattended** | L2 plus remote notification (ntfy / email / telegram). | `safety.ntfy_topic`, `safety.email_enabled = true`, `safety.telegram_enabled = true` |
 
-## Repo defaults
+## Current level
 
-- `autonomous.toml` = L2 (the only profile)
-- Base (no overlay) = L1: `ambient.enabled=false`, `swarm_spawn_mode=inline`, `compaction.mode=semantic`, `memory_rerank_cadence=1` (the research tilt is baked in here)
-- The L0 hardened variant (pre_tool gate) is not yet a profile here : `~/.local/bin/jcode-tool-policy` needs a custom policy (allowlist / y-N prompt). For L0, write `[hooks].pre_tool` into base or a local override by hand.
-- L3 is not part of a profile : for L3 you must set `safety.ntfy_topic` / `email_enabled` / `telegram_enabled` individually via `JCODE_SAFETY_*` environment variables. The omission from the autonomous overlay is intentional: remote push destinations are personal/sensitive values and must never enter a commit.
+This repo ships **L2**. `config/config.toml` is the single source of truth.
+There is no profile overlay: the file you read is the file that runs.
 
-## Switching discipline
+| Setting | Value | Why |
+| --- | --- | --- |
+| `ambient.enabled` | `true` | The ambient cycle is the point of the setup |
+| `ambient.allow_api_keys` | `true` | Ambient cycles need provider access |
+| `ambient.min_interval_minutes` | `5` | Fast enough to be useful |
+| `ambient.max_interval_minutes` | `30` | `jcode-l2-check` fails above 60 |
+| `ambient.visible` | `false` | Runs the cycle directly instead of spawning a kitty window and waiting for TUI interaction (`runner.rs:891`) |
+| `agents.swarm_spawn_mode` | `headless` | Workers must not pop a terminal |
+| `safety.desktop_notifications` | `true` | Local notification only |
 
-- Before stepping away: run `./scripts/use-profile` and configure your ntfy topic
-- When you return (and no longer need ambient): run `./scripts/use-profile-reset`
-- Do not perform irreversible operations under L2/L3: merges, deploys, or pushes to protected branches
+L3 is deliberately not configured here. The notification destinations are
+personal values and must never enter git. Set them through `JCODE_SAFETY_*`
+environment variables instead.
 
-## Not yet implemented
+## Changing the level
 
-- There is no per-working-directory autonomy mechanism : all sessions currently share the same config. The long-term direction is for each repo to override the autonomy level in `.jcode/config.local.toml` (gitignored), read by jcode at startup. This repo does not implement it yet; waiting on jcode source support.
+Autonomy is a config edit, not a flag. Edit `config/config.toml`, then:
+
+```bash
+./scripts/install
+```
+
+To go quiet for a while, set `ambient.enabled = false` and reinstall. To go
+back, set it to `true`.
+
+## What the shipped gate actually enforces
+
+`jcode-tool-policy` is the L0 hardened variant in practice. It blocks `git push`
+outright and blocks commits on `ambient/*` branches that have no active goal.
+It does not implement an allowlist or a y/N prompt. See
+[`git.md`](git.md) for the exact table.
+
+## Not implemented
+
+There is no per-working-directory autonomy mechanism. Every session shares the
+same `~/.jcode/config.toml`. The long-term direction is a gitignored
+`.jcode/config.local.toml` per repo, read by jcode at startup. That needs
+jcode source support and is not implemented here.
