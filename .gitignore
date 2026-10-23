@@ -10,15 +10,9 @@ config/*
 config/mcp.json
 
 # Allow explicit subdirs that contain sanitized content
-!config/bin/
-!config/policies/
-!config/share/
+!config/hooks/
 !config/skills/
-!config/templates/
 !config/mcp.example.json
-
-# skills : local scratch from sync-skills experiments
-config/skills/.scratch/
 
 # swarm runtime state : worker spawn manifests + scope files. These
 # contain machine-specific paths (worktree locations, branch SHAs) and
@@ -50,7 +44,6 @@ config/skills/.scratch/
 # python bytecode
 __pycache__/
 *.pyc
-config/bin/__pycache__/
 
 # build artifacts
 target/
