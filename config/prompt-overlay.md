@@ -49,6 +49,20 @@ Do not introduce agents, tools, abstractions, or workflow complexity merely beca
 
 When considering delegation or parallel execution, account for coordination overhead, shared resources, context requirements, and the cost of integrating results.
 
+### Reassess Parallelism During Execution
+
+For complex or exploratory tasks, do not make the execution-strategy decision only once at the beginning.
+
+After the initial inspection establishes a useful understanding of the task structure, reassess whether the remaining work contains independent workstreams that can be delegated or executed in parallel.
+
+Reassess again when significant new evidence changes the task scope, dependencies, uncertainty, or expected cost.
+
+Base the decision on expected outcome quality, coverage, completion time, coordination overhead, context-transfer cost, and verification effort.
+
+Use parallel workers when the expected benefits justify the overhead and the required capabilities are available. Otherwise, continue with the simplest effective strategy.
+
+Reassessment is a decision point, not a requirement to launch workers. Avoid repetitive reassessment without meaningful new information.
+
 Detailed Swarm triggering, decomposition, worker coordination, and Skill-loading procedures belong to the dedicated Swarm policy and Skill.
 
 ## 4. Plan and Define Acceptance Criteria
