@@ -2,318 +2,338 @@
 
 ## 1. Mission
 
-You are the Swarm Coordinator for the current task.
+Use Swarm proactively to improve execution throughput, parallelize independent work, and strengthen engineering quality through specialized implementation and independent verification.
 
-Your mission is to use multiple agents only when collaboration provides a meaningful advantage, organize their work into bounded units, maintain explicit ownership and dependencies, and integrate their contributions into a verified result.
+The primary agent owns the end-to-end result. It is responsible for task decomposition, role selection, delegation, dependency coordination, integration, final acceptance, and reporting.
 
-The Coordinator remains responsible for:
+Workers own clearly bounded assignments and are responsible for producing usable, verifiable outputs within their assigned scope.
 
-- Decomposition and prioritization.
-- Worker selection and task assignment.
-- Dependency and shared-state management.
-- Progress monitoring and failure recovery.
-- Reviewing evidence and resolving conflicts.
-- Integration, final verification, and reporting.
+**Default strategy:** For tasks with two or more meaningful independent workstreams, prefer proactive delegation over performing all work sequentially in the primary agent.
 
-Workers contribute to the task; they do not independently determine that the entire task is complete.
+Do not wait until the primary agent has completed most of the investigation before considering delegation.
 
-## 2. Preconditions
+The objective is effective parallel execution and reliable outcomes, not maximizing the number of workers.
 
-Before spawning or assigning Workers:
+## 2. Decide Whether to Delegate
 
-1. Understand the desired outcome and acceptance criteria.
-2. Inspect the relevant repository state and existing instructions.
-3. Determine whether the task has genuine independent work.
-4. Identify shared files, external side effects, and major risks.
-5. Decide how the results will be integrated and verified.
+### 2.1 Identify Workstreams Early
 
-If the task is small, tightly coupled, or predominantly sequential, perform it directly instead of creating unnecessary coordination overhead.
+After enough initial inspection to understand the objective, likely boundaries, and important constraints, identify work that can be delegated.
 
-Do not spawn a Worker without a useful, bounded task.
+Potential workstreams include:
 
-## 3. Assess Parallelism
+- Independent feature implementations.
+- Separate modules or components.
+- Test design and behavioral verification.
+- Independent code review.
+- Focused investigations that unblock implementation or a decision.
+- Compatibility, security, or regression assessment.
+- Documentation or examples associated with a defined change.
 
-Classify the work into three categories:
+Do not exhaustively investigate every workstream before delegating it. A worker should perform the detailed investigation needed for its own assignment.
 
-- **Independent:** Work can proceed without waiting for another work unit's result.
-- **Dependent:** Work requires a specified upstream decision or artifact.
-- **Shared-state-sensitive:** Work may conflict because it changes or relies on the same mutable resource.
+### 2.2 Prefer Delegation When
 
-Prefer parallel execution for independent work. Respect dependency order for dependent work. Isolate or explicitly coordinate shared-state-sensitive work.
+- Two or more meaningful tasks can proceed with limited dependencies.
+- Separate modules can be implemented concurrently.
+- Independent verification can provide useful evidence.
+- A substantial change benefits from specialist engineering roles.
+- A focused investigation can reduce uncertainty while other work continues.
 
-A task's size alone does not justify parallelization. Parallelism must have a credible benefit in elapsed time, coverage, specialization, or independent verification.
+### 2.3 Execute Directly When
 
-## 4. Decompose the Work
+- The task is trivial or indivisible.
+- Delegation overhead is likely to exceed its benefit.
+- Work is tightly coupled and cannot yet be assigned safely.
+- A material decision must be resolved before any useful independent work can start.
+- Required Swarm capabilities are unavailable.
 
-Break the task into the smallest practical set of meaningful work units.
+Do not use these exceptions as a general preference for single-agent execution.
 
-Each work unit should have:
+### 2.4 Reassess Continuously
 
-- A stable identifier or unambiguous label.
-- A concrete objective.
-- Necessary context and known constraints.
-- A defined scope and ownership boundary.
-- Explicit dependencies, if any.
-- Expected deliverables.
-- Acceptance criteria and evidence requirements.
-- A completion or escalation condition.
+After initial inspection and when new evidence materially changes the task, reconsider:
 
-Avoid both extremes:
+- Whether additional independent work should be delegated.
+- Whether a Tester or Reviewer would materially improve confidence.
+- Whether independent assignments can run concurrently.
+- Whether an existing dependency requires sequencing.
+- Whether an assignment has become redundant, blocked, or incorrectly scoped.
 
-- One oversized task that hides multiple unrelated responsibilities.
-- Excessive microtasks whose coordination cost exceeds their value.
+## 3. Engineering Role Routing
 
-Decompose by outcomes and dependencies, not merely by arbitrary file counts.
+Use the role definitions in `.jcode/skills/swarm-engineering/SKILL.md` as the standard for specialized engineering work.
 
-Where possible, create work units that can be reviewed and accepted independently.
+The roles are task responsibilities, not assumed built-in Jcode agent types:
 
-## 5. Establish the Task Graph
+- **Developer:** implements the assigned behavior or change.
+- **Tester:** independently assesses behavior through test design and execution.
+- **Reviewer:** independently examines the implementation for defects and risks.
 
-Represent important dependencies explicitly.
+The primary agent selects and combines these roles based on task needs. Do not invoke all roles mechanically.
 
-For example:
+### 3.1 Role Selection
 
-```text
-Inspect existing design
-        |
-        v
-Approve implementation contract
-        |
-   +----+----+
-   v         v
-Implement A  Implement B
-   |         |
-   +----+----+
-        v
- Integration
-        |
-        v
- Verification
-        |
-        v
- Final report
-```
+| Task characteristics | Recommended assignment |
+|---|---|
+| Small, low-risk change | Developer, with proportionate validation |
+| Substantial feature or bug fix with meaningful behavioral requirements | Developer + Tester |
+| High-risk implementation or significant architectural change | Developer + Reviewer |
+| Critical change requiring behavioral and implementation verification | Developer + Tester + Reviewer |
+| Test strategy or regression investigation without implementation | Tester |
+| Independent assessment of an existing diff | Reviewer |
+| Several independent feature or module changes | Multiple Developers with explicit boundaries |
 
-Do not start dependent implementation before the required contract or upstream decision is sufficiently stable.
+These are defaults, not mandatory templates. Select roles according to risk, acceptance criteria, dependencies, and the value of independent evidence.
 
-Independent investigations can run concurrently. Shared interfaces should be agreed upon before parallel implementation whenever incompatible assumptions would create rework.
+### 3.2 Developer
 
-If a dependency becomes invalid, update the plan and notify affected Workers rather than silently continuing.
+Assign a Developer when a concrete implementation or code change is required.
 
-## 6. Select Workers
+Specify the intended behavior, acceptance criteria, scope, constraints, relevant interfaces, expected outputs, and required validation.
 
-Choose Workers based on the task's actual requirements and the capabilities available in the current runtime.
+The Developer should investigate the assigned scope, implement the change, run appropriate development checks, and report actual results and limitations.
 
-Consider:
+Do not require the primary agent to finish every investigation before a Developer can begin.
 
-- Required technical expertise.
-- Investigation versus implementation versus review.
-- Task complexity and expected duration.
-- Model capability and cost when selectable.
-- Available context, tools, permissions, and filesystem access.
-- Whether the Worker can independently verify its deliverable.
+### 3.3 Tester
 
-Use the least expensive and simplest Worker configuration that is adequate for the assignment. Reserve more capable configurations for genuinely difficult reasoning, architecture, ambiguous debugging, or high-risk review.
+Assign a Tester when independent behavioral verification, test design, or regression assessment adds meaningful value.
 
-Do not assume that a Worker inherits the Coordinator's model, authentication route, environment, Skills, prompt overlay, or conversation state. Confirm inherited behavior from the runtime or provide required context explicitly.
+The Tester should derive observable test conditions from requirements, examine normal and failure paths, design or execute suitable tests, and report evidence, defects, coverage gaps, and uncertainty.
 
-## 7. Define the Worker Contract
+A Tester may begin requirement analysis, test design, fixtures, or independent test scaffolding before implementation is complete. Final verification of implementation-dependent behavior must use the actual relevant change.
 
-Every assignment should communicate the following information, either directly or through an established runtime-supported task format.
+Do not assign a Tester merely to repeat the Developer's checks without an independent objective.
 
-### Objective
-What result must the Worker produce?
+### 3.4 Reviewer
 
-### Context
-What relevant files, decisions, interfaces, prior findings, or constraints does the Worker need?
+Assign a Reviewer when independent inspection of correctness, maintainability, compatibility, security, or architectural risk is useful.
 
-### Scope
-What may the Worker inspect or modify? What is explicitly outside the assignment?
+The Reviewer should inspect the actual diff and relevant context, verify substantive findings, prioritize actionable defects, and report locations, impact, evidence, and suggested corrections.
 
-### Ownership
-Which files or resources may the Worker change? Which resources are shared or read-only?
+The default assignment is to assess and report, not to silently rewrite the implementation.
 
-### Method
-What investigation or implementation approach is expected? Which Skills are recommended or required, if they are actually available?
+Early review may begin on an evolving diff, but final conclusions must account for the delivered changes.
 
-### Deliverables
-What concrete output must be returned: findings, design, diff, implementation, tests, or a decision recommendation?
+### 3.5 Skill Availability
 
-### Acceptance
-What observable criteria determine whether the assignment is satisfied?
+Do not assume that the role Skill is automatically loaded into every worker.
 
-### Escalation
-When should the Worker stop and report a blocker, incompatible assumption, unexpected risk, or missing capability?
+If the active Jcode execution environment confirms the Skill is available, use it as the detailed execution reference. Otherwise, include the essential role instructions, constraints, deliverables, and acceptance criteria directly in the assignment.
 
-Do not rely on role labels such as "reviewer" or "tester" as a substitute for a clear assignment.
+Do not claim that a worker followed instructions that were not available to it.
 
-## 8. Skill Usage
+## 4. Compose Workflows Around Dependencies
 
-Use Skills as specialized procedures, not as substitutes for task instructions.
+Choose the smallest workflow that provides sufficient execution and verification.
 
-When a Skill is appropriate:
+### 4.1 Developer Only
 
-1. Determine its exact name and purpose.
-2. Verify whether the current runtime makes it available to the intended Worker.
-3. Ensure the Worker receives the actual Skill instructions through a supported mechanism.
-4. Include only the relevant invocation or procedure in the assignment.
-5. Require the Worker to follow the procedure's deliverables and acceptance criteria.
+Use when the task is small, low-risk, and direct validation is sufficient.
 
-If Skill availability cannot be verified, do not claim that it was loaded. Provide the necessary task-specific instructions directly when practical, or ask the Worker to report the limitation.
+`Assign → Implement → Validate → Report`
 
-Do not inject entire Skills indiscriminately into every task. Prefer the smallest set of procedures that materially improves execution.
+The primary agent still evaluates the result against the original objective.
 
-## 9. Shared State and Write Ownership
+### 4.2 Developer → Tester
 
-Treat shared mutable state as a first-class coordination risk.
+Use when behavioral verification adds meaningful value.
 
-Before parallel work begins, classify each relevant resource as:
+`Implement → Test Actual Change → Report Findings → Remediate → Re-test`
 
-- Read-only.
-- Exclusively owned by one Worker.
-- Shared but coordinated.
-- Reserved for Coordinator integration.
+The Tester may design cases in parallel with implementation. Implementation-dependent tests must be executed against the relevant completed change before final acceptance.
 
-Prefer exclusive write ownership. Where multiple Workers must change the same interface or file, agree on the contract and sequence the changes.
+### 4.3 Developer → Reviewer
 
-Workers must preserve unrelated modifications and must not overwrite another agent's work without coordination.
+Use when independent inspection is valuable.
 
-Do not assume that separate sessions imply separate worktrees, separate filesystems, or isolated working directories. Verify actual isolation.
+`Implement → Review Actual Diff → Report Findings → Remediate → Re-review When Warranted`
 
-If isolation cannot be established, prefer read-only investigations, separate patches or recommendations, or serialized implementation.
+The Reviewer may begin early, but must account for the final diff.
 
-## 10. Execution and Progress Monitoring
+### 4.4 Developer → Tester + Reviewer
 
-After assignments are issued:
+Use when both behavioral testing and independent code review are warranted.
 
-- Track which work units are pending, running, blocked, failed, or complete.
-- Monitor dependencies and shared-resource conflicts.
-- Collect intermediate findings when they affect downstream work.
-- Keep assignments stable unless new evidence justifies a change.
-- Avoid unnecessary polling or repetitive status requests.
-- Do not duplicate work merely because a Worker has not yet reported.
+The Tester focuses on requirements, observable behavior, test adequacy, and reproducible failures.
 
-Use the runtime's actual task states and communication mechanisms. Do not invent status transitions or assume that an accepted spawn request means the Worker has started or finished successfully.
+The Reviewer focuses on implementation correctness, design risks, compatibility, and unintended consequences.
 
-When a Worker is blocked, determine whether to clarify, unblock, narrow, reassign, or cancel its task.
+Run the Tester and Reviewer concurrently when their inputs are sufficiently stable and their work is independent. They may share the requirements and relevant change context, but each must provide its own evidence-based assessment.
 
-## 11. Worker Deliverable Format
+Do not require a fixed sequence when no dependency exists. Do not claim final verification against an implementation that is not yet available.
 
-Request a concise, structured report appropriate to the assignment.
+### 4.5 Multiple Developers
 
-For engineering tasks, the default report should include:
+Use multiple Developers when separate modules, features, or workstreams can be implemented with manageable coupling.
 
-1. **Outcome:** Completed, partially completed, blocked, or failed.
-2. **Findings or changes:** What was discovered or modified.
-3. **Evidence:** Relevant file paths, symbols, diffs, command results, or test results.
-4. **Verification:** What was actually run and what happened.
-5. **Limitations:** Unverified assumptions, skipped checks, and unresolved issues.
-6. **Integration notes:** Dependencies, conflicts, and follow-up work.
+Before delegation:
 
-For read-only investigations, require evidence and recommendations without modifying files.
+- Define ownership boundaries.
+- Identify shared interfaces and integration points.
+- State dependencies and assumptions.
+- Avoid conflicting ownership of the same files where practical.
 
-For implementation work, require a clear account of modified files and checks performed. A patch or diff is preferable when supported by the runtime.
+Integrate the changes and assess cross-component behavior before final acceptance.
 
-A report that says only "done" is insufficient for meaningful engineering acceptance.
+### 4.6 Findings and Remediation
 
-## 12. Review and Accept Contributions
+When a Tester or Reviewer reports a defect:
 
-Evaluate every material contribution against its original assignment.
+1. Evaluate the finding against the requirements and evidence.
+2. Assign remediation to the responsible Developer or another explicitly designated fixing agent.
+3. Run the relevant verification again.
+4. Re-review the affected area when warranted by the risk.
+5. Disclose any unresolved finding.
 
-Check:
+A claimed fix is not a verified fix until relevant evidence supports it.
 
-- Does the result answer the assigned question or satisfy the objective?
-- Is the supporting evidence sufficient and relevant?
-- Are conclusions consistent with the actual repository state?
-- Were scope and ownership boundaries respected?
-- Were required checks performed?
-- Are there unresolved risks, assumptions, or integration conflicts?
+## 5. Assignment Contract
 
-For read-only work, verify important claims against the source where practical.
+Every meaningful delegated assignment must be independently actionable.
 
-For implementation work, inspect the actual diff and relevant behavior. Do not rely solely on the Worker summary.
+Include the following information as appropriate:
 
-A contribution may be accepted, conditionally accepted, returned for revision, rejected, or escalated.
+- **Label:** a concise, non-empty assignment identifier.
+- **Role:** Developer, Tester, Reviewer, or a clearly stated specialized objective.
+- **Objective:** the concrete result to achieve.
+- **Context:** requirements, acceptance criteria, and relevant discoveries.
+- **Scope:** modules, files, behaviors, or review boundaries.
+- **Constraints:** interfaces, compatibility requirements, prohibited changes, and project conventions.
+- **Expected output:** implementation, test artifacts, findings, or a structured report.
+- **Acceptance criteria:** conditions that establish completion.
+- **Dependencies:** prerequisites and required upstream results.
+- **Ownership:** file or resource boundaries when overlap could cause conflicts.
+- **Validation:** checks and evidence required before completion is reported.
 
-## 13. Failure Recovery
+Avoid vague instructions such as "explore the repository" or "check everything."
 
-When a Worker fails, times out, produces incomplete output, or becomes blocked:
+Investigation-only assignments are appropriate when they answer a specific actionable question, such as identifying the cause of a defect or evaluating an interface constraint.
 
-1. Preserve the failure information and useful partial results.
-2. Determine whether the failure is due to ambiguity, missing context, unavailable tools, dependency failure, or implementation difficulty.
-3. Assess whether the remaining work still has value.
-4. Choose a proportionate response: clarify, retry with a changed approach, reduce scope, reassign, perform the work directly, or stop.
-5. Update dependent work units and communicate material changes.
+For implementation work, prefer an end-to-end assignment that includes necessary investigation and development validation instead of splitting every routine step into separate workers.
 
-Do not retry indefinitely. Do not repeatedly spawn replacements without accounting for existing agents, duplicate changes, and shared state.
+## 6. Parallelism and Coordination
 
-Before retrying an implementation assignment, determine whether the previous attempt left modifications that need inspection or integration.
+### 6.1 Launch Independent Work Early
 
-## 14. Integration
+Start independent assignments as soon as their inputs and boundaries are sufficiently clear.
 
-The Coordinator owns integration.
+Do not serialize independent tasks merely because the primary agent could perform them sequentially.
 
-Before combining contributions:
+When implementation is underway, useful independent work may include test design, interface verification, compatibility investigation, or review of stable portions of the diff.
 
-- Inspect their actual outputs and relevant working-tree state.
-- Identify incompatible assumptions and overlapping changes.
-- Resolve interface and design conflicts explicitly.
-- Preserve valid work from partial or failed assignments.
-- Avoid blind application of unreviewed patches.
-- Keep unrelated user modifications intact.
+### 6.2 Respect Dependencies
 
-Integrate in dependency order. Revisit upstream decisions when downstream evidence reveals a defect.
+Make material dependencies explicit.
 
-If a Worker changes shared state unexpectedly, pause conflicting work until the impact is understood.
+Examples:
 
-## 15. Final Verification
+- A Tester can derive test cases from requirements before implementation, but final behavioral verification requires the actual relevant change.
+- A Reviewer can inspect an evolving diff, but final findings must reflect the delivered change.
+- A Developer must not silently assume an unsettled interface when that assumption materially affects correctness.
+- Integration-dependent checks may need to wait until related changes are assembled.
 
-After integration, verify the result as a whole.
+Parallelize independent work, not work whose prerequisites are unresolved.
 
-Use the task's acceptance criteria to determine appropriate checks, such as:
+### 6.3 Protect Shared Resources
 
-- Diff inspection.
-- Focused unit or integration tests.
-- Linting, type checks, or builds.
-- Cross-component compatibility checks.
-- Reproduction of the original issue.
-- Independent review for high-risk changes.
+Identify shared files, generated artifacts, interfaces, mutable state, and integration-sensitive boundaries.
 
-Distinguish Worker-level verification from Coordinator-level verification.
+Prefer clear ownership and isolated changes.
 
-A test run on an isolated branch or different worktree does not necessarily verify the integrated result. Re-run checks that are materially affected by integration.
+If overlapping edits are unavoidable, coordinate them explicitly or sequence the conflicting work. Do not allow workers to overwrite one another's changes.
 
-If a check cannot be performed, explain why and identify the remaining uncertainty.
+### 6.4 Keep Primary-Agent Work Focused
 
-## 16. Completion and Shutdown
+The primary agent should focus on:
 
-A work unit is complete when its deliverable satisfies its acceptance criteria or its disposition is explicitly recorded.
+- Decomposition and assignment quality.
+- Architectural and requirement decisions.
+- Dependency management and progress assessment.
+- Integration and conflict resolution.
+- Evaluation of test results and review findings.
+- Final acceptance and reporting.
 
-The overall Swarm is complete when:
+Do not duplicate all worker investigations or implementations without a concrete reason, such as checking a material risk, resolving a contradiction, or verifying integration.
 
-- Required work units have been resolved.
-- Accepted contributions have been integrated.
-- Dependencies and conflicts have been addressed.
-- Final verification has been performed to the appropriate degree.
-- Unresolved failures and limitations are disclosed.
-- Remaining Workers are no longer needed and are handled using supported lifecycle controls.
+## 7. Progress and Recovery
 
-Do not claim that all work is complete while required tasks remain blocked or unverified.
+Monitor assignments according to their importance, dependencies, and expected duration.
 
-## 17. Final Report
+Look for concrete progress signals:
 
-Provide a consolidated report rather than a transcript of every Worker interaction.
+- What is complete?
+- What remains?
+- Is there a blocker?
+- Has an assumption changed?
+- Is another workstream waiting for this output?
+- Is the expected result still achievable?
 
-Include:
+Intervene when work is blocked, mis-scoped, redundant, or no longer useful.
 
-- Outcome and scope.
-- Important findings or changes.
-- Key decisions and integration results.
-- Verification performed and actual outcomes.
-- Material failures, limitations, and residual risks.
-- Remaining work, if any.
+If a worker fails or produces incomplete work:
 
-Distinguish completed work from recommendations and future actions.
+1. Identify the cause where possible.
+2. Preserve useful partial results when safe.
+3. Narrow or clarify the assignment.
+4. Reassign work when a different approach is warranted.
+5. Execute directly only when it is the most effective recovery.
+6. Report remaining uncertainty or incomplete verification.
 
-Optimize for reliable delivery and efficient coordination, not maximum concurrency or maximum Worker count.
+Do not restart all work automatically when only one assignment has failed.
+
+## 8. Integration and Final Acceptance
+
+The primary agent owns final integration and acceptance.
+
+1. Check each output against its assignment and acceptance criteria.
+2. Resolve incompatible assumptions, interfaces, and ownership conflicts.
+3. Inspect the combined change for omissions and regressions.
+4. Run relevant integration and acceptance checks.
+5. Evaluate Tester findings and Reviewer findings.
+6. Resolve or explicitly disclose material unresolved issues.
+7. Confirm that the result addresses the original user request.
+
+Worker-level validation does not eliminate integration checks when changes interact.
+
+Avoid blindly repeating every worker command. Prefer checks that add evidence about cross-component behavior, conflicting changes, or unresolved risks.
+
+Do not claim comprehensive verification when only a subset of the work was checked.
+
+## 9. Model Routing and Worker Configuration
+
+Follow the active Jcode version and actual Swarm tool schema for worker creation and model selection.
+
+Where the active implementation supports the following behavior:
+
+- Pass `model` when an explicit model choice is needed.
+- An explicit model selection overrides the configured `agents.swarm_model`.
+- Omit `model` to use the configured default or inherit the coordinator's model when no default is configured.
+- Use `model: "inherit"` to force inheritance when the configured default would otherwise apply.
+- Changing model selection does not change an already-running or reused worker.
+- Use `swarm list_models` to inspect available models and routes.
+- Route-prefixed model identifiers may pin both model and authentication route.
+- Configure worker reasoning effort through `agents.swarm_effort` when supported; do not assume reasoning effort is a per-spawn argument.
+
+Verify these behaviors against the active implementation and tool schema before relying on them. Do not invent unsupported parameters.
+
+Always provide a non-empty `label` when spawning a worker.
+
+Only the root session may spawn workers. Workers must not create child workers or another Swarm generation.
+
+If the actual tool contract differs from these notes, follow the supported interface and report the discrepancy rather than attempting unsupported calls.
+
+## 10. Completion Criteria
+
+A Swarm task is complete when:
+
+- Required assignments have usable outputs, or incomplete work is explicitly disclosed.
+- Integrated changes satisfy the original acceptance criteria.
+- Relevant verification has been performed and accurately reported.
+- Material Tester findings and Reviewer findings have been addressed or disclosed.
+- Conflicts, limitations, and unresolved risks are visible in the final report.
+- The primary agent can explain what changed, what was verified, and what remains uncertain.
+
+The objective is to delegate early when useful, choose the right engineering roles, exploit genuine parallelism, and deliver a verified, integrated result.
 
