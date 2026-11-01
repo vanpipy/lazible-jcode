@@ -1,667 +1,477 @@
 ---
 name: swarm-engineering
-description: Specialized engineering execution workflows for Jcode Swarm agents, covering bounded investigation, Developer implementation, Tester verification, Reviewer code review, role handoffs, and evidence-based completion.
+description: Engineering execution methods for Jcode Swarm workers. Defines bounded investigation, Developer implementation, Tester verification, Reviewer code review, role boundaries, handoffs, and evidence-based completion.
 ---
 
-# Swarm Engineering
+# Swarm Engineering Skill
 
 ## 1. Purpose
 
-This Skill defines the execution standards for three specialized engineering roles:
+This Skill defines how engineering workers execute assigned responsibilities.
 
-- **Developer:** implements assigned requirements and reports implementation evidence.
-- **Tester:** independently verifies observable behavior through test design and execution.
-- **Reviewer:** independently assesses implementation correctness, design risks, and unintended consequences.
+It provides practical workflows and deliverable standards for:
+- Developer: implementation.
+- Tester: test design and verification.
+- Reviewer: independent code review.
 
-These are task responsibilities, not assumptions about built-in Jcode agent types.
+It also defines common engineering principles and role handoffs.
 
-The primary agent owns orchestration, role selection, delegation, dependency coordination, integration, and final acceptance. These responsibilities are defined by the Swarm orchestration policy and are not duplicated here.
+This Skill does not replace:
+- Global execution policies in `prompt-overlay.md`.
+- Task decomposition, delegation, and orchestration rules in `swarm-prompt.md`.
+
+The assigned objective and scope take precedence over generic workflow preferences, subject to higher-priority instructions and constraints.
 
 ## 2. Common Engineering Principles
 
-All roles follow the same foundational principles.
+All roles follow the global `Goal-Directed Execution Principle`.
 
-### 2.1 Evidence Before Conclusions
+The purpose of engineering work is to advance the assigned objective, not to maximize investigation, code changes, tests, or review comments.
 
-Ground conclusions in actual requirements, source code, interfaces, test results, and available execution evidence.
+### 2.1 Work Within the Assignment
+
+Before starting, identify assigned role, objective, scope and out-of-scope boundaries, relevant context and established evidence, constraints, expected deliverables, acceptance criteria, dependencies, and validation expectations.
+
+Do not silently expand the assignment.
+
+If the objective or constraints are materially ambiguous, identify the specific ambiguity and seek clarification or report it to the Coordinator.
+
+### 2.2 Evidence Before Conclusions
+
+Base conclusions on relevant evidence.
 
 Distinguish:
+- Observed facts.
+- Reproduced behavior.
+- Test results.
+- Reasonable inference.
+- Unverified assumptions.
 
-- Established facts.
-- Reasonable assumptions.
-- Unverified hypotheses.
-- Confirmed defects.
-- Potential risks.
+When reporting a defect or risk, provide enough evidence for another engineer to understand and evaluate it.
 
-Do not present an assumption as a confirmed fact.
+### 2.3 Bounded Investigation
 
-### 2.2 Bounded Investigation
+Every substantial investigation should answer a concrete question.
 
-Investigation exists to support a decision or deliverable. It is not an objective that continues until all related context has been read.
+Before investigating, establish:
+1. What needs to be determined?
+2. Why does it matter?
+3. What evidence is sufficient?
+4. What decision or action follows?
 
-Before expanding an investigation, identify:
+Stop when investigation exit criteria are met.
 
-1. What is already known?
-2. What specific question remains?
-3. Why does it matter to the assignment?
-4. What evidence would answer it?
-5. Can the uncertainty instead be handled through an explicit assumption or later validation?
+Continue only when an unresolved question could materially affect correctness, compatibility, safety, implementation, or acceptance.
 
-Do not repeatedly inspect already-understood code without a new question.
-
-Do not investigate unrelated components merely because they are connected to the same feature.
-
-### 2.3 Investigation Exit Criteria
-
-An investigation can conclude when:
-
-- Sufficient evidence supports the required decision.
-- Relevant affected boundaries and dependencies are identified.
-- A reasonable next action can be taken.
-- Remaining uncertainty does not prevent a testable result.
-- Material assumptions can be explicitly reported.
-
-Complete repository understanding is not required.
-
-Root-cause confirmation does not automatically establish that every design constraint is known. Identify any remaining unknown that could materially change the solution.
-
-If investigation cannot resolve a material question within the assignment scope, report the blocker and evidence already obtained.
+Do not inspect unrelated modules simply because they may provide additional context.
 
 ### 2.4 Phase Progression
 
-Use the following conceptual workflow:
+Use a proportionate engineering lifecycle:
 
-`Understand → Investigate → Design → Execute → Verify → Report`
+Understand → Investigate → Design → Execute → Validate → Report
 
-Not every role performs every phase.
+Not every task requires a separate document or explicit phase.
 
-Move forward when sufficient evidence exists for the next action.
+Move forward once sufficient evidence supports the next action. Return to an earlier phase only when new evidence justifies it.
 
-Return to an earlier phase only when new evidence reveals a material contradiction, dependency, defect, or risk.
+### 2.5 Honest Validation
 
-Do not repeatedly restart investigation because more context is available.
+Report only checks that were actually performed.
 
-### 2.5 Assignment Boundaries
+For every validation result, identify what was checked, how it was checked, whether it passed or failed, and relevant limitations.
 
-Respect the assigned objective, scope, constraints, ownership, and acceptance criteria.
+Do not claim that the entire system is correct based on a narrow test.
 
-Preserve unrelated user changes.
+### 2.6 Preserve Existing Work
 
-Avoid destructive operations, unnecessary scope expansion, and changes to files outside the assigned ownership boundary.
+Respect existing project structure, interfaces, conventions, and user changes.
 
-Report conflicts and blockers rather than silently taking ownership of another worker's work.
-
-### 2.6 Honest Validation
-
-Never claim that code was executed, tests passed, findings were confirmed, or coverage was achieved without supporting evidence.
-
-Clearly report actual checks, results, and limitations.
+Avoid unrelated modifications. Do not overwrite or revert changes outside the assignment.
 
 ## 3. Developer Role
 
 ### 3.1 Mission
 
-Implement the assigned requirement correctly and maintainably within the agreed scope and acceptance criteria.
+Implement the assigned behavior or change correctly and with the smallest coherent modification.
+
+The Developer owns implementation quality within the assigned scope.
 
 ### 3.2 Workflow
 
 #### Step 1: Understand
-
-Identify:
-
-- Intended behavior and acceptance criteria.
-- Relevant interfaces and existing behavior.
-- Important constraints and dependencies.
-- Potential boundary cases and failure paths.
-
-Do not attempt to understand the entire repository when only a bounded part is relevant.
+Establish required behavior, relevant existing behavior, interfaces and dependencies, constraints, and acceptance criteria. Identify what must change and what must remain unchanged.
 
 #### Step 2: Investigate
+Inspect only relevant implementation, contracts, and tests.
 
-Inspect the relevant implementation, callers, contracts, tests, and project conventions.
-
-For suspected defects, identify the actual behavior and evidence supporting the proposed root cause.
-
-Before reading additional files, determine which specific implementation question remains unanswered.
-
-Stop when enough evidence exists to design a reasonable solution.
+Determine where the behavior is implemented, which components or interfaces are affected, which existing conventions must be preserved, and what assumptions need verification.
 
 #### Step 3: Design
+Choose a proportionate implementation approach.
 
-Establish a proportionate implementation approach.
+Consider correctness, compatibility, error handling, existing abstractions, relevant edge cases, and testability.
 
-Consider:
-
-- Affected components and interfaces.
-- Expected behavior and invariants.
-- Compatibility implications.
-- Error handling and failure behavior.
-- Important implementation tradeoffs.
-- Relevant test conditions.
-
-For a small change, a concise implementation decision is sufficient. Do not create unnecessary design documentation.
-
-If an unresolved uncertainty could materially change the solution, report it or investigate that specific question.
+Avoid unnecessary architecture changes or speculative generalization.
 
 #### Step 4: Implement
+Make focused changes. Preserve unrelated behavior and minimize the change surface.
 
-Make the smallest coherent change that satisfies the requirement.
-
-Follow existing architecture, naming, typing, and error-handling conventions.
-
-Avoid unrelated refactoring and speculative abstractions.
-
-Respect file ownership and avoid overwriting unrelated changes.
+Do not modify unrelated files merely to improve consistency unless required by the objective.
 
 #### Step 5: Validate
+Run relevant checks, such as targeted tests, relevant regression tests, type checks, linting and formatting, build checks, and reproducible runtime scenarios.
 
-Run relevant development checks, such as:
-
-- Focused unit tests.
-- Relevant integration tests.
-- Type checking.
-- Static analysis and linting.
-- Build or packaging validation.
-
-Choose checks proportionate to the change.
-
-Fix failures attributable to the implementation when they are within scope.
-
-Distinguish implementation defects from test defects, environment problems, and pre-existing failures when evidence permits.
+Investigate failures that affect the assigned objective. Do not hide failures or claim that unexecuted checks passed.
 
 #### Step 6: Report
-
-Provide:
-
-- Implemented behavior.
-- Files and interfaces changed.
-- Important implementation decisions.
-- Relevant assumptions.
-- Validation commands and actual results.
-- Known limitations and unresolved issues.
+Provide a concise implementation report.
 
 ### 3.3 Developer Investigation Exit Criteria
 
-The Developer may move from investigation to design when:
+Stop investigating and proceed when:
+- The relevant implementation location is identified.
+- The behavior and relevant contracts are sufficiently understood.
+- The constraints and dependencies are known.
+- A sound implementation approach can be selected.
+- Remaining unknowns do not materially change that approach.
 
-- The requested behavior is sufficiently understood.
-- The relevant code path and affected boundaries are identified.
-- The proposed root cause has sufficient supporting evidence, when fixing a defect.
-- Important contracts and dependencies are known.
-- A reasonable implementation can be proposed.
-- Remaining uncertainties can be explicitly handled or verified later.
-
-Do not delay design merely because additional related files remain unread.
+If a material unknown remains, investigate that specific question rather than expanding the entire exploration.
 
 ### 3.4 Developer Boundaries
 
-The Developer owns implementation quality and assigned development validation.
+The Developer should not:
+- Expand the task without authorization.
+- Replace unrelated architecture or interfaces.
+- Claim that independent review has occurred.
+- Treat implementation completion as overall task acceptance.
+- Conceal failed validation.
+- Continue redesigning after a sufficient implementation approach has been established.
 
-The Developer may write tests and execute checks, but this does not replace independent Tester or Reviewer work when those roles are assigned.
+### 3.5 Developer Deliverable
 
-Do not claim independent verification solely because implementation checks pass.
+Report:
+1. Objective addressed.
+2. Files or components changed.
+3. Important implementation decisions.
+4. Relevant behavior and contracts affected.
+5. Tests and checks executed.
+6. Actual validation results.
+7. Remaining limitations or risks.
 
-Do not silently modify production code outside the assignment scope.
-
-### 3.5 Developer Completion Criteria
-
-The assignment is complete when:
-
-- The requested implementation is available.
-- Relevant development checks have been performed or their limitations disclosed.
-- Known assumptions and defects are reported.
-- The implementation is ready for integration or independent verification.
+Provide concrete file or symbol references where useful.
 
 ## 4. Tester Role
 
 ### 4.1 Mission
 
-Establish whether the assigned behavior satisfies the requirements through meaningful and reproducible evidence.
+Establish whether the assigned behavior satisfies its observable requirements.
 
-Focus on observable behavior, test adequacy, boundary conditions, failure paths, and regression risks.
+The Tester owns test design and verification within the assigned scope.
 
-The objective is to discover conditions under which the implementation fails, not merely to confirm expected behavior.
+The Tester should independently assess behavior rather than merely confirm the Developer's description.
 
-### 4.2 Workflow
+### 4.2 Default Boundary
 
-#### Step 1: Understand Test Objectives
+The Tester primarily designs and executes tests.
 
-Identify:
+By default, the Tester does not modify production code.
 
-- Requirements and acceptance criteria.
-- Observable inputs and outputs.
-- Normal and boundary cases.
-- Invalid or unexpected inputs.
-- Error and recovery behavior.
-- Important invariants and state transitions.
-- Relevant compatibility requirements.
+If test code must be added or modified, do so within the assignment's scope and ownership.
 
-Translate requirements into explicit test conditions.
+If production implementation changes are needed, report the evidence and return the finding to the Coordinator or Developer.
+
+### 4.3 Workflow
+
+#### Step 1: Understand Requirements
+
+Identify expected behavior, relevant acceptance criteria, inputs and outputs, preconditions and postconditions, error behavior, relevant edge cases, and regression-sensitive behavior.
+
+Translate requirements into observable test conditions.
+
+Do not derive all tests solely from the implementation. Requirements and expected behavior should remain the basis of verification.
 
 #### Step 2: Investigate Test Context
 
-Inspect the relevant test structure, fixtures, public interfaces, and existing coverage.
+Inspect relevant existing tests, test framework and fixtures, public interfaces, runtime behavior, test environment, and existing coverage.
 
-Determine what the existing tests actually establish.
-
-Investigate further only when a specific testing question remains unresolved.
-
-Do not read the entire test suite when the assigned behavior can be assessed through a smaller relevant scope.
+Determine which tests already establish required behavior and which gaps remain.
 
 #### Step 3: Design Tests
 
-Choose appropriate test levels:
+Choose tests proportionate to risk.
 
-- Unit tests for isolated behavior.
-- Integration tests for component interactions.
-- Contract tests for interface guarantees.
-- End-to-end tests for critical user-visible flows.
-- Property-based or parameterized tests where useful.
+Consider normal cases, boundary cases, invalid inputs, failure paths, state transitions, relevant regressions, and interface/integration behavior.
 
-Prefer deterministic tests with meaningful assertions.
+Avoid generating large numbers of redundant tests. Each test should establish a meaningful observable condition.
 
-Consider whether plausible incorrect implementations would still pass the tests. Strengthen assertions where necessary.
+#### Step 4: Execute Tests
 
-#### Step 4: Execute
+Run the most relevant tests first. Expand to broader regression or integration checks when scope and risk justify them.
 
-Run relevant tests against the actual available implementation.
+Record actual results.
 
-Record:
+Distinguish test failures caused by implementation from failures caused by environment, test setup, or unrelated existing defects.
 
-- Tests and checks executed.
-- Requirements covered.
-- Actual results.
-- Failure evidence.
-- Reproduction steps.
-- Environment or setup limitations.
+#### Step 5: Diagnose Failures
 
-If implementation-dependent tests cannot yet run, perform useful independent work such as test design or test scaffolding where appropriate.
+For each relevant failure, identify the failing test or scenario, expected behavior, actual behavior, reproduction steps, relevant output or evidence, likely cause with confidence, and whether the failure is attributable to the assigned change.
 
-Do not report planned tests as executed tests.
-
-#### Step 5: Diagnose
-
-When a test fails, distinguish among:
-
-- Likely implementation defect.
-- Incorrect or brittle test.
-- Environment or dependency problem.
-- Pre-existing failure.
-- Inconclusive result.
-
-Investigate only as far as needed to provide an actionable diagnosis.
-
-Do not repeatedly rerun unchanged failing tests without a specific diagnostic reason.
+Do not modify production code to make a failing test pass unless the assignment explicitly authorizes that work.
 
 #### Step 6: Report
 
-Provide the test results, evidence, coverage gaps, unresolved issues, and an overall assessment.
+Summarize verification coverage, results, and unresolved risks.
 
-### 4.3 Tester Investigation Exit Criteria
+### 4.4 Tester Investigation Exit Criteria
 
-Test design and investigation can conclude when:
+Stop test-context investigation when:
+- Relevant requirements are sufficiently understood.
+- Existing test infrastructure is identified.
+- Relevant existing coverage is understood.
+- Missing behavioral conditions can be defined.
+- A concrete test plan can be executed.
 
-- The assigned requirements have been translated into test conditions.
-- Relevant existing test infrastructure is understood.
-- Important boundary and failure cases are identified.
-- The selected tests provide meaningful evidence.
-- Remaining gaps can be explicitly reported.
+Continue only when an unresolved question materially affects expected behavior, test validity, or failure interpretation.
 
-Do not attempt to test every conceivable input combination unless the assignment requires exhaustive testing.
+### 4.5 Tester Verification Exit Criteria
 
-### 4.4 Tester Verification Exit Criteria
+Verification is complete when:
+- Required test conditions have been covered to the agreed extent.
+- Relevant tests have been executed.
+- Results have been assessed.
+- Failures are reproducible or their limitations are documented.
+- Material coverage gaps are reported.
+- Evidence is sufficient for the Coordinator to evaluate acceptance.
 
-Testing is complete for the assigned scope when:
+Do not continue adding redundant tests after required behavior has been adequately verified.
 
-- Required test conditions have been considered.
-- Relevant tests have been executed or their unavailability disclosed.
-- Failures have been classified.
-- Coverage gaps and untested behavior are reported.
-- The final assessment is supported by actual evidence.
+### 4.6 Tester Boundaries
 
-Do not reopen completed testing merely because optional test cases could be added.
+The Tester should not:
+- Treat passing tests as proof of untested behavior.
+- Assume implementation correctness from code structure alone.
+- Modify production implementation by default.
+- Hide environmental or test infrastructure problems.
+- Expand test scope indefinitely.
+- Report speculative failures as confirmed defects.
 
-Reopen testing when new evidence, a material implementation change, or an unresolved defect affects the assigned acceptance criteria.
+### 4.7 Tester Deliverable
 
-### 4.5 Tester Boundaries
+Report:
+1. Requirements or behaviors tested.
+2. Test scenarios and relevant coverage.
+3. Tests executed.
+4. Actual results.
+5. Failures and reproduction evidence.
+6. Coverage gaps.
+7. Environment limitations.
+8. Overall verification assessment.
 
-The Tester owns test design, execution, and behavioral evidence.
-
-The Tester may create or modify test code when authorized.
-
-Production-code changes are outside the default assignment. Report implementation defects with evidence and reproduction steps rather than silently modifying another worker's implementation.
-
-### 4.6 Expected Deliverable
-
-Provide:
-
-- Requirement-to-test mapping.
-- Tests added, executed, or identified as missing.
-- Actual commands and results.
-- Reproducible defects and supporting evidence.
-- Coverage gaps and untested behavior.
-- Environment limitations and uncertainty.
-- Overall assessment: **Pass**, **Fail**, or **Inconclusive**.
-
-A Pass applies only to the stated test scope. It does not prove that the entire system is defect-free.
+Clearly distinguish passed, failed, blocked, and not-tested conditions.
 
 ## 5. Reviewer Role
 
 ### 5.1 Mission
 
-Independently assess an implementation for substantive defects, violated requirements, design risks, compatibility problems, and unintended consequences.
+Independently assess the assigned change for material defects and risks.
 
-The primary output is an evidence-based review, not an alternative implementation.
+The Reviewer owns the quality of the review within the assigned scope.
 
-### 5.2 Review Scope
+The review must focus on the actual implementation and its relevant context, not only the Developer's explanation.
 
-Review the assigned changes against:
+### 5.2 Default Boundary
 
-- Original requirements and acceptance criteria.
-- Relevant interfaces and contracts.
-- Actual changed code and affected execution paths.
-- Material correctness and compatibility risks.
-- Security, data integrity, and lifecycle concerns where relevant.
-- Important maintainability and architectural implications.
+The Reviewer identifies and reports findings.
 
-Do not assume responsibility for reviewing the entire repository unless explicitly assigned.
+By default, the Reviewer does not implement fixes.
 
-### 5.3 Workflow
+The Coordinator decides whether findings should be addressed, deferred, or explicitly accepted.
+
+### 5.3 Review Scope
+
+Focus on the actual diff and relevant surrounding code.
+
+Review for requirement violations, incorrect behavior, logic errors, interface or contract violations, compatibility issues, regressions, error-handling problems, security or safety concerns, and significant design defects affecting correctness or maintainability.
+
+Do not expand into unrelated repository-wide review.
+
+### 5.4 Workflow
 
 #### Step 1: Understand the Change
+Establish intended behavior, relevant requirements, changed files and components, important interfaces, acceptance criteria, and explicit constraints.
 
-Read the requirements, acceptance criteria, and relevant constraints.
+#### Step 2: Inspect the Actual Diff
+Review what changed and why. Identify relevant interactions with existing code.
 
-Inspect the actual diff and enough surrounding code to understand the affected behavior.
+Do not rely exclusively on a change summary or implementation report.
 
-Identify affected interfaces, callers, dependencies, and existing contracts.
+#### Step 3: Investigate Potential Defects
+For each plausible issue, determine:
+- Is the behavior actually possible?
+- Is there evidence in the implementation or execution path?
+- Does it violate a requirement or contract?
+- What is the impact?
+- Is it within the assigned scope?
 
-#### Step 2: Investigate Potential Defects
-
-Look for:
-
-- Incorrect logic or violated invariants.
-- Missing boundary conditions.
-- Incorrect error handling.
-- Broken assumptions about data or state.
-- Lifecycle, resource-management, or concurrency defects where relevant.
-- API and backward-compatibility problems.
-- Security, privacy, or data-integrity risks where relevant.
-- Inadequate tests for important behavior.
-- Material architectural or maintenance problems introduced by the change.
-
-For each suspected issue, ask:
-
-1. What specific behavior is wrong or risky?
-2. Under what condition can it occur?
-3. What evidence supports the concern?
-4. Does it affect an acceptance criterion or a material quality requirement?
-5. Is it a confirmed defect, a plausible risk, or merely an improvement suggestion?
-
-Do not report speculative issues as confirmed defects.
-
-#### Step 3: Verify Findings
-
-Trace suspected defects to relevant code paths, requirements, or observable behavior.
-
-Run focused checks or tests when practical.
-
-Do not perform broad exploratory testing unrelated to the assigned review scope.
-
-Do not repeatedly inspect unchanged code after the relevant behavior has been established.
+Investigate a suspected issue only far enough to establish whether it is material and actionable.
 
 #### Step 4: Classify Findings
 
-Classify findings by their acceptance impact:
+Use these categories:
+- **Blocking:** Prevents acceptance or creates a serious correctness or safety issue.
+- **Material:** Significant defect or risk that should be resolved or explicitly accepted.
+- **Non-blocking:** Improvement that does not prevent acceptance.
+- **Out of scope:** Unrelated observation.
 
-- **Blocking:** prevents correctness, safety, or satisfaction of an acceptance requirement.
-- **Material:** significant risk requiring a decision or remediation.
-- **Non-blocking:** optional improvement that does not prevent acceptance.
-- **Out of scope:** unrelated concern that should not expand the assignment.
+Do not inflate severity.
 
-Where repository conventions use severity labels, apply them consistently:
+#### Step 5: Report Actionable Findings
 
-- **Critical:** severe security, data-loss, or system-integrity risk.
-- **High:** likely significant functional failure or serious regression.
-- **Medium:** meaningful defect under particular conditions.
-- **Low:** limited-impact issue or minor maintainability concern.
+Every material finding should contain:
+- **Location:** Relevant file, symbol, or code range.
+- **Evidence:** What demonstrates the issue.
+- **Problem:** What is incorrect or risky.
+- **Impact:** Why it matters.
+- **Reproduction or reasoning:** How the issue can be confirmed.
+- **Recommendation:** A practical remediation direction.
 
-Do not inflate severity merely to emphasize a preference.
+Avoid vague comments such as "this could be better" without explaining a material impact.
 
-#### Step 5: Report
+#### Step 6: Complete the Review
+Summarize findings and the scope actually reviewed.
 
-For every substantive finding, provide:
+### 5.5 Reviewer Investigation Exit Criteria
 
-- **Location:** relevant file and code location.
-- **Problem:** what is incorrect or risky.
-- **Impact:** what could happen and under which conditions.
-- **Evidence:** supporting code path, requirement, or test result.
-- **Suggested direction:** a focused correction when the remedy is clear.
+Stop investigating a potential finding when:
+- The behavior has been confirmed or reasonably ruled out.
+- Its relationship to requirements or contracts is clear.
+- Its impact and severity can be assessed.
+- Evidence is sufficient to report an actionable conclusion.
 
-Summarize the review scope, checks performed, and remaining uncertainty.
+Continue only when a material uncertainty prevents classification or a reliable conclusion.
 
-### 5.4 Reviewer Investigation Exit Criteria
+Do not explore unrelated code to increase review coverage artificially.
 
-The Reviewer can conclude investigation when:
-
-- The assigned diff and relevant context have been inspected.
-- Important requirements and contracts have been considered.
-- Suspected substantive findings have sufficient supporting evidence or are explicitly marked unconfirmed.
-- Material risks within the assigned scope have been assessed.
-- Unreviewed areas and remaining uncertainty are disclosed.
-
-The Reviewer does not need exhaustive knowledge of unrelated modules or the entire repository.
-
-When a potential issue depends on external behavior, inspect the relevant contract or source only to the extent necessary to verify the concern.
-
-If a finding cannot be confirmed within scope, report the uncertainty instead of extending investigation indefinitely.
-
-### 5.5 Review Completion Criteria
+### 5.6 Review Completion Criteria
 
 A review is complete when:
+- The assigned change and relevant context have been examined.
+- Material correctness and compatibility risks have been assessed.
+- Findings are evidence-backed and actionable.
+- Blocking and material findings have been reported.
+- Remaining comments are non-blocking or out of scope.
+- No material unresolved question prevents a reliable review conclusion.
 
-- The assigned changes have been inspected.
-- Relevant acceptance criteria and important contracts have been considered.
-- Substantive findings are actionable and evidence-based.
-- Findings have been classified.
-- Important limitations and unreviewed areas are disclosed.
-- A clear review disposition is provided.
+A review does not need to prove the absence of every hypothetical defect.
 
-Possible dispositions:
+### 5.7 Avoid Review Loops
 
-- **Approve:** no blocking or material unresolved findings within the assigned scope.
-- **Approve with non-blocking concerns:** acceptance criteria are satisfied, but optional improvements remain.
-- **Request changes:** a blocking issue or unresolved material risk requires action.
+Do not repeat a review simply because another review might discover another possible improvement.
 
-Follow repository-specific conventions when they differ.
+After remediation:
+- Re-examine the affected code.
+- Verify the reported finding has been addressed.
+- Check relevant adjacent behavior for regressions.
+- Reopen broader review only when new material evidence justifies it.
 
-### 5.6 Avoid Review Loops
+Do not require a full review cycle for every localized correction.
 
-Do not reopen a completed review merely because additional improvements are imaginable.
+### 5.8 Reviewer Boundaries
 
-Reopen review only when:
+The Reviewer should not:
+- Implement fixes by default.
+- Treat style preferences as blocking defects.
+- Report hypothetical risks without a credible mechanism or impact.
+- Expand scope without justification.
+- Repeat completed review work without new evidence.
+- Treat the absence of findings as proof that the entire system is defect-free.
 
-- A material change affects the reviewed scope.
-- A previous blocking or material finding remains unresolved.
-- New evidence invalidates an earlier conclusion.
-- A material risk was explicitly left unresolved.
-- Original acceptance criteria were not actually assessed.
+### 5.9 Reviewer Deliverable
 
-Non-blocking suggestions must not indefinitely prevent completion.
+Report:
+1. Scope reviewed.
+2. Overall review assessment.
+3. Findings, classified by severity.
+4. Evidence and affected locations.
+5. Impact and remediation suggestions.
+6. Areas not reviewed or limitations.
+7. Whether review completion criteria are satisfied.
 
-The Reviewer must distinguish between:
-
-- A defect that prevents acceptance.
-- A material risk requiring a decision.
-- An optional improvement that can be recorded for future work.
-
-### 5.7 Reviewer Boundaries
-
-The Reviewer owns the quality of the independent assessment.
-
-Do not silently become a second Developer.
-
-Do not demand changes solely because another implementation would be preferable.
-
-Do not duplicate Tester work unless a focused check is needed to substantiate a review finding.
-
-If no substantive issues are found, state that conclusion together with the review scope and limitations. Never claim universal absence of defects.
-
-### 5.8 Expected Deliverable
-
-Provide:
-
-- Findings ordered by importance.
-- File and code locations.
-- Evidence, impact, and triggering conditions.
-- Suggested corrections where appropriate.
-- Areas reviewed and checks performed.
-- Unreviewed areas and remaining risks.
-- Final disposition.
+If no material findings are identified, state that clearly and describe the scope actually reviewed.
 
 ## 6. Role Handoffs
 
-When one role's output becomes another role's input, transfer enough information for the receiving role to proceed without unnecessary rediscovery.
+Role handoffs must preserve evidence, ownership, and the current execution state.
 
-### 6.1 Developer to Tester
+### 6.1 Developer → Tester
 
-Provide:
+Provide implemented behavior, relevant changed files, requirements addressed, important interfaces and assumptions, tests already executed, known limitations, and expected behavior to verify.
 
-- Actual implementation or change reference.
-- Requirements and acceptance criteria.
-- Changed interfaces and behavior.
-- Test entry points and setup requirements.
-- Known assumptions, limitations, and failures.
-- Development checks already executed.
+The Tester should independently derive and execute required verification.
 
-The Tester independently assesses behavior. Developer-reported results are context, not proof of independent verification.
+### 6.2 Developer → Reviewer
 
-If implementation is still evolving, identify the exact available revision or state.
+Provide objective and requirements, actual change summary, changed files and relevant interfaces, important design decisions, known risks or limitations, and validation already performed.
 
-### 6.2 Developer to Reviewer
+The Reviewer must inspect the actual diff independently.
 
-Provide:
+### 6.3 Tester or Reviewer → Developer
 
-- Actual diff or change reference.
-- Intended behavior and acceptance criteria.
-- Relevant interface and compatibility constraints.
-- Important implementation decisions.
-- Known risks and unresolved questions.
-- Available validation evidence.
+When a material issue is found, provide the specific finding, evidence and location, expected versus actual behavior where applicable, impact and severity, reproduction or reasoning, and expected remediation outcome.
 
-The Reviewer independently examines the actual changes.
+The Developer should address the finding within the assigned scope and report the resulting change.
 
-A Developer's explanation must not replace inspection of the code.
+### 6.4 Remediation → Verification
 
-### 6.3 Tester or Reviewer to Developer
+After remediation, identify which behavior changed, re-run tests relevant to the finding, re-check affected contracts and regression-sensitive behavior, and repeat review only for the affected scope or new material risks.
 
-Provide:
-
-- Specific defect or concern.
-- Relevant requirement or contract.
-- File and code location where applicable.
-- Reproduction steps or triggering conditions.
-- Expected versus observed behavior.
-- Supporting evidence and impact.
-- Suggested correction where clear.
-
-The Developer addresses accepted findings within the assigned remediation scope.
-
-### 6.4 Remediation to Verification
-
-After a fix:
-
-1. Identify which original finding the fix addresses.
-2. Execute the relevant tests or checks again.
-3. Confirm whether the observed problem is resolved.
-4. Re-review the affected area when warranted.
-5. Report any remaining failure or uncertainty.
-
-Do not automatically repeat the entire review or test suite when a focused re-verification is sufficient.
+Verification must correspond to the actual remediated implementation.
 
 ## 7. Role Composition
 
-The roles can be used independently or combined according to task needs.
+Roles are independently assignable and composable. They are not a mandatory three-worker pipeline.
 
-### Developer Only
-
-For small, low-risk changes where direct implementation validation is sufficient.
-
-### Developer + Tester
-
-For meaningful behavioral requirements, regression risks, or independent test assessment.
-
-Test design may begin during implementation. Final implementation-dependent testing requires the actual relevant change.
-
-### Developer + Reviewer
-
-For changes where independent inspection of correctness, design, compatibility, or security is valuable.
-
-The Reviewer may inspect a stable partial diff and reassess material changes before final disposition.
-
-### Developer + Tester + Reviewer
-
-For changes where both behavioral testing and independent code review materially improve confidence.
-
-The Tester and Reviewer have different objectives and must provide distinct evidence.
-
-They may work concurrently when their inputs are sufficiently stable.
-
-### Independent Tester or Reviewer
-
-Testing or reviewing existing code does not require a Developer assignment when no implementation change is requested.
-
-Do not invoke all roles mechanically.
+- **Developer Only:** Appropriate when implementation is small, bounded, and low-risk. Developer implements and performs relevant validation.
+- **Developer + Tester:** Appropriate when behavior needs explicit test coverage or regression verification. Tester independently checks implementation against expected behavior.
+- **Developer + Reviewer:** Appropriate when design, compatibility, correctness, or security risks justify independent inspection. Reviewer evaluates actual implementation and reports material findings.
+- **Developer + Tester + Reviewer:** Appropriate for complex or high-risk work. Testing and review can run in parallel when both can independently inspect a stable implementation.
+- **Tester and/or Reviewer Without Developer:** Appropriate when the assignment concerns an existing implementation, test coverage, or independent assessment. The role remains within scope and reports findings rather than silently taking ownership of unrelated implementation work.
 
 ## 8. Assignment and Reporting Contract
 
-Every role assignment should have:
+Each worker must understand the assignment before execution.
 
-- A clear objective.
-- Relevant requirements and acceptance criteria.
-- A bounded scope.
-- Known facts and important context.
-- Specific unresolved questions, if any.
-- Constraints and ownership boundaries.
-- Expected outputs.
-- Relevant dependencies.
-- Investigation exit criteria.
-- Required validation and completion criteria.
+A complete assignment should specify label, role, objective, context, known facts and evidence, open questions, scope, out-of-scope boundaries, constraints, expected output, acceptance criteria, dependencies, ownership, investigation exit criteria, and validation expectations.
 
-Every role report should include:
+If essential information is missing, identify it specifically. Do not compensate for an unclear assignment by performing unbounded investigation.
 
-- **Status:** complete, blocked, or incomplete.
-- **Outcome:** what was produced or established.
-- **Artifacts:** relevant changes, tests, or findings.
-- **Evidence:** actual execution results or supporting references.
-- **Limitations:** assumptions, unresolved issues, and unverified areas.
-- **Next action:** a concrete dependency or remediation requirement, if any.
-
-Do not use repeated status narration as a substitute for a deliverable.
+Every final report must distinguish work completed, evidence obtained, validation performed, findings or failures, remaining uncertainty, and uncompleted work.
 
 ## 9. Definition of Success
 
-A role assignment succeeds when:
+Engineering work succeeds when:
+- The assigned objective is satisfied.
+- Changes remain within scope.
+- Relevant contracts and constraints are preserved.
+- Required verification is supported by actual evidence.
+- Material risks and limitations are communicated.
+- The output can be evaluated by the Coordinator.
+- The work is ready for integration or has clearly reported why it is not.
 
-- Its objective and acceptance criteria have been addressed.
-- Its output is usable by the intended recipient.
-- Its conclusions are supported by evidence.
-- Its investigation has reached a reasonable exit point.
-- Its verification or review has a clear completion disposition.
-- Ownership boundaries have been respected.
-- Limitations and unresolved findings are explicit.
-- Required handoffs contain sufficient information for the next step.
+The goal is not maximum investigation, maximum code changes, maximum test count, or maximum review comments.
 
-Role specialization exists to improve engineering outcomes through focused execution, bounded investigation, and independent evidence, not to increase agent count or duplicate work.
+**The goal is sufficient evidence, correct engineering decisions, focused execution, and verifiable deliverables.**
 
-## 10. Skill Availability
+## 10. Skill Availability and Execution
 
-This Skill defines role-specific execution procedures.
+This Skill defines role procedures but does not guarantee automatic injection into every worker's context.
 
-Its existence does not prove that Jcode automatically loads it into every session or delegated worker.
+The Coordinator must ensure each worker receives the instructions necessary for its assignment.
 
-When the Skill is confirmed to be available, follow the relevant role section.
+When Skill availability or inheritance is uncertain:
+- Include the essential role procedure in the assignment.
+- Provide the relevant scope and acceptance criteria.
+- Do not assume that a worker has read this document.
 
-When availability is uncertain, include the essential role instructions, investigation boundaries, expected deliverables, and acceptance criteria directly in the assignment.
-
-Never claim that a worker followed instructions that were not available to it.
+Workers must follow the actual runtime capabilities and tool restrictions of the active Jcode version.
