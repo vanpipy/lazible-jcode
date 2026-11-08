@@ -95,19 +95,48 @@ assert_not_contains() {
     fi
 }
 
-# The fingerprint of a sandbox tree: every path with its type and size.
+# assert_ne <label> <a> <b>
+#
+# The two values must DIFFER. Used where equality is the failure.
+assert_ne() {
+    if [[ "$2" != "$3" ]]; then
+        ok "$1"
+    else
+        bad "$1" "expected the two values to differ" "both: $2"
+    fi
+}
+
+# The fingerprint of a sandbox tree: every path with its type and content.
 # Used to prove that a dry-run changed nothing.
+#
+# File CONTENT is hashed, not just the size. A size-only fingerprint misses
+# any change that happens to keep the same length, and state.json is the
+# obvious case: it carries a timestamp, so re-running install rewrites it
+# with a different installed_at of exactly the same length.
+#
+# Symlinks are recorded by their target AND by what they point at. A symlink
+# swapped for a directory of the same name would otherwise look unchanged,
+# and a symlink retargeted at different content would too.
 tree_fingerprint() {
     local root="$1"
-    if [[ ! -e "$root" ]]; then
+    if [[ ! -e "$root" && ! -L "$root" ]]; then
         echo "(absent)"
         return 0
     fi
     ( cd "$root" && find . -mindepth 1 | sort | while read -r p; do
-        if [[ -d "$p" ]]; then
+        if [[ -L "$p" ]]; then
+            echo "l $p -> $(readlink "$p")"
+            # The link's target content counts too, so that a link
+            # retargeted at different content is a visible change.
+            if [[ -f "$p" ]]; then
+                echo "l $p content $(sha256sum < "$p" | cut -d' ' -f1)"
+            elif [[ -d "$p" ]]; then
+                echo "l $p dir $(cd "$p" && find . -mindepth 1 -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)"
+            fi
+        elif [[ -d "$p" ]]; then
             echo "d $p"
         elif [[ -f "$p" ]]; then
-            echo "f $p $(stat -c %s "$p")"
+            echo "f $p $(sha256sum < "$p" | cut -d' ' -f1)"
         else
             echo "? $p"
         fi
@@ -116,6 +145,89 @@ tree_fingerprint() {
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lazible-jcode-test.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
+
+# ---------------------------------------------------------------------------
+# 0. the fingerprint itself
+#
+# The fingerprint is what every "nothing changed" claim rests on, so it is
+# checked on its own terms first. A fingerprint that cannot see a change
+# would make every other check vacuous.
+# ---------------------------------------------------------------------------
+
+echo "lazible-jcode installer tests"
+echo ""
+echo "=== the fingerprint detects change ==="
+
+FP="$SANDBOX/fingerprint"
+mkdir -p "$FP/dir"
+printf 'hello' > "$FP/file.txt"
+
+fp_a="$(tree_fingerprint "$FP")"
+
+# Same length, different content. A size-only fingerprint would miss this,
+# and state.json's timestamp is exactly this shape.
+printf 'world' > "$FP/file.txt"
+fp_b="$(tree_fingerprint "$FP")"
+assert_ne "the fingerprint sees a same-length content change" "$fp_a" "$fp_b"
+
+# A different length.
+printf 'world and more' > "$FP/file.txt"
+fp_c="$(tree_fingerprint "$FP")"
+assert_ne "the fingerprint sees a length change" "$fp_b" "$fp_c"
+
+# An unchanged tree is unchanged.
+fp_d="$(tree_fingerprint "$FP")"
+assert_eq "the fingerprint is stable on an unchanged tree" "$fp_c" "$fp_d"
+
+# A retargeted symlink.
+mkdir -p "$FP/target1" "$FP/target2"
+printf 'one' > "$FP/target1/a.txt"
+printf 'two' > "$FP/target2/b.txt"
+ln -s "$FP/target1" "$FP/link"
+fp_e="$(tree_fingerprint "$FP")"
+rm "$FP/link"
+ln -s "$FP/target2" "$FP/link"
+fp_f="$(tree_fingerprint "$FP")"
+assert_ne "the fingerprint sees a retargeted symlink" "$fp_e" "$fp_f"
+
+# A symlink replaced by a real directory of the same name.
+mkdir -p "$FP/real"
+printf 'x' > "$FP/real/f.txt"
+fp_g="$(tree_fingerprint "$FP")"
+rm "$FP/link"
+mkdir "$FP/link"
+printf 'x' > "$FP/link/f.txt"
+fp_h="$(tree_fingerprint "$FP")"
+assert_ne "the fingerprint sees a symlink replaced by a directory" "$fp_g" "$fp_h"
+
+# Two DIFFERENT targets with IDENTICAL content. The content of both
+# targets is already inside the tree, so the target's path is the only
+# thing that distinguishes them. A fingerprint that dropped the link
+# target would call these two trees the same.
+mkdir -p "$FP/twins/a" "$FP/twins/b"
+printf 'same' > "$FP/twins/a/x.txt"
+printf 'same' > "$FP/twins/b/x.txt"
+ln -s "$FP/twins/a" "$FP/twin"
+fp_i="$(tree_fingerprint "$FP")"
+rm "$FP/twin"
+ln -s "$FP/twins/b" "$FP/twin"
+fp_j="$(tree_fingerprint "$FP")"
+assert_ne "the fingerprint sees a retarget onto an identical-content target" \
+    "$fp_i" "$fp_j"
+
+# A symlink whose target lives OUTSIDE the tree. The tree's own entries
+# cannot describe what the link points at, so the fingerprint has to
+# follow the link. Otherwise a change behind the link is invisible.
+OUTSIDE="$SANDBOX/outside"
+mkdir -p "$OUTSIDE/target"
+printf 'v1' > "$OUTSIDE/target/x.txt"
+mkdir -p "$FP/links"
+ln -s "$OUTSIDE/target" "$FP/links/out"
+fp_k="$(tree_fingerprint "$FP")"
+printf 'v2' > "$OUTSIDE/target/x.txt"
+fp_l="$(tree_fingerprint "$FP")"
+assert_ne "the fingerprint sees a change behind a link out of the tree" \
+    "$fp_k" "$fp_l"
 
 SBHOME="$SANDBOX/home"
 SBSTATE="$SANDBOX/state"
@@ -565,7 +677,10 @@ assert_contains "uninstall --full --dry-run announces the dry-run" \
     "DRY-RUN" "$full_dry_out"
 
 # ---------------------------------------------------------------------------
-# 16. the repo itself is never written to
+# 17. the repo is read-only to the installer
+#
+# These use a THROWAWAY COPY of the repo as the symlink target, never the
+# real one. A test must never be able to damage the repository it runs in.
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -578,6 +693,417 @@ set +e
 set -e
 repo_after="$(tree_fingerprint "$REPO")"
 assert_eq "the installer never writes to the repo" "$repo_before" "$repo_after"
+
+# ---------------------------------------------------------------------------
+# 18. the repo boundary holds against symlinks
+#
+# A symlinked ~/.jcode redirects every write below it. If it points at the
+# repo, install would overwrite the very files it copies from, and uninstall
+# would delete them. Both scripts must refuse.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the repo boundary holds against symlinks ==="
+
+# A throwaway copy of the repo, used as the "repo" that the symlinks point
+# at. A test must never be able to damage the repository it runs in, so the
+# real repo is never the target of a symlink here.
+mkdir -p "$SANDBOX/boundary"
+BOUNDARY_REPO="$SANDBOX/boundary/repo"
+mkdir -p "$BOUNDARY_REPO/config/skills/swarm-engineering"
+cp "$REPO/config/config.toml" "$BOUNDARY_REPO/config/config.toml"
+cp "$REPO/config/skills/swarm-engineering/SKILL.md" \
+   "$BOUNDARY_REPO/config/skills/swarm-engineering/SKILL.md"
+mkdir -p "$BOUNDARY_REPO/scripts"
+cp "$REPO/scripts/install" "$REPO/scripts/uninstall" "$REPO/scripts/common.sh" \
+   "$BOUNDARY_REPO/scripts/"
+
+# A real directory inside the repo, used as the target of the redirected
+# state path. It has to EXIST: a dangling symlink would be caught by the
+# preflight's own dangling-symlink check, and the test would then pass for
+# the wrong reason instead of proving the repo boundary.
+mkdir -p "$BOUNDARY_REPO/state-in-repo"
+boundary_before="$(tree_fingerprint "$BOUNDARY_REPO")"
+
+# Case 1: ~/.jcode is a symlink into the repo.
+mkdir -p "$SANDBOX/b1/home" "$SANDBOX/b1/state"
+ln -s "$BOUNDARY_REPO" "$SANDBOX/b1/home/.jcode"
+set +e
+b1_out="$(HOME="$SANDBOX/b1/home" XDG_STATE_HOME="$SANDBOX/b1/state" \
+    "$BOUNDARY_REPO/scripts/install" 2>&1)"
+b1_rc=$?
+set -e
+assert_contains "install refuses a ~/.jcode symlinked into the repo" \
+    "resolves inside this repo" "$b1_out"
+assert_eq "install exits non-zero when the target is inside the repo" \
+    "1" "$b1_rc"
+
+# Case 2: ~/.jcode/skills is a symlink into the repo.
+mkdir -p "$SANDBOX/b2/home/.jcode" "$SANDBOX/b2/state"
+ln -s "$BOUNDARY_REPO/config" "$SANDBOX/b2/home/.jcode/skills"
+set +e
+b2_out="$(HOME="$SANDBOX/b2/home" XDG_STATE_HOME="$SANDBOX/b2/state" \
+    "$BOUNDARY_REPO/scripts/install" 2>&1)"
+b2_rc=$?
+set -e
+assert_contains "install refuses a skills dir symlinked into the repo" \
+    "resolves inside this repo" "$b2_out"
+assert_eq "install exits non-zero when skills point into the repo" \
+    "1" "$b2_rc"
+
+# Case 3: uninstall --full with ~/.jcode symlinked into the repo.
+mkdir -p "$SANDBOX/b3/home" "$SANDBOX/b3/state"
+ln -s "$BOUNDARY_REPO" "$SANDBOX/b3/home/.jcode"
+set +e
+b3_out="$(HOME="$SANDBOX/b3/home" XDG_STATE_HOME="$SANDBOX/b3/state" \
+    "$BOUNDARY_REPO/scripts/uninstall" --full --yes 2>&1)"
+b3_rc=$?
+set -e
+assert_contains "uninstall refuses to delete from inside the repo" \
+    "resolves inside this repo" "$b3_out"
+assert_eq "uninstall exits non-zero when the target is inside the repo" \
+    "1" "$b3_rc"
+
+# Case 4: the dry-run must predict the refusal, not preview a deletion.
+set +e
+b4_out="$(HOME="$SANDBOX/b3/home" XDG_STATE_HOME="$SANDBOX/b3/state" \
+    "$BOUNDARY_REPO/scripts/uninstall" --full --dry-run 2>&1)"
+b4_rc=$?
+set -e
+assert_contains "uninstall --dry-run predicts the repo-boundary refusal" \
+    "resolves inside this repo" "$b4_out"
+assert_eq "uninstall --dry-run exits non-zero inside the repo" \
+    "1" "$b4_rc"
+
+# Case 5: the state path is redirected into the repo.
+#
+# The redirect target EXISTS, so the preflight's dangling-symlink check
+# cannot catch this. Only the repo boundary can.
+mkdir -p "$SANDBOX/b6/home"
+ln -s "$BOUNDARY_REPO/state-in-repo" "$SANDBOX/b6/state"
+set +e
+b6_out="$(HOME="$SANDBOX/b6/home" XDG_STATE_HOME="$SANDBOX/b6/state" \
+    "$BOUNDARY_REPO/scripts/install" 2>&1)"
+b6_rc=$?
+set -e
+assert_contains "install refuses a state path redirected into the repo" \
+    "resolves inside this repo" "$b6_out"
+assert_eq "install exits non-zero when the state path is inside the repo" \
+    "1" "$b6_rc"
+
+# And the refusal must have come BEFORE anything was created. If the state
+# directory were made first, the mkdir would have put a directory inside
+# the repo on the way out.
+boundary_mid="$(tree_fingerprint "$BOUNDARY_REPO")"
+assert_eq "a refused state path creates nothing inside the repo" \
+    "$boundary_before" "$boundary_mid"
+
+# Case 5b: only the STATE FILE is redirected into the repo, while the
+# state DIRECTORY stays outside it.
+#
+# The directory is guarded separately, so this case is the only one that
+# can prove the state file is guarded on its own. Without it, dropping
+# the state file from the guard would change nothing observable.
+mkdir -p "$SANDBOX/b6b/home" "$SANDBOX/b6b/state/lazible-jcode"
+ln -s "$BOUNDARY_REPO/state-in-repo/state.json" \
+    "$SANDBOX/b6b/state/lazible-jcode/state.json"
+set +e
+b6b_out="$(HOME="$SANDBOX/b6b/home" XDG_STATE_HOME="$SANDBOX/b6b/state" \
+    "$BOUNDARY_REPO/scripts/install" 2>&1)"
+b6b_rc=$?
+set -e
+assert_contains "install refuses a state FILE redirected into the repo" \
+    "resolves inside this repo" "$b6b_out"
+assert_eq "install exits non-zero when the state file is inside the repo" \
+    "1" "$b6b_rc"
+if [[ -e "$BOUNDARY_REPO/state-in-repo/state.json" ]]; then
+    bad "a refused state file writes nothing into the repo" \
+        "state.json was written into the repo"
+else
+    ok "a refused state file writes nothing into the repo"
+fi
+
+# Case 6: only the skills directory is redirected into the repo. The
+# config path is fine, so only the skills guard can catch this.
+mkdir -p "$SANDBOX/b7/home/.jcode"
+ln -s "$BOUNDARY_REPO/config/skills" "$SANDBOX/b7/home/.jcode/skills"
+set +e
+b7_out="$(HOME="$SANDBOX/b7/home" XDG_STATE_HOME="$SANDBOX/b7/state" \
+    "$BOUNDARY_REPO/scripts/install" 2>&1)"
+b7_rc=$?
+set -e
+assert_contains "install refuses a skills dir redirected into the repo" \
+    "resolves inside this repo" "$b7_out"
+assert_eq "install exits non-zero when the skills dir is inside the repo" \
+    "1" "$b7_rc"
+
+# The repo must be byte-identical after all of that.
+boundary_after="$(tree_fingerprint "$BOUNDARY_REPO")"
+assert_eq "the repo is byte-identical after every symlinked attempt" \
+    "$boundary_before" "$boundary_after"
+
+# Case 7: a refused uninstall must not have removed anything.
+#
+# The guard has to run BEFORE anything is deleted. If it only ran when the
+# uninstaller reached the offending path, the state file would already be
+# gone by then, and a refused uninstall would leave the machine half
+# uninstalled.
+mkdir -p "$SANDBOX/b8/home" "$SANDBOX/b8/state"
+HOME="$SANDBOX/b8/home" XDG_STATE_HOME="$SANDBOX/b8/state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+rm -rf "$SANDBOX/b8/home/.jcode/skills"
+ln -s "$BOUNDARY_REPO/config/skills" "$SANDBOX/b8/home/.jcode/skills"
+set +e
+HOME="$SANDBOX/b8/home" XDG_STATE_HOME="$SANDBOX/b8/state" \
+    "$BOUNDARY_REPO/scripts/uninstall" --full --yes >/dev/null 2>&1
+b8_rc=$?
+set -e
+assert_eq "a refused uninstall exits non-zero" "1" "$b8_rc"
+if [[ -f "$SANDBOX/b8/state/lazible-jcode/state.json" ]]; then
+    ok "a refused uninstall removes nothing, not even the state file"
+else
+    bad "a refused uninstall removes nothing, not even the state file" \
+        "the state file was deleted before the refusal"
+fi
+if [[ -f "$SANDBOX/b8/home/.jcode/config.toml" ]]; then
+    ok "a refused uninstall leaves the config in place"
+else
+    bad "a refused uninstall leaves the config in place" "the config was removed"
+fi
+
+# ---------------------------------------------------------------------------
+# 19. the shared guard itself
+#
+# The guard lives in common.sh so that both scripts enforce the same rule.
+# These check the rule directly, which pins down exactly which paths are
+# covered rather than only checking the ones a script happens to use.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the shared repo guard ==="
+
+# A tiny harness that sources common.sh and calls the guard.
+#
+# It has to live inside the repo copy, because common.sh derives REPO from
+# its own location. Sourced from elsewhere, REPO would be some unrelated
+# directory and every path would look like it was inside the repo.
+cat > "$BOUNDARY_REPO/scripts/guard-harness.sh" <<'GUARD'
+#!/usr/bin/env bash
+set -uo pipefail
+. "$(dirname "$0")/common.sh"
+guard_outside_repo "$@"
+GUARD
+
+guard_rc_of() {
+    # guard_rc_of <path> -> the exit code of the guard for that path
+    local p="$1" rc
+    set +e
+    bash "$BOUNDARY_REPO/scripts/guard-harness.sh" "$p" >/dev/null 2>&1
+    rc=$?
+    set -e
+    echo "$rc"
+}
+
+assert_eq "the guard accepts a path outside the repo" "0" \
+    "$(guard_rc_of "$SANDBOX/b5/home/config.toml")"
+assert_eq "the guard rejects a path inside the repo" "1" \
+    "$(guard_rc_of "$BOUNDARY_REPO/config/config.toml")"
+assert_eq "the guard rejects a path inside the repo's subdirectory" "1" \
+    "$(guard_rc_of "$BOUNDARY_REPO/config/skills")"
+assert_eq "the guard rejects the repo root itself" "1" \
+    "$(guard_rc_of "$BOUNDARY_REPO")"
+
+# A symlink that points into the repo must be rejected too, even though
+# the path itself is not under the repo.
+mkdir -p "$SANDBOX/g/home"
+ln -s "$BOUNDARY_REPO/config" "$SANDBOX/g/link-to-repo"
+assert_eq "the guard rejects a symlink that points into the repo" "1" \
+    "$(guard_rc_of "$SANDBOX/g/link-to-repo/config.toml")"
+
+# A sibling directory whose name merely starts with the repo's name must
+# NOT be rejected. That would make the guard refuse legitimate paths.
+mkdir -p "$SANDBOX/repo-not-inside"
+assert_eq "the guard accepts a sibling directory with a similar name" "0" \
+    "$(guard_rc_of "$SANDBOX/repo-not-inside/config.toml")"
+
+# A normal install must still work, so the guard is not simply refusing
+# everything.
+mkdir -p "$SANDBOX/b5/home" "$SANDBOX/b5/state"
+set +e
+HOME="$SANDBOX/b5/home" XDG_STATE_HOME="$SANDBOX/b5/state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+b5_rc=$?
+set -e
+assert_eq "install still works when nothing points into the repo" \
+    "0" "$b5_rc"
+
+# ---------------------------------------------------------------------------
+# 20. a real install never writes to the repo
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== a real install never writes to the repo ==="
+
+repo_before_real="$(tree_fingerprint "$REPO")"
+mkdir -p "$SANDBOX/real/home" "$SANDBOX/real/state"
+set +e
+HOME="$SANDBOX/real/home" XDG_STATE_HOME="$SANDBOX/real/state" \
+    "$REPO/scripts/install" >/dev/null 2>&1
+real_rc=$?
+set -e
+repo_after_real="$(tree_fingerprint "$REPO")"
+assert_eq "a real install exits 0" "0" "$real_rc"
+assert_eq "a real install never writes to the repo" \
+    "$repo_before_real" "$repo_after_real"
+
+# ---------------------------------------------------------------------------
+# 21. install is genuinely idempotent
+#
+# The fingerprint hashes file CONTENT, so this is a real check. It was
+# vacuous before: state.json carried a fresh timestamp on every run, and
+# the old fingerprint only compared file SIZES, which stayed identical.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== install is idempotent ==="
+
+# These installs run against the throwaway repo copy and write into their
+# OWN sandbox, so the fingerprint has to cover that sandbox, not the
+# suite's top-level one.
+idem_home="$SANDBOX/real/home"
+idem_state="$SANDBOX/real/state"
+idem_state_file="$idem_state/lazible-jcode/state.json"
+idem_fingerprint() {
+    tree_fingerprint "$idem_home"
+    tree_fingerprint "$idem_state"
+}
+
+# The recorded timestamp has ONE SECOND of resolution, so two installs
+# inside the same second are indistinguishable by construction. Every
+# timestamp comparison below therefore waits for the clock to move on.
+# Without that wait the check would pass whether or not the timestamp
+# logic works.
+wait_for_next_second() {
+    local now
+    now="$(date +%S)"
+    while [[ "$(date +%S)" == "$now" ]]; do
+        sleep 0.05
+    done
+}
+
+idem_install() {
+    HOME="$idem_home" XDG_STATE_HOME="$idem_state" \
+        "$1/scripts/install" >/dev/null 2>&1
+}
+
+idem_before="$(idem_fingerprint)"
+set +e
+idem_install "$REPO"
+idem_rc=$?
+set -e
+idem_after="$(idem_fingerprint)"
+assert_eq "a second install exits 0" "0" "$idem_rc"
+assert_eq "a second install changes nothing, content included" \
+    "$idem_before" "$idem_after"
+
+# The timestamp must HOLD when nothing changed. That is what makes a
+# second install a no-op.
+installed_at_first="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+wait_for_next_second
+set +e
+idem_install "$REPO"
+set -e
+installed_at_second="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+assert_eq "the recorded timestamp holds when nothing changed" \
+    "$installed_at_first" "$installed_at_second"
+
+# The timestamp must MOVE when the config actually changes. Otherwise
+# "installed_at" would mean "when the script last ran", and the state file
+# would be rewritten on every install for no reason. This runs against the
+# throwaway repo copy, so the real config is never touched.
+cp "$BOUNDARY_REPO/config/config.toml" "$SANDBOX/idem-config.toml"
+printf '\n# a change\n' >> "$BOUNDARY_REPO/config/config.toml"
+wait_for_next_second
+set +e
+idem_install "$BOUNDARY_REPO"
+set -e
+installed_at_changed="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+assert_ne "the recorded timestamp moves when the config changes" \
+    "$installed_at_first" "$installed_at_changed"
+
+# And with the config unchanged again, the timestamp must hold. That is
+# what makes a second install after a change a no-op too.
+wait_for_next_second
+changed_before="$(idem_fingerprint)"
+set +e
+idem_install "$BOUNDARY_REPO"
+set -e
+changed_after="$(idem_fingerprint)"
+assert_eq "a second install after a config change is still a no-op" \
+    "$changed_before" "$changed_after"
+installed_at_stable="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+assert_eq "the recorded timestamp holds after the config settled" \
+    "$installed_at_changed" "$installed_at_stable"
+
+# The recorded hash has to track the config that is actually on disk.
+config_sha="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['config_sha256'])")"
+real_sha="$(sha256sum "$BOUNDARY_REPO/config/config.toml" | cut -d' ' -f1)"
+assert_eq "the recorded config hash matches the config on disk" \
+    "$real_sha" "$config_sha"
+
+# And the recorded skill list has to match the skills in the repo.
+recorded_skills="$(python3 -c \
+    "import json;print(' '.join(json.load(open('$idem_state_file'))['skills']))")"
+repo_skills="$(cd "$BOUNDARY_REPO/config/skills" && find . -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "the recorded skill list matches the skills in the repo" \
+    "$repo_skills" "$recorded_skills"
+
+# ---------------------------------------------------------------------------
+# 22. the uninstall confirmation and the state path fallback
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== uninstall confirmation and the state path fallback ==="
+
+# With no --yes and no --dry-run, the script asks. At EOF it must abort
+# without removing anything.
+mkdir -p "$SANDBOX/confirm/home" "$SANDBOX/confirm/state"
+cp "$REPO/config/config.toml" "$SANDBOX/confirm/home/config.toml"
+set +e
+confirm_out="$(HOME="$SANDBOX/confirm/home" XDG_STATE_HOME="$SANDBOX/confirm/state" \
+    "$REPO/scripts/uninstall" --full < /dev/null 2>&1)"
+confirm_rc=$?
+set -e
+assert_contains "uninstall aborts when the confirmation is not given" \
+    "aborted." "$confirm_out"
+assert_eq "uninstall exits 0 when the user declines" "0" "$confirm_rc"
+if [[ -f "$SANDBOX/confirm/home/config.toml" ]]; then
+    ok "a declined uninstall removes nothing"
+else
+    bad "a declined uninstall removes nothing" "config.toml was removed"
+fi
+
+# The state directory falls back to $HOME/.local/state when XDG_STATE_HOME
+# is not set. The rest of the suite always sets it, so this path would
+# otherwise never run.
+mkdir -p "$SANDBOX/fallback/home"
+set +e
+HOME="$SANDBOX/fallback/home" XDG_STATE_HOME="" \
+    "$REPO/scripts/install" >/dev/null 2>&1
+fallback_rc=$?
+set -e
+assert_eq "install works without XDG_STATE_HOME" "0" "$fallback_rc"
+if [[ -f "$SANDBOX/fallback/home/.local/state/lazible-jcode/state.json" ]]; then
+    ok "the state file falls back to \$HOME/.local/state"
+else
+    bad "the state file falls back to \$HOME/.local/state" \
+        "not found under $SANDBOX/fallback/home/.local/state"
+fi
 
 # ---------------------------------------------------------------------------
 

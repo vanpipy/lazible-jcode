@@ -49,12 +49,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-err()  { echo "[install] ERR: $*" >&2; }
 section() { echo ""; echo "=== $* ==="; }
 
 copy_file() {
     # copy_file <src> <dst> <mode>
     local src="$1" dst="$2" mode="$3"
+
+    # The repo holds the source of truth. Writing into it, even by way of a
+    # symlink, would overwrite the config this install is copying FROM.
+    guard_outside_repo "$dst"
+
     if [[ $dry_run -eq 1 ]]; then
         echo "  would install: $src -> $dst"
         return 0
@@ -78,14 +82,13 @@ phase_preflight() {
     [[ -f "$REPO/config/config.toml" ]] || {
         err "missing $REPO/config/config.toml"; exit 1; }
 
-    local d
-    for d in "$HOME/.jcode" "$SKILLS_HOME" "$STATE_DIR"; do
-        # Check first, then create. Checking first means --dry-run and the
-        # real run fail with the same message instead of the real run
-        # failing later inside mkdir with a raw "File exists".
-        check_creatable_dir "$d"
-        [[ -d "$d" ]] || run_mkdir "$d"
-    done
+    # The repo boundary is checked FIRST, before anything is created.
+    #
+    # Order matters here. The mkdir loop below would create ~/.jcode/skills
+    # and the state directory, and if either path is a symlink into the repo
+    # that mkdir would put a directory inside the repo before the refusal
+    # ever ran. Checking first means a refusal leaves the repo untouched.
+    guard_outside_repo "$JCODE_CONFIG" "$SKILLS_HOME" "$STATE_DIR" "$STATE_FILE"
 
     # A symlinked config would let a write land in the repo base.
     if [[ -L "$JCODE_CONFIG" ]]; then
@@ -94,6 +97,15 @@ phase_preflight() {
         err "  rm $JCODE_CONFIG && cp $REPO/config/config.toml $JCODE_CONFIG"
         exit 1
     fi
+
+    local d
+    for d in "$HOME/.jcode" "$SKILLS_HOME" "$STATE_DIR"; do
+        # Check first, then create. Checking first means --dry-run and the
+        # real run fail with the same message instead of the real run
+        # failing later inside mkdir with a raw "File exists".
+        check_creatable_dir "$d"
+        [[ -d "$d" ]] || run_mkdir "$d"
+    done
 
     log "preflight ok"
 }
@@ -319,6 +331,11 @@ phase_finalize() {
         exit 0
     fi
 
+    # The state file lives outside the repo in normal use, but the same
+    # symlink hazard applies: a redirected state path must not put a file
+    # inside the repo.
+    guard_outside_repo "$STATE_FILE"
+
     mkdir -p "$STATE_DIR"
 
     python3 - "$STATE_FILE" "$REPO" <<'PY'
@@ -329,14 +346,37 @@ def sha(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
 
+config_sha = sha(os.path.join(repo, "config", "config.toml"))
+skills = sorted(
+    d for d in os.listdir(os.path.join(repo, "config", "skills"))
+    if os.path.isfile(os.path.join(repo, "config", "skills", d, "SKILL.md"))
+)
+
 data = {
-    "config_sha256": sha(os.path.join(repo, "config", "config.toml")),
-    "skills": sorted(
-        d for d in os.listdir(os.path.join(repo, "config", "skills"))
-        if os.path.isfile(os.path.join(repo, "config", "skills", d, "SKILL.md"))
-    ),
+    "config_sha256": config_sha,
+    "skills": skills,
     "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
 }
+
+# Keep the previous timestamp when nothing actually changed. "installed_at"
+# then means when THIS config was installed, not when a script last ran.
+# Without this, re-running install would rewrite the file every time and a
+# second install would never be a no-op.
+try:
+    with open(state_path) as f:
+        previous = json.load(f)
+except (OSError, ValueError):
+    previous = None
+
+if previous is not None:
+    same = (
+        previous.get("config_sha256") == config_sha
+        and previous.get("skills") == skills
+        and isinstance(previous.get("installed_at"), str)
+    )
+    if same:
+        data["installed_at"] = previous["installed_at"]
+
 with open(state_path, "w") as f:
     json.dump(data, f, indent=2, sort_keys=True)
     f.write("\n")

@@ -266,6 +266,46 @@ install keeps. It fails the same way and with the same message when a path
 is not creatable: a `~/.jcode` that is a regular file, a dangling symlink, or
 a home directory that cannot be written to.
 
+### The repo boundary
+
+This repo holds the source of truth. Neither script may write into it or
+delete from it, because a symlink in the way would turn a normal install into
+repo corruption, or a normal uninstall into data loss.
+
+So every path the scripts touch is resolved through any symlinks first and
+checked against the repo before anything happens. `~/.jcode/config.toml`,
+`~/.jcode/skills/`, the state directory and the state file are all covered,
+in both `install` and `uninstall`.
+
+The check runs before the first `mkdir`, not when the write happens. A
+refusal therefore leaves the repo byte-identical and creates nothing on the
+way out. `uninstall` checks every path it intends to remove up front, so a
+refusal cannot leave a half-finished uninstall behind with the state file
+already gone and the config still present.
+
+If a path does resolve into the repo, the scripts say so and tell you how to
+fix it:
+
+```
+[install] ERR: /home/you/.jcode/skills resolves inside this repo
+[install] ERR: install refuses to touch it. Fix the symlink first:
+[install] ERR:   rm /home/you/.jcode/skills && mkdir -p /home/you/.jcode/skills
+```
+
+A sibling directory whose name merely resembles the repo is not a match. The
+check compares resolved paths, so `~/Project/lazible-jcode-backup` is fine.
+
+### Running it twice
+
+A second install with nothing changed is a no-op. The config, the skills and
+the state file are all left byte-identical, and `state.json` keeps the
+timestamp of the install that actually wrote it rather than the time the
+script last ran.
+
+The timestamp only moves when the config or the skill list actually changed.
+So `installed_at` means "when this config was installed", which is what makes
+it worth recording.
+
 Check the current state without touching anything, using
 `./scripts/install --check`. It runs the same 5 checks and writes nothing at
 all, not even the state file. Unlike `--dry-run`, which previews an install
@@ -331,6 +371,9 @@ The jcode binary and `~/AGENTS.md` are never removed. `--full` does remove
 `~/.jcode/skills/swarm-engineering/`. jcode does not ship that skill, so
 this repo is its only source. To get it back, run `./scripts/install`.
 
+A refusal to touch the repo is checked before anything is removed, so
+`uninstall` either removes the whole set or removes nothing.
+
 ## Testing
 
 ```bash
@@ -352,6 +395,16 @@ nothing, and that `uninstall` never reaches the jcode binary.
 It also checks fidelity. For each shape of home directory, the `--dry-run`
 and the real install have to reach the same verdict, because a preview that
 promises a success the real run cannot deliver is worse than no preview.
+
+And it checks the repo boundary. The scripts are pointed at a throwaway copy
+of this repo with `~/.jcode` symlinked into it, and the suite asserts that
+the copy comes out byte-identical, that the scripts exit non-zero, and that
+a refused uninstall removes nothing at all.
+
+The fingerprint those checks rest on hashes file *content*, not file size.
+A size-only fingerprint misses any change that keeps the same length, and
+`state.json` is exactly that case: a different timestamp of exactly the same
+length.
 
 Every check has been shown to fail against the code it is meant to catch:
 each fix was reverted in a scratch copy and the suite was confirmed to fail

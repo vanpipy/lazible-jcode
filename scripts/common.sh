@@ -35,3 +35,42 @@ usage() {
 }
 
 log() { echo "[$SCRIPT_NAME] $*"; }
+
+err() { echo "[$SCRIPT_NAME] ERR: $*" >&2; }
+
+# Is "$1" inside this repo, once symlinks are resolved?
+#
+# The repo holds the source of truth. Neither script may write into it or
+# delete from it, because a symlink in the way would turn a normal install
+# into a repo corruption. The check resolves the path first, so a symlinked
+# ~/.jcode pointing back at the repo is caught too.
+#
+# readlink -m is used rather than -f: -f fails outright when a parent
+# component does not exist, and the paths checked here routinely do not exist
+# yet. -m resolves what it can and normalises the rest, which is exactly
+# what a "where would this land" question needs.
+inside_repo() {
+    local target resolved
+    target="$(readlink -m -- "$1" 2>/dev/null)" || return 1
+    resolved="$(readlink -m -- "$REPO" 2>/dev/null)" || return 1
+    [[ -n "$target" && -n "$resolved" ]] || return 1
+    [[ "$target" == "$resolved" || "$target" == "$resolved"/* ]]
+}
+
+# Refuse to touch any of the given paths, if any of them resolves inside
+# this repo.
+#
+# The check belongs here rather than in either script, because the two
+# scripts must agree on exactly what the rule is. One script protecting the
+# repo while the other does not is the failure mode this prevents.
+guard_outside_repo() {
+    local p
+    for p in "$@"; do
+        if inside_repo "$p"; then
+            err "$p resolves inside this repo"
+            err "$SCRIPT_NAME refuses to touch it. Fix the symlink first:"
+            err "  rm $p && mkdir -p $p"
+            exit 1
+        fi
+    done
+}

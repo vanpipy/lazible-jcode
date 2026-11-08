@@ -61,15 +61,22 @@ done
 
 # remove a path if present, no error when absent
 rm_safe() {
-    if [[ -e "$1" || -L "$1" ]]; then
+    local p="$1"
+
+    # Never delete from inside the repo. A symlinked ~/.jcode or skills
+    # directory would otherwise redirect "rm -rf" onto the repo's own
+    # config and skill files, which is data loss, not an uninstall.
+    guard_outside_repo "$p"
+
+    if [[ -e "$p" || -L "$p" ]]; then
         if [[ $dry_run -eq 1 ]]; then
-            log "would remove: $1"
+            log "would remove: $p"
         else
-            log "rm $1"
-            rm -rf "$1"
+            log "rm $p"
+            rm -rf "$p"
         fi
     else
-        log "skip $1 (not present)"
+        log "skip $p (not present)"
     fi
     return 0
 }
@@ -96,6 +103,26 @@ remove_full() {
     fi
 }
 
+# Every path this run would touch, checked before anything is removed.
+#
+# The check has to be up front rather than inside rm_safe. Otherwise a
+# refusal halfway through would leave the uninstall half done: the state
+# file already gone, the config still there.
+guard_repo_boundary() {
+    local p
+    p=("$STATE_FILE" "$JCODE_CONFIG")
+
+    if [[ $full -eq 1 && -d "$REPO/config/skills" ]]; then
+        local skill_dir
+        for skill_dir in "$REPO/config/skills"/*/; do
+            [[ -d "$skill_dir" ]] || continue
+            p+=("$SKILLS_HOME/$(basename "$skill_dir")")
+        done
+    fi
+
+    guard_outside_repo "${p[@]}"
+}
+
 main() {
     echo "lazible-jcode uninstaller"
     echo ""
@@ -104,6 +131,10 @@ main() {
     echo "  state:   $STATE_FILE"
     echo ""
     [[ $dry_run -eq 1 ]] && { echo "  mode: DRY-RUN (no side effects)"; echo ""; }
+
+    # Checked before the confirmation, so the refusal is the same whether
+    # or not the user is asked.
+    guard_repo_boundary
 
     if [[ $full -eq 1 ]]; then
         echo "--full removes ~/.jcode/config.toml and every skill listed in"
