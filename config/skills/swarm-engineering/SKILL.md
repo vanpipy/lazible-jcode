@@ -565,9 +565,10 @@ in remote mode. The product TUI starts in remote mode, so in normal use the
 flag is set and reported but no reviewer or judge is spawned at end of turn.
 
 The local turn path is not dead code, though. `jcode ambient run-visible`
-builds a local, non-remote app, so with `[ambient] visible = true` the
-end-of-turn trigger does fire there. The repo config sets `visible = false`,
-so ambient cycles run headless and stay outside it.
+builds a local, non-remote app, so the end-of-turn trigger does fire there. The
+ambient runner spawns that command when `[ambient] visible = true`. The repo
+config sets `visible = false`, so ambient cycles run headless and stay outside
+it.
 
 Consequences for a Reviewer:
 

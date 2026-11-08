@@ -116,9 +116,9 @@ produced no review or judge child session. Confirmed in the v0.99.1 source,
 where the trigger checks `app.is_remote` and returns before launching.
 
 The local turn path is not dead code. `jcode ambient run-visible` builds a
-local, non-remote app, so with `[ambient] visible = true` the end-of-turn
-trigger does fire there. This repo sets `visible = false`, so ambient cycles
-run headless and stay outside it.
+local, non-remote app, so the end-of-turn trigger does fire there. The ambient
+runner spawns that command when `[ambient] visible = true`. This repo sets
+`visible = false`, so ambient cycles run headless and stay outside it.
 
 Headless runs are a separate case: `jcode run`, swarm workers, and headless
 ambient cycles have no TUI turn path at all, so the trigger cannot fire there
