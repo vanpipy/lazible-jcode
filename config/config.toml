@@ -160,9 +160,11 @@ max_interval_minutes = 30
 pause_on_active_session = true
 proactive_work = true
 work_branch_prefix = "ambient/"
-# visible = false runs the cycle directly (runner.rs:891 picks
-# run_cycle_direct over run_cycle_visible). visible = true would try to spawn
-# a kitty window and wait for TUI interaction on every cycle.
+# visible = false runs the cycle headlessly, straight through the agent.
+# visible = true spawns a kitty window running `jcode ambient run-visible`
+# and waits for the TUI cycle to finish, falling back to headless if the
+# kitty spawn fails. runner.rs:879 passes this flag to
+# run_cycle_with_visible_launcher, which branches on it at runner.rs:916.
 visible = false
 
 [safety]
