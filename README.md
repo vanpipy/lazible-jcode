@@ -90,20 +90,44 @@ v0.99.1 the provider's `usage.prompt_tokens` is read in
 estimate is a separate field, `Prompt prefix estimate: total=`.
 
 What was measured, on a production log window ending 2026-11-08 23:30, with
-694 request fingerprints paired to their completion by session id:
+694 request fingerprints paired to their completion by session:
 
 - Every `request_hash` was unique, and each one mapped to exactly one
-  reported input count. No byte-identical request produced two counts.
+  reported input count. No request hash produced two counts. The hash is the
+  first 8 bytes of a SHA-256 of the serialized request
+  (`crates/jcode-provider-core/src/fingerprint.rs:43`), so it identifies a
+  request but is not by itself proof that two requests had identical bytes.
 - Grouping requests by provider-visible shape (`request_json_chars`,
-  `item_count`, `system_hash`, `tools_hash`, `tool_count`) produced 107 groups,
-  29 of which received two or more different counts. In all 29 the only
+  `item_count`, `system_hash`, `tools_hash`, `tool_count`) produced 105 groups,
+  24 of which received two or more different counts. In all 24 the only
   fingerprint fields that differed were `request_hash`, `input_hash`,
   `item_hashes_hash` and `last_item_hash`.
-- jcode's own `Prompt prefix estimate: total=` was **identical** in every one
-  of those 29 groups, so the two requests were the same size by jcode's own
-  measurement.
-- The common difference was 108 tokens: 16 of the 29 groups split by exactly
-  108, two by 109, one by 107, and the rest by smaller or larger amounts.
+- The common difference was 108 tokens: 16 of the 24 groups split by exactly
+  108, four by 109, one by 107, and three by 1. The largest spread anywhere in
+  the window was 109 tokens.
+
+The pairing rule matters here, so it is stated rather than assumed. The log
+truncates the session name to 20 characters
+(`crates/jcode-logging/src/lib.rs:184`), so one log prefix can cover several
+distinct sessions: 232 prefixes covered 652 real sessions in this window, and
+110 of those prefixes covered more than one. A completion therefore has to be
+paired against the right session, and a request that failed never logs a
+completion at all. Pairing each completion with the *oldest* outstanding
+fingerprint in its prefix mispairs 16 of the 694 rows and adds five spurious
+split groups, with spreads up to 2,386 tokens; pairing it with the *most recent*
+outstanding fingerprint leaves two fingerprints unpaired instead, which is what
+a failed request looks like. Three independent pairings agree on the numbers
+above: full session id from the turn-cancel records, full session id from the
+session file timestamps, and most-recent-first within the truncated prefix.
+
+Note what the prefix estimate does and does not show. `Prompt prefix estimate:
+total=` is computed from the system prompt and the tool list alone
+(`crates/jcode-app-core/src/agent/prompting.rs:81`), and does not count message
+content. Its being constant across a split group is therefore a property of how
+it is computed, not an independent finding that the two requests were the same
+size. The independent evidence that the requests were the same size is
+`request_json_chars`: every member of a split group has an identical request
+byte count.
 
 The strongest evidence is in the cache accounting. In the 74,177-byte class,
 the provider reported `cache_read` values of 17,801 and 17,803 alongside the
@@ -121,20 +145,20 @@ more tokens and also served 108 more tokens from its cache. The same pattern
 holds in the 74,032-byte class, where `17827`/`17695` and `17935`/`17803`
 share a remainder of 132.
 
-Replays do not reproduce it. 190 request bodies of 74,177 bytes were
-reconstructed from the production sessions and verified against the
-production `request_hash`, which is a hash of the request bytes, so each
-reconstructed body is byte-identical to the production body it stands for.
-Every one of the 190 replays reported `prompt_tokens=17867`, including the 73
-whose original production call had reported 17,975. Only the cached-token
-number moved between replays of the same body, taking ten distinct values. So
-the split is not reproducible from the request bytes alone, and the provider's
-cached-token accounting is not stable even when the reported input count is.
+A replay experiment was run against this, and it does not support the claim
+that was originally made for it here, so that claim has been removed rather
+than softened. The capture set it read from has been deleted, and the analysis
+script that quoted it now prints the figures as a literal string when the
+capture directory is missing instead of recomputing them, so the figures cannot
+be reproduced. They are also not consistent with the log: the 74,177-byte class
+has 89 distinct `request_hash` values in total, so at most 89 distinct request
+bodies can exist for it, not the 190 that were quoted, and only 17 production
+calls in that class reported 17,975, not 73. The deleted directory held a
+bearer credential in its recorded request headers, which is why it was removed.
 
 What is not established: what makes the provider count the same request shape
 two ways. The evidence above shows the split is not explained by the request
-size, by jcode's own measurement, or by a request that reproduces a recorded
-production hash. It points at the provider's cached-prefix accounting, but it
+size, and it points at the provider's cached-prefix accounting, but it
 does not identify a provider-side trigger, and it does not exclude every
 possible contribution from request content: the split groups do contain
 different request hashes, and the fingerprint fields that differ are exactly
