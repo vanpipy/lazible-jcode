@@ -260,6 +260,12 @@ Preview first with `./scripts/install --dry-run`. It writes nothing, including
 on a machine where `~/.jcode` does not exist yet, and it says what it *would*
 do rather than claiming it did something.
 
+The preview also predicts the real run. Preflight checks the same things in
+both modes, so a `--dry-run` that reports success is a promise the real
+install keeps. It fails the same way and with the same message when a path
+is not creatable: a `~/.jcode` that is a regular file, a dangling symlink, or
+a home directory that cannot be written to.
+
 Check the current state without touching anything, using
 `./scripts/install --check`. It runs the same 5 checks and writes nothing at
 all, not even the state file. Unlike `--dry-run`, which previews an install
@@ -342,6 +348,14 @@ It covers the paths that are easy to get wrong: that `--dry-run` and
 neither dry-run claims it installed or removed something, that a real install
 writes all three of config, skills and state, that a second install changes
 nothing, and that `uninstall` never reaches the jcode binary.
+
+It also checks fidelity. For each shape of home directory, the `--dry-run`
+and the real install have to reach the same verdict, because a preview that
+promises a success the real run cannot deliver is worse than no preview.
+
+Every check has been shown to fail against the code it is meant to catch:
+each fix was reverted in a scratch copy and the suite was confirmed to fail
+against the broken code.
 
 Exit code 0 means every check passed.
 

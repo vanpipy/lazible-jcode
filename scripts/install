@@ -80,17 +80,11 @@ phase_preflight() {
 
     local d
     for d in "$HOME/.jcode" "$SKILLS_HOME" "$STATE_DIR"; do
+        # Check first, then create. Checking first means --dry-run and the
+        # real run fail with the same message instead of the real run
+        # failing later inside mkdir with a raw "File exists".
+        check_creatable_dir "$d"
         [[ -d "$d" ]] || run_mkdir "$d"
-        if [[ $dry_run -eq 1 ]]; then
-            local probe
-            probe="$(nearest_existing_ancestor "$d")"
-            [[ -d "$probe" && -w "$probe" ]] || {
-                err "not writable: $d (via $probe)"
-                exit 1
-            }
-        else
-            [[ -w "$d" ]] || { err "not writable: $d"; exit 1; }
-        fi
     done
 
     # A symlinked config would let a write land in the repo base.
@@ -119,15 +113,68 @@ run_mkdir() {
 # ancestor, because that is the directory the real install would have to
 # create the path inside. Testing "$1" directly would fail on every clean
 # machine and abort the preview.
+#
+# A symlink counts as existing even when its target does not: [[ -e ]]
+# follows symlinks and is false for a dangling one, which would let this
+# walk straight past a dangling ~/.jcode to an ancestor that looks writable.
+# The real install would then fail at "mkdir: File exists", so the preview
+# has to see it too.
 nearest_existing_ancestor() {
     local probe="$1"
-    while [[ ! -e "$probe" ]]; do
+    while [[ ! -e "$probe" && ! -L "$probe" ]]; do
         local parent
         parent="$(dirname "$probe")"
         [[ "$parent" == "$probe" ]] && break
         probe="$parent"
     done
     printf '%s\n' "$probe"
+}
+
+# Check that "$1" can be created as a directory, or already is one.
+#
+# This mirrors what "mkdir -p" does, so that --dry-run predicts the real
+# install instead of promising a success the real run would not deliver.
+# The cases mkdir -p refuses are:
+#   - the path exists and is not a directory
+#   - the path is a dangling symlink ("File exists")
+#   - some ancestor is not a directory
+#   - the nearest existing ancestor is not writable
+check_creatable_dir() {
+    local d="$1"
+
+    # A dangling symlink: [[ -e ]] is false but [[ -L ]] is true, and
+    # mkdir -p refuses to replace it.
+    if [[ -L "$d" && ! -e "$d" ]]; then
+        err "$d is a dangling symlink -> $(readlink "$d")"
+        err "mkdir cannot create it. Remove the link or point it at a directory."
+        exit 1
+    fi
+
+    # The path exists but is not a directory.
+    if [[ -e "$d" && ! -d "$d" ]]; then
+        err "$d exists but is not a directory"
+        err "mkdir cannot create it. Remove or rename the file first."
+        exit 1
+    fi
+
+    if [[ -d "$d" ]]; then
+        [[ -w "$d" ]] || { err "not writable: $d"; exit 1; }
+        return 0
+    fi
+
+    # Not there yet. Walk up to the nearest existing ancestor and check
+    # that it is a writable directory.
+    local probe
+    probe="$(nearest_existing_ancestor "$d")"
+    if [[ ! -d "$probe" ]]; then
+        err "$d cannot be created: $probe is not a directory"
+        exit 1
+    fi
+    [[ -w "$probe" ]] || {
+        err "not writable: $d (via $probe)"
+        exit 1
+    }
+    return 0
 }
 
 # ---------------------------------------------------------------------------

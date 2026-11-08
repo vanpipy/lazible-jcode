@@ -30,6 +30,13 @@
 #   12. uninstall removes state.json
 #   13. uninstall --full --yes removes config and skills
 #   14. uninstall never touches the jcode binary
+#   15. the --dry-run predicts the real install, for every home shape
+#   16. argument handling: --help and unknown arguments
+#   17. the installer never writes to the repo
+#
+# "Leaves the sandbox byte-identical" covers both HOME and XDG_STATE_HOME.
+# The state directory is not under HOME, so fingerprinting HOME alone would
+# miss a dry-run that wrote state.json.
 #
 # Exit codes:
 #   0  all checks passed
@@ -111,9 +118,18 @@ SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lazible-jcode-test.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 
 SBHOME="$SANDBOX/home"
+SBSTATE="$SANDBOX/state"
 mkdir -p "$SBHOME"
 export HOME="$SBHOME"
-export XDG_STATE_HOME="$SANDBOX/state"
+export XDG_STATE_HOME="$SBSTATE"
+
+# The fingerprint of every location the installer could write to. The state
+# directory lives under XDG_STATE_HOME, which is NOT under HOME, so a
+# fingerprint of HOME alone would miss a dry-run that wrote state.json.
+sandbox_fingerprint() {
+    tree_fingerprint "$SBHOME"
+    tree_fingerprint "$SBSTATE"
+}
 
 echo "lazible-jcode installer tests"
 echo ""
@@ -126,7 +142,7 @@ echo ""
 
 echo "=== install --dry-run (clean HOME) ==="
 
-before="$(tree_fingerprint "$SBHOME")"
+before="$(sandbox_fingerprint)"
 
 set +e
 dry_out="$("$REPO/scripts/install" --dry-run 2>&1)"
@@ -135,8 +151,12 @@ set -e
 
 assert_eq "dry-run exits 0 on a clean HOME" "0" "$dry_rc"
 
-after="$(tree_fingerprint "$SBHOME")"
+after="$(sandbox_fingerprint)"
 assert_eq "dry-run leaves the sandbox byte-identical" "$before" "$after"
+
+# The state directory is outside HOME, so it needs its own assertion.
+assert_eq "dry-run does not create the state directory" "" \
+    "$(find "$SBSTATE" -mindepth 1 2>/dev/null | head -1)"
 
 # A dry-run must not claim that anything was installed or completed.
 assert_not_contains "dry-run does not claim 'config installed'" \
@@ -172,7 +192,7 @@ assert_contains "--check reports its result" "verify:" "$check_out"
 assert_eq "--check exits non-zero on a clean HOME" "6" "$check_rc"
 
 # --check must not write anything either.
-after_check="$(tree_fingerprint "$SBHOME")"
+after_check="$(sandbox_fingerprint)"
 assert_eq "--check leaves the sandbox byte-identical" "$before" "$after_check"
 
 # ---------------------------------------------------------------------------
@@ -256,12 +276,12 @@ assert_contains "--check reports 5 passed, 0 failed, 0 warnings" \
 echo ""
 echo "=== install (idempotency) ==="
 
-before_second="$(tree_fingerprint "$SBHOME")"
+before_second="$(sandbox_fingerprint)"
 set +e
 "$REPO/scripts/install" >/dev/null 2>&1
 second_rc=$?
 set -e
-after_second="$(tree_fingerprint "$SBHOME")"
+after_second="$(sandbox_fingerprint)"
 
 assert_eq "second install exits 0" "0" "$second_rc"
 assert_eq "second install changes nothing" "$before_second" "$after_second"
@@ -273,7 +293,7 @@ assert_eq "second install changes nothing" "$before_second" "$after_second"
 echo ""
 echo "=== uninstall --dry-run ==="
 
-before_udry="$(tree_fingerprint "$SBHOME")"
+before_udry="$(sandbox_fingerprint)"
 
 set +e
 udry_out="$("$REPO/scripts/uninstall" --dry-run 2>&1)"
@@ -282,7 +302,7 @@ set -e
 
 assert_eq "uninstall --dry-run exits 0" "0" "$udry_rc"
 
-after_udry="$(tree_fingerprint "$SBHOME")"
+after_udry="$(sandbox_fingerprint)"
 assert_eq "uninstall --dry-run removes nothing" "$before_udry" "$after_udry"
 
 assert_not_contains "uninstall --dry-run does not claim 'uninstall complete'" \
@@ -367,6 +387,197 @@ if [[ -f "$SBHOME/.local/bin/jcode" ]]; then
 else
     bad "uninstall never removes the jcode binary" "it was removed"
 fi
+
+# ---------------------------------------------------------------------------
+# 14. the dry-run predicts the real install
+#
+# A preview that promises a success the real run cannot deliver is worse
+# than no preview. For each environment shape, the dry-run and the real
+# install have to reach the same verdict.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== dry-run fidelity (the preview must match the real install) ==="
+
+# fidelity <label> <setup function name>
+#
+# A setup function prepares a case directory and may set CASE_STATE to
+# point XDG_STATE_HOME somewhere other than the default, for cases where
+# the state directory's own location is what is being tested.
+fidelity() {
+    local label="$1" setup_fn="$2"
+    local case_dir="$SANDBOX/case"
+    rm -rf "$case_dir"
+    mkdir -p "$case_dir"
+
+    CASE_STATE=""
+    "$setup_fn" "$case_dir"
+
+    local saved_home="$HOME" saved_state="$XDG_STATE_HOME"
+    export HOME="$case_dir/home"
+    export XDG_STATE_HOME="${CASE_STATE:-$case_dir/state}"
+
+    local dry_out real_out dry_rc real_rc
+    set +e
+    dry_out="$("$REPO/scripts/install" --dry-run 2>&1)"
+    dry_rc=$?
+    real_out="$("$REPO/scripts/install" 2>&1)"
+    real_rc=$?
+    set -e
+
+    export HOME="$saved_home"
+    export XDG_STATE_HOME="$saved_state"
+
+    local dry_ok="no" real_ok="no"
+    [[ "$dry_out" == *"preflight ok"* ]] && dry_ok="yes"
+    [[ "$real_out" == *"preflight ok"* ]] && real_ok="yes"
+
+    if [[ "$dry_ok" == "$real_ok" ]]; then
+        ok "$label: the dry-run predicts the real install"
+    else
+        bad "$label: the dry-run predicts the real install" \
+            "dry-run: rc=$dry_rc preflight_ok=$dry_ok" \
+            "real:    rc=$real_rc preflight_ok=$real_ok"
+    fi
+
+    # Both runs must also agree on whether they succeeded.
+    if [[ "$dry_rc" -eq 0 && "$real_rc" -eq 0 ]]; then
+        ok "$label: both the dry-run and the real install succeed"
+    elif [[ "$dry_rc" -ne 0 && "$real_rc" -ne 0 ]]; then
+        ok "$label: both the dry-run and the real install fail"
+    else
+        bad "$label: both the dry-run and the real install agree on success" \
+            "dry-run rc=$dry_rc, real rc=$real_rc"
+    fi
+}
+
+setup_normal() {
+    mkdir -p "$1/home" "$1/state"
+}
+
+setup_no_home() {
+    mkdir -p "$1"
+}
+
+setup_jcode_is_file() {
+    mkdir -p "$1/home" "$1/state"
+    printf 'not a directory\n' > "$1/home/.jcode"
+}
+
+setup_jcode_is_dangling_link() {
+    mkdir -p "$1/home" "$1/state"
+    ln -s "$1/gone" "$1/home/.jcode"
+}
+
+setup_jcode_is_link_to_dir() {
+    mkdir -p "$1/home" "$1/state" "$1/real"
+    ln -s "$1/real" "$1/home/.jcode"
+}
+
+setup_home_readonly() {
+    mkdir -p "$1/home" "$1/state"
+    chmod 500 "$1/home"
+}
+
+# The state directory's PARENT is a dangling symlink. The checked path
+# itself is not a symlink here, so this exercises the ancestor walk rather
+# than the explicit symlink test on the path.
+setup_state_parent_is_dangling_link() {
+    mkdir -p "$1/home"
+    ln -s "$1/gone" "$1/state-link"
+    CASE_STATE="$1/state-link"
+}
+
+fidelity "a normal writable HOME" setup_normal
+fidelity "HOME does not exist" setup_no_home
+# The labels below contain a literal tilde on purpose: they name the path
+# shape, they are not paths to expand.
+# shellcheck disable=SC2088
+fidelity "~/.jcode is a regular file" setup_jcode_is_file
+# shellcheck disable=SC2088
+fidelity "~/.jcode is a dangling symlink" setup_jcode_is_dangling_link
+# shellcheck disable=SC2088
+fidelity "~/.jcode symlinks to a directory" setup_jcode_is_link_to_dir
+fidelity "HOME is read-only" setup_home_readonly
+fidelity "the state dir's parent is a dangling symlink" \
+    setup_state_parent_is_dangling_link
+
+# The read-only HOME has to be made writable again or the sandbox cannot
+# be removed.
+chmod -R u+w "$SANDBOX" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 15. argument handling
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== argument handling ==="
+
+set +e
+help_out="$("$REPO/scripts/install" --help 2>&1)"
+help_rc=$?
+set -e
+assert_eq "install --help exits 0" "0" "$help_rc"
+assert_contains "install --help shows the usage block" "Usage:" "$help_out"
+
+set +e
+bad_out="$("$REPO/scripts/install" --not-an-option 2>&1)"
+bad_rc=$?
+set -e
+assert_eq "install rejects an unknown argument with exit 2" "2" "$bad_rc"
+assert_contains "install names the unknown argument" "unknown arg" "$bad_out"
+
+set +e
+uhelp_out="$("$REPO/scripts/uninstall" --help 2>&1)"
+uhelp_rc=$?
+set -e
+assert_eq "uninstall --help exits 0" "0" "$uhelp_rc"
+assert_contains "uninstall --help shows the usage block" "Usage:" "$uhelp_out"
+
+set +e
+ubad_out="$("$REPO/scripts/uninstall" --not-an-option 2>&1)"
+ubad_rc=$?
+set -e
+assert_eq "uninstall rejects an unknown argument with exit 2" "2" "$ubad_rc"
+assert_contains "uninstall names the unknown argument" "unknown arg" "$ubad_out"
+
+# --dry-run together with --check must stay read-only.
+before_combo="$(sandbox_fingerprint)"
+set +e
+combo_out="$("$REPO/scripts/install" --dry-run --check 2>&1)"
+combo_rc=$?
+set -e
+after_combo="$(sandbox_fingerprint)"
+assert_eq "install --dry-run --check exits 0" "0" "$combo_rc"
+assert_eq "install --dry-run --check changes nothing" "$before_combo" "$after_combo"
+assert_contains "install --dry-run --check announces both modes" \
+    "CHECK-ONLY" "$combo_out"
+
+# uninstall --full --dry-run must remove nothing.
+set +e
+full_dry_out="$("$REPO/scripts/uninstall" --full --dry-run 2>&1)"
+full_dry_rc=$?
+set -e
+after_full_dry="$(sandbox_fingerprint)"
+assert_eq "uninstall --full --dry-run exits 0" "0" "$full_dry_rc"
+assert_eq "uninstall --full --dry-run changes nothing" "$before_combo" "$after_full_dry"
+assert_contains "uninstall --full --dry-run announces the dry-run" \
+    "DRY-RUN" "$full_dry_out"
+
+# ---------------------------------------------------------------------------
+# 16. the repo itself is never written to
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the repo is read-only to the installer ==="
+
+repo_before="$(tree_fingerprint "$REPO")"
+set +e
+"$REPO/scripts/install" --dry-run >/dev/null 2>&1
+"$REPO/scripts/install" --check >/dev/null 2>&1
+set -e
+repo_after="$(tree_fingerprint "$REPO")"
+assert_eq "the installer never writes to the repo" "$repo_before" "$repo_after"
 
 # ---------------------------------------------------------------------------
 
