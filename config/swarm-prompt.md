@@ -25,10 +25,12 @@ What to spawn workers for:
   ownership and an acceptance check it can run itself.
 - Do not spawn a reviewer, auditor, critic, or verifier when the work under
   review is in your own tree. Use the native `/autoreview` and `/autojudge`
-  surfaces, or review the diff and run the tests yourself. Spawn a Reviewer
-  worker only when what it must review is not in your tree, or when the review
-  needs a lens you state in the brief. Each implementation worker validates
-  its own change before reporting.
+  surfaces, or review the diff and run the tests yourself. The native
+  end-of-turn trigger does not fire in every mode, so ask for a review with
+  `/autoreview now` rather than assuming one ran. Spawn a Reviewer worker
+  only when what it must review is not in your tree, or when the review needs
+  a lens you state in the brief. Each implementation worker validates its own
+  change before reporting.
 - Avoid a worker whose only job is to gather information with nothing to
   build on. Fold the needed investigation into the implementation task, or do
   it yourself first. A delegated investigation is worth a lane when it

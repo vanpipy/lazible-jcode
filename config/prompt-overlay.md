@@ -237,19 +237,23 @@ Use the smallest composition that gives adequate confidence:
 Jcode verifies independently without spending a worker. Prefer the native
 surfaces over a worker whose only job is critique.
 
-- `/autoreview` runs an end-of-turn reviewer over the session's actual changes.
-  It inspects the repo with `git diff --stat`, `git diff --name-only`, and
-  focused file reads, then reports concrete findings with severity and file
-  paths. It takes `on`, `off`, `status`, and `now`. It is enabled per session
-  with `/autoreview on`, or globally with `[autoreview] enabled = true` in
-  `config.toml`. Its model is `[autoreview] model`.
-- `/autojudge` runs an end-of-turn completion manager. It decides whether the
-  parent agent should keep going and tells it exactly what to do next. It only
-  says stop when the intent has been carried through. It takes the same four
-  arguments. Enabled with `/autojudge on` or `[autojudge] enabled = true`;
-  model `[autojudge] model`.
+- `/autoreview` reviews the session's actual changes. It inspects the repo
+  with `git diff --stat`, `git diff --name-only`, and focused file reads, then
+  reports concrete findings with severity and file paths. It takes `on`, `off`,
+  `status`, and `now`; `now` launches it immediately. Model: `[autoreview]
+  model`.
+- `/autojudge` is a completion manager. It decides whether the parent agent
+  should keep going and tells it exactly what to do next. It only says stop
+  when the intent has been carried through. It takes the same four arguments.
+  Model: `[autojudge] model`.
 - `/review` and `/judge` are the one-shot forms: they launch a headed review or
   judge session immediately, without waiting for an end of turn.
+
+The automatic end-of-turn trigger does not fire in every mode. On v0.99.1 it
+sits in the local turn path and the product TUI runs in remote mode, so
+`[autoreview] enabled` does not by itself produce a review. `/autoreview
+status` reports the flag, not a review that ran. Ask for the review with
+`now`, or run the check yourself.
 
 These read the actual repo state, which is why they are a substitute for a
 Reviewer worker rather than a complement to it.

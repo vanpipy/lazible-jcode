@@ -535,20 +535,43 @@ Jcode has no separate requirements file. The requirement lives in the todo the w
 Jcode verifies independently without a worker. Prefer these over spawning a
 critic.
 
-- **`/autoreview`** runs an end-of-turn reviewer over the session's actual
-  changes. It inspects the repo with `git diff --stat`, `git diff --name-only`,
-  and focused file reads, and reports concrete findings with severity and file
-  paths. It takes `on`, `off`, `status`, and `now`. Enabled per session with
-  `/autoreview on`, or globally with
+- **`/autoreview`** reviews the session's actual changes. It inspects the repo
+  with `git diff --stat`, `git diff --name-only`, and focused file reads, and
+  reports concrete findings with severity and file paths. It takes `on`, `off`,
+  `status`, and `now`. `now` launches the reviewer immediately. Enabled per
+  session with `/autoreview on`, or globally with
   `[autoreview] enabled = true` in `config.toml`. Its model is
   `[autoreview] model`.
-- **`/autojudge`** runs an end-of-turn completion manager. It decides whether
-  the parent agent should keep going and tells it exactly what to do next. It
-  only says stop when the intent has been carried through. It takes the same
-  four arguments. Enabled with `/autojudge on` or
+- **`/autojudge`** is a completion manager. It decides whether the parent agent
+  should keep going and tells it exactly what to do next. It only says stop
+  when the intent has been carried through. It takes the same four arguments.
+  `now` launches the judge immediately. Enabled with `/autojudge on` or
   `[autojudge] enabled = true`. Its model is `[autojudge] model`.
 - **`/review` and `/judge`** are the one-shot forms. They launch a headed
   review or judge session immediately, without waiting for an end of turn.
+
+### 14.1 The end-of-turn trigger is mode-dependent
+
+`[autoreview] enabled` and `[autojudge] enabled` are the *default* for the
+session flag, nothing more. On v0.99.1 the automatic end-of-turn hook sits at
+the end of the TUI's local turn path, and that hook bails out when the app is
+in remote mode. The product TUI starts in remote mode, so in normal use the
+flag is set and reported but no reviewer or judge is spawned at end of turn.
+
+Consequences for a Reviewer:
+
+- `/autoreview status` reporting "enabled" is not evidence that a review ran.
+  It reports the flag.
+- Do not treat "the flag was on" as independent verification. If the task
+  needs a review, request it with `/autoreview now` or `/review`, or read the
+  diff and run the tests directly.
+- Headless runs (`jcode run`, swarm workers, ambient cycles) have no TUI turn
+  path at all, so the automatic trigger cannot fire there either.
+- `/autoreview now` and `/autojudge now` work in every mode. They are the
+  reliable way to get a review.
+
+The one-shot children are created with both flags disabled, so a review or
+judge does not spawn a review or judge of its own.
 
 These review the actual repo state, which is why they substitute for a Reviewer
 worker rather than complement it. The Reviewer section above still describes

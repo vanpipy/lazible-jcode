@@ -45,19 +45,19 @@ input tokens per request:
 
 | swarm prompt | overlay | input tokens |
 | --- | --- | --- |
-| old | old | 18,453 |
-| new | old | 16,123 / 16,122 / 16,230 |
-| new | new | 17,695 / 17,695 / 17,695 |
-| old | new | 20,026 / 20,026 / 20,134 |
+| old | old | 18,506 / 18,506 / 18,506 |
+| new | old | 16,102 / 16,210 / 16,210 |
+| new | new | 17,861 / 17,861 / 17,861 |
+| old | new | 20,157 / 20,157 / 20,157 |
 
 Swapping only the swarm prompt saves about 2,300 input tokens per request.
 That is the isolated saving for the tool description, and it is the reason the
 split exists. The overlay grew to absorb the policy that used to live in the
 tool description, so the net saving of the combined change against the old
-baseline is smaller: 18,453 down to 17,695, about 758 tokens per request.
+baseline is smaller: 18,506 down to 17,861, about 645 tokens per request.
 
 In bytes the move is larger than the net suggests: the tool description shrank
-from 17,082 to 3,869 bytes and the overlay grew from 12,143 to 19,774. The
+from 17,082 to 4,006 bytes and the overlay grew from 12,143 to 19,909. The
 net gain is the small part. The rest of the value is structural: the overlay
 is a system-prompt layer that can be edited on its own, and the two files
 have different reload behaviour, described below.
@@ -87,6 +87,42 @@ description.
 The Skill is loaded only when an agent asks for it, which is why it can be
 long. It is also the file most likely to be read by a worker that was handed a
 brief, so a brief should say which section of it governs the task.
+
+## Native review surfaces
+
+`[autoreview]` and `[autojudge]` are set to `enabled = true` in
+`config/config.toml`. What that buys you on v0.99.1 is narrower than it
+looks, so the repo documents it precisely rather than promising an automatic
+review that does not arrive.
+
+`enabled` seeds the session flag and nothing else. The automatic end-of-turn
+hook is at the end of the TUI's local turn path, and it returns early when the
+app is in remote mode. The product TUI is built with `new_for_remote`, so it
+runs in remote mode, and the hook never fires there. The result:
+
+| Surface | What actually happens on v0.99.1 |
+| --- | --- |
+| `/autoreview status` | Reports the flag, which reads `enabled` from the config |
+| `/autoreview now`, `/autojudge now` | Launch a reviewer or judge immediately |
+| `/review`, `/judge` | Launch a one-shot review or judge session |
+| Automatic end-of-turn trigger | Does not fire in the product TUI |
+
+Verified two ways. Observed: a headless `jcode run` in a fresh repository
+produced only the requested root session, and the session flags stayed unset;
+in the TUI, `/autoreview status` reported enabled while normal turns, turns
+after tracked-file changes, and a turn after an explicit `/autoreview on` all
+produced no review or judge child session. Confirmed in the v0.99.1 source,
+where the trigger checks `app.is_remote` and returns before launching.
+
+Headless runs are a separate case: `jcode run`, swarm workers, and ambient
+cycles have no TUI turn path at all, so the trigger cannot fire there either.
+
+The one-shot children are created with `autoreview_enabled` and
+`autojudge_enabled` set to false, so a review does not spawn a review of
+itself.
+
+This is why the overlay, the skill, and `swarm-prompt.md` tell the agent to
+request a review with `now` instead of assuming the flag produced one.
 
 ## Install
 
