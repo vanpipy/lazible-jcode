@@ -252,10 +252,14 @@ surfaces over a worker whose only job is critique.
 The automatic end-of-turn trigger does not fire in every mode. On v0.99.1 it
 sits in the local turn path and the product TUI runs in remote mode, so
 `[autoreview] enabled` does not by itself produce a review. `/autoreview
-status` reports the flag, not a review that ran. Ask for the review with
-`now`, or run the check yourself.
+status` reports the flag, not a review that ran. Ask the user to run `now`, or
+run the check yourself.
 
-These read the actual repo state, which is why they are a substitute for a
+These are client-side TUI commands. An agent cannot type them into the user's
+composer, and no tool exposes them to the model. If independent verification
+is required, say so in the report and let the user run `/autoreview now`.
+
+They read the actual repo state, which is why they are a substitute for a
 Reviewer worker rather than a complement to it.
 
 A worker's self-assessment never replaces independent verification when the

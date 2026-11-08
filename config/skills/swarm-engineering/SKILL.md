@@ -541,7 +541,8 @@ critic.
   `status`, and `now`. `now` launches the reviewer immediately. Enabled per
   session with `/autoreview on`, or globally with
   `[autoreview] enabled = true` in `config.toml`. Its model is
-  `[autoreview] model`.
+  `[autoreview] model`. It is a TUI command, so it is typed by the user in
+  the composer, not called by an agent.
 - **`/autojudge`** is a completion manager. It decides whether the parent agent
   should keep going and tells it exactly what to do next. It only says stop
   when the intent has been carried through. It takes the same four arguments.
@@ -549,6 +550,11 @@ critic.
   `[autojudge] enabled = true`. Its model is `[autojudge] model`.
 - **`/review` and `/judge`** are the one-shot forms. They launch a headed
   review or judge session immediately, without waiting for an end of turn.
+
+All of these are client-side TUI commands. A worker or a headless agent cannot
+type them into the user's composer, and no tool exposes them to the model. An
+agent that needs independent verification asks for it in its report, and the
+user runs the command.
 
 ### 14.1 The end-of-turn trigger is mode-dependent
 
@@ -558,6 +564,11 @@ the end of the TUI's local turn path, and that hook bails out when the app is
 in remote mode. The product TUI starts in remote mode, so in normal use the
 flag is set and reported but no reviewer or judge is spawned at end of turn.
 
+The local turn path is not dead code, though. `jcode ambient run-visible`
+builds a local, non-remote app, so with `[ambient] visible = true` the
+end-of-turn trigger does fire there. The repo config sets `visible = false`,
+so ambient cycles run headless and stay outside it.
+
 Consequences for a Reviewer:
 
 - `/autoreview status` reporting "enabled" is not evidence that a review ran.
@@ -565,10 +576,11 @@ Consequences for a Reviewer:
 - Do not treat "the flag was on" as independent verification. If the task
   needs a review, request it with `/autoreview now` or `/review`, or read the
   diff and run the tests directly.
-- Headless runs (`jcode run`, swarm workers, ambient cycles) have no TUI turn
-  path at all, so the automatic trigger cannot fire there either.
-- `/autoreview now` and `/autojudge now` work in every mode. They are the
-  reliable way to get a review.
+- Headless runs (`jcode run`, swarm workers, headless ambient cycles) have no
+  TUI turn path at all, so the automatic trigger cannot fire there either.
+- `/autoreview now` and `/autojudge now` work in the TUI, in both remote and
+  local mode. They are the reliable way to get a review, and they are typed by
+  the user, not by an agent.
 
 The one-shot children are created with both flags disabled, so a review or
 judge does not spawn a review or judge of its own.

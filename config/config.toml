@@ -218,7 +218,9 @@ prevent_sleep_while_streaming = true
 # lives in the TUI's local turn path. On v0.99.1 the product TUI runs in remote
 # mode, so the trigger does not fire there: `enabled` is read and reported by
 # `/autoreview status`, and `/autoreview now` still launches a reviewer on
-# demand. Set `enabled = false` to keep the session flag off.
+# demand. The trigger does fire in a local, non-remote TUI, which is what
+# `jcode ambient run-visible` builds when `[ambient] visible = true`.
+# Set `enabled = false` to keep the session flag off.
 enabled = true
 
 [autojudge]

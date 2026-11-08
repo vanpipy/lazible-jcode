@@ -26,8 +26,9 @@ What to spawn workers for:
 - Do not spawn a reviewer, auditor, critic, or verifier when the work under
   review is in your own tree. Use the native `/autoreview` and `/autojudge`
   surfaces, or review the diff and run the tests yourself. The native
-  end-of-turn trigger does not fire in every mode, so ask for a review with
-  `/autoreview now` rather than assuming one ran. Spawn a Reviewer worker
+  end-of-turn trigger does not fire in every mode, and those commands are typed
+  by the user, not called by an agent, so name the review you want in your
+  report and let the user run `/autoreview now`. Spawn a Reviewer worker
   only when what it must review is not in your tree, or when the review needs
   a lens you state in the brief. Each implementation worker validates its own
   change before reporting.
