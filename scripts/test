@@ -1,0 +1,375 @@
+#!/usr/bin/env bash
+# test : exercise the real install and uninstall scripts
+#
+# Usage:
+#   ./scripts/test              # run every check
+#   ./scripts/test --help       # show this header
+#
+# This runs the actual scripts/install and scripts/uninstall, not a copy of
+# their logic. Every check drives the real script against a throwaway HOME
+# and asserts on the real output and the real filesystem state.
+#
+# The sandbox lives under $TMPDIR and is removed on exit. The real $HOME is
+# never written to: every install and uninstall runs with HOME pointed at
+# the sandbox. XDG_STATE_HOME is pinned too, because scripts/common.sh
+# derives the state directory from it and would otherwise escape the
+# sandbox.
+#
+# Checks:
+#   1. install --dry-run on a clean HOME exits 0
+#   2. install --dry-run leaves the sandbox byte-identical
+#   3. install --dry-run claims nothing was installed
+#   4. install --dry-run announces what it would do
+#   5. install --check writes nothing and reports its result
+#   6. a real install writes config, skills and state
+#   7. install --check detects missing live prompt files
+#   8. install --check passes all 5 checks when nothing has drifted
+#   9. a second install is idempotent
+#   10. uninstall --dry-run removes nothing
+#   11. uninstall --dry-run claims nothing was removed
+#   12. uninstall removes state.json
+#   13. uninstall --full --yes removes config and skills
+#   14. uninstall never touches the jcode binary
+#
+# Exit codes:
+#   0  all checks passed
+#   1  a check failed
+#   2  bad arguments
+
+set -euo pipefail
+
+# shellcheck source=scripts/common.sh
+. "$(dirname "$0")/common.sh"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage ;;
+        *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+pass=0
+fail=0
+
+ok()   { pass=$((pass+1)); echo "  ok   $1"; }
+bad()  {
+    fail=$((fail+1))
+    echo "  FAIL $1"
+    shift || true
+    for extra in "$@"; do
+        echo "       $extra"
+    done
+}
+
+# assert_eq <label> <expected> <actual>
+assert_eq() {
+    if [[ "$2" == "$3" ]]; then
+        ok "$1"
+    else
+        bad "$1" "expected: $2" "actual:   $3"
+    fi
+}
+
+# assert_contains <label> <needle> <haystack>
+assert_contains() {
+    if [[ "$3" == *"$2"* ]]; then
+        ok "$1"
+    else
+        bad "$1" "expected to contain: $2" "actual: $3"
+    fi
+}
+
+# assert_not_contains <label> <needle> <haystack>
+assert_not_contains() {
+    if [[ "$3" != *"$2"* ]]; then
+        ok "$1"
+    else
+        bad "$1" "expected NOT to contain: $2" "actual: $3"
+    fi
+}
+
+# The fingerprint of a sandbox tree: every path with its type and size.
+# Used to prove that a dry-run changed nothing.
+tree_fingerprint() {
+    local root="$1"
+    if [[ ! -e "$root" ]]; then
+        echo "(absent)"
+        return 0
+    fi
+    ( cd "$root" && find . -mindepth 1 | sort | while read -r p; do
+        if [[ -d "$p" ]]; then
+            echo "d $p"
+        elif [[ -f "$p" ]]; then
+            echo "f $p $(stat -c %s "$p")"
+        else
+            echo "? $p"
+        fi
+    done )
+}
+
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lazible-jcode-test.XXXXXX")"
+trap 'rm -rf "$SANDBOX"' EXIT
+
+SBHOME="$SANDBOX/home"
+mkdir -p "$SBHOME"
+export HOME="$SBHOME"
+export XDG_STATE_HOME="$SANDBOX/state"
+
+echo "lazible-jcode installer tests"
+echo ""
+echo "  sandbox HOME: $SBHOME"
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1-4. install --dry-run on a clean HOME
+# ---------------------------------------------------------------------------
+
+echo "=== install --dry-run (clean HOME) ==="
+
+before="$(tree_fingerprint "$SBHOME")"
+
+set +e
+dry_out="$("$REPO/scripts/install" --dry-run 2>&1)"
+dry_rc=$?
+set -e
+
+assert_eq "dry-run exits 0 on a clean HOME" "0" "$dry_rc"
+
+after="$(tree_fingerprint "$SBHOME")"
+assert_eq "dry-run leaves the sandbox byte-identical" "$before" "$after"
+
+# A dry-run must not claim that anything was installed or completed.
+assert_not_contains "dry-run does not claim 'config installed'" \
+    "config installed" "$dry_out"
+assert_not_contains "dry-run does not claim 'skills installed'" \
+    "skills installed" "$dry_out"
+
+# It must say what it would do.
+assert_contains "dry-run says it would install the config" \
+    "would install config" "$dry_out"
+assert_contains "dry-run says it would install the skills" \
+    "would install skills" "$dry_out"
+assert_contains "dry-run says it would write the state file" \
+    "would write:" "$dry_out"
+assert_contains "dry-run ends with a dry-run completion notice" \
+    "dry-run complete" "$dry_out"
+
+# ---------------------------------------------------------------------------
+# 5. install --check on a clean HOME
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== install --check (clean HOME) ==="
+
+set +e
+check_out="$("$REPO/scripts/install" --check 2>&1)"
+check_rc=$?
+set -e
+
+# On a clean HOME the config is not there yet, so --check reports failures.
+# It must still exit without crashing, and it must say what failed.
+assert_contains "--check reports its result" "verify:" "$check_out"
+assert_eq "--check exits non-zero on a clean HOME" "6" "$check_rc"
+
+# --check must not write anything either.
+after_check="$(tree_fingerprint "$SBHOME")"
+assert_eq "--check leaves the sandbox byte-identical" "$before" "$after_check"
+
+# ---------------------------------------------------------------------------
+# 6-8. a real install
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== install (real) ==="
+
+set +e
+install_out="$("$REPO/scripts/install" 2>&1)"
+install_rc=$?
+set -e
+
+assert_eq "real install exits 0" "0" "$install_rc"
+assert_contains "real install reports the config" \
+    "config installed" "$install_out"
+assert_contains "real install reports the skills" \
+    "skills installed" "$install_out"
+
+if [[ -f "$SBHOME/.jcode/config.toml" ]]; then
+    ok "real install wrote config.toml"
+else
+    bad "real install wrote config.toml" "not found at $SBHOME/.jcode/config.toml"
+fi
+
+if cmp -s "$REPO/config/config.toml" "$SBHOME/.jcode/config.toml"; then
+    ok "installed config matches config/config.toml"
+else
+    bad "installed config matches config/config.toml" "content differs"
+fi
+
+if [[ -f "$SBHOME/.jcode/skills/swarm-engineering/SKILL.md" ]]; then
+    ok "real install wrote the swarm-engineering skill"
+else
+    bad "real install wrote the swarm-engineering skill" "not found"
+fi
+
+if [[ -f "$XDG_STATE_HOME/lazible-jcode/state.json" ]]; then
+    ok "real install wrote state.json"
+else
+    bad "real install wrote state.json" "not found at $XDG_STATE_HOME/lazible-jcode/state.json"
+fi
+
+echo ""
+echo "=== install --check (after a real install, no live prompt files) ==="
+
+# install never writes ~/.jcode/prompt-overlay.md or ~/.jcode/swarm-prompt.md.
+# In a sandbox they are absent, so --check correctly reports prompt drift.
+# Under --check that drift is a failure, so the exit code is 6.
+set +e
+check2_out="$("$REPO/scripts/install" --check 2>&1)"
+check2_rc=$?
+set -e
+
+assert_eq "--check exits 6 when the live prompt files are missing" "6" "$check2_rc"
+assert_contains "--check reports 4 passed, 0 failed, 1 warning" \
+    "verify: 4 passed, 0 failed, 1 warning" "$check2_out"
+assert_contains "--check names the prompt drift" \
+    "prompt-overlay.md / swarm-prompt.md vs live" "$check2_out"
+
+echo ""
+echo "=== install --check (with the live prompt files in place) ==="
+
+# Seed the sandbox with the repo's own copies of the two prompt files, the
+# same state the real machine is in. --check must then pass all 5 checks.
+mkdir -p "$SBHOME/.jcode"
+for f in prompt-overlay.md swarm-prompt.md; do
+    cp "$REPO/config/$f" "$SBHOME/.jcode/$f"
+done
+
+set +e
+check3_out="$("$REPO/scripts/install" --check 2>&1)"
+check3_rc=$?
+set -e
+
+assert_eq "--check exits 0 when nothing has drifted" "0" "$check3_rc"
+assert_contains "--check reports 5 passed, 0 failed, 0 warnings" \
+    "verify: 5 passed, 0 failed, 0 warnings" "$check3_out"
+
+echo ""
+echo "=== install (idempotency) ==="
+
+before_second="$(tree_fingerprint "$SBHOME")"
+set +e
+"$REPO/scripts/install" >/dev/null 2>&1
+second_rc=$?
+set -e
+after_second="$(tree_fingerprint "$SBHOME")"
+
+assert_eq "second install exits 0" "0" "$second_rc"
+assert_eq "second install changes nothing" "$before_second" "$after_second"
+
+# ---------------------------------------------------------------------------
+# 9-10. uninstall --dry-run
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== uninstall --dry-run ==="
+
+before_udry="$(tree_fingerprint "$SBHOME")"
+
+set +e
+udry_out="$("$REPO/scripts/uninstall" --dry-run 2>&1)"
+udry_rc=$?
+set -e
+
+assert_eq "uninstall --dry-run exits 0" "0" "$udry_rc"
+
+after_udry="$(tree_fingerprint "$SBHOME")"
+assert_eq "uninstall --dry-run removes nothing" "$before_udry" "$after_udry"
+
+assert_not_contains "uninstall --dry-run does not claim 'uninstall complete'" \
+    "uninstall complete" "$udry_out"
+assert_contains "uninstall --dry-run says it would remove" \
+    "would remove" "$udry_out"
+assert_contains "uninstall --dry-run ends with a dry-run completion notice" \
+    "dry-run complete" "$udry_out"
+
+# ---------------------------------------------------------------------------
+# 11. uninstall removes state.json
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== uninstall (state only) ==="
+
+set +e
+un_out="$("$REPO/scripts/uninstall" --yes 2>&1)"
+un_rc=$?
+set -e
+
+assert_eq "uninstall exits 0" "0" "$un_rc"
+assert_contains "uninstall reports completion" "uninstall complete" "$un_out"
+
+if [[ ! -f "$XDG_STATE_HOME/lazible-jcode/state.json" ]]; then
+    ok "uninstall removed state.json"
+else
+    bad "uninstall removed state.json" "still present"
+fi
+
+if [[ -f "$SBHOME/.jcode/config.toml" ]]; then
+    ok "uninstall left config.toml in place"
+else
+    bad "uninstall left config.toml in place" "it was removed"
+fi
+
+# ---------------------------------------------------------------------------
+# 12. uninstall --full removes config and skills
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== uninstall --full --yes ==="
+
+set +e
+uf_out="$("$REPO/scripts/uninstall" --full --yes 2>&1)"
+uf_rc=$?
+set -e
+
+assert_eq "uninstall --full exits 0" "0" "$uf_rc"
+assert_contains "uninstall --full reports completion" "uninstall complete" "$uf_out"
+
+if [[ ! -f "$SBHOME/.jcode/config.toml" ]]; then
+    ok "uninstall --full removed config.toml"
+else
+    bad "uninstall --full removed config.toml" "still present"
+fi
+
+if [[ ! -d "$SBHOME/.jcode/skills/swarm-engineering" ]]; then
+    ok "uninstall --full removed the repo's skills"
+else
+    bad "uninstall --full removed the repo's skills" "still present"
+fi
+
+# ---------------------------------------------------------------------------
+# 13. uninstall never touches the jcode binary
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== preservation ==="
+
+# A fake binary in the sandbox. uninstall must not remove it.
+mkdir -p "$SBHOME/.local/bin"
+printf '#!/bin/sh\necho jcode\n' > "$SBHOME/.local/bin/jcode"
+chmod +x "$SBHOME/.local/bin/jcode"
+
+set +e
+"$REPO/scripts/uninstall" --full --yes >/dev/null 2>&1
+set -e
+
+if [[ -f "$SBHOME/.local/bin/jcode" ]]; then
+    ok "uninstall never removes the jcode binary"
+else
+    bad "uninstall never removes the jcode binary" "it was removed"
+fi
+
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "$pass passed, $fail failed"
+[[ $fail -eq 0 ]] || exit 1

@@ -23,6 +23,7 @@ scripts/install        ->  wires the two above
 | `config/skills/swarm-engineering/` | The swarm coordination skill |
 | `scripts/install` | Copies config and skills into `~/.jcode` |
 | `scripts/uninstall` | Reverses install |
+| `scripts/test` | Exercises the real install and uninstall against a sandbox HOME |
 | `scripts/common.sh` | Shared paths and helpers, sourced by both scripts |
 
 ## The three prompt tiers
@@ -255,7 +256,9 @@ Five phases: preflight, config, skills, verify, state. Preflight fails if
 `~/.jcode/config.toml` is a symlink, because writing through it would corrupt
 this repo. Verify ends with 5 checks.
 
-Preview first with `./scripts/install --dry-run`.
+Preview first with `./scripts/install --dry-run`. It writes nothing, including
+on a machine where `~/.jcode` does not exist yet, and it says what it *would*
+do rather than claiming it did something.
 
 Check the current state without touching anything, using
 `./scripts/install --check`. It runs the same 5 checks and writes nothing at
@@ -321,6 +324,26 @@ gates a remote push or a commit on an `ambient/*` branch, and the
 The jcode binary and `~/AGENTS.md` are never removed. `--full` does remove
 `~/.jcode/skills/swarm-engineering/`. jcode does not ship that skill, so
 this repo is its only source. To get it back, run `./scripts/install`.
+
+## Testing
+
+```bash
+./scripts/test
+```
+
+This runs the real `scripts/install` and `scripts/uninstall`, not a copy of
+their logic. Every check drives the actual script with `HOME` pointed at a
+throwaway directory and asserts on the real output and the real filesystem
+state. The sandbox is removed on exit, and the real `~/.jcode` is never
+touched.
+
+It covers the paths that are easy to get wrong: that `--dry-run` and
+`--check` write nothing, that `--dry-run` exits 0 on a clean `HOME`, that
+neither dry-run claims it installed or removed something, that a real install
+writes all three of config, skills and state, that a second install changes
+nothing, and that `uninstall` never reaches the jcode binary.
+
+Exit code 0 means every check passed.
 
 ## Requirements
 

@@ -81,7 +81,16 @@ phase_preflight() {
     local d
     for d in "$HOME/.jcode" "$SKILLS_HOME" "$STATE_DIR"; do
         [[ -d "$d" ]] || run_mkdir "$d"
-        [[ -w "$d" ]] || { err "not writable: $d"; exit 1; }
+        if [[ $dry_run -eq 1 ]]; then
+            local probe
+            probe="$(nearest_existing_ancestor "$d")"
+            [[ -d "$probe" && -w "$probe" ]] || {
+                err "not writable: $d (via $probe)"
+                exit 1
+            }
+        else
+            [[ -w "$d" ]] || { err "not writable: $d"; exit 1; }
+        fi
     done
 
     # A symlinked config would let a write land in the repo base.
@@ -103,6 +112,24 @@ run_mkdir() {
     fi
 }
 
+# The directory that would hold "$1", whether or not "$1" exists yet.
+#
+# Under --dry-run nothing is created, so a path like $HOME/.jcode may not
+# exist at all. Writability then has to be judged by the nearest existing
+# ancestor, because that is the directory the real install would have to
+# create the path inside. Testing "$1" directly would fail on every clean
+# machine and abort the preview.
+nearest_existing_ancestor() {
+    local probe="$1"
+    while [[ ! -e "$probe" ]]; do
+        local parent
+        parent="$(dirname "$probe")"
+        [[ "$parent" == "$probe" ]] && break
+        probe="$parent"
+    done
+    printf '%s\n' "$probe"
+}
+
 # ---------------------------------------------------------------------------
 # Phase 2: config
 # ---------------------------------------------------------------------------
@@ -110,7 +137,11 @@ run_mkdir() {
 phase_config() {
     section "phase 2: config"
     copy_file "$REPO/config/config.toml" "$JCODE_CONFIG" 0644
-    log "config installed: $JCODE_CONFIG"
+    if [[ $dry_run -eq 1 ]]; then
+        log "would install config: $JCODE_CONFIG"
+    else
+        log "config installed: $JCODE_CONFIG"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -130,7 +161,11 @@ phase_skills() {
         copy_file "$src/SKILL.md" "$SKILLS_HOME/$name/SKILL.md" 0644
         n=$((n+1))
     done
-    log "skills installed: $n"
+    if [[ $dry_run -eq 1 ]]; then
+        log "would install skills: $n"
+    else
+        log "skills installed: $n"
+    fi
 }
 
 # ---------------------------------------------------------------------------

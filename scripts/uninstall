@@ -62,8 +62,12 @@ done
 # remove a path if present, no error when absent
 rm_safe() {
     if [[ -e "$1" || -L "$1" ]]; then
-        log "rm $1"
-        [[ $dry_run -eq 0 ]] && rm -rf "$1"
+        if [[ $dry_run -eq 1 ]]; then
+            log "would remove: $1"
+        else
+            log "rm $1"
+            rm -rf "$1"
+        fi
     else
         log "skip $1 (not present)"
     fi
@@ -124,7 +128,11 @@ main() {
     fi
 
     echo ""
-    echo "uninstall complete"
+    if [[ $dry_run -eq 1 ]]; then
+        echo "dry-run complete. nothing was removed. re-run without --dry-run to actually uninstall."
+    else
+        echo "uninstall complete"
+    fi
     echo ""
     echo "always preserved:"
     echo "  - \$HOME/.local/bin/jcode   (the binary, never installed here)"
