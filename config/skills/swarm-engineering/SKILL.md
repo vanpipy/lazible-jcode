@@ -17,8 +17,8 @@ It provides practical workflows and deliverable standards for:
 It also defines common engineering principles and role handoffs.
 
 This Skill does not replace:
-- Global execution policies in `prompt-overlay.md`.
-- Task decomposition, delegation, and orchestration rules in `swarm-prompt.md`.
+- Global execution policies in `prompt-overlay.md`, including the swarm orchestration policy in its section 12.
+- The `swarm` tool description in `swarm-prompt.md`, which carries model routing and the brief requirements every worker must be given.
 
 The assigned objective and scope take precedence over generic workflow preferences, subject to higher-priority instructions and constraints.
 
@@ -448,6 +448,8 @@ If essential information is missing, identify it specifically. Do not compensate
 
 Every final report must distinguish work completed, evidence obtained, validation performed, findings or failures, remaining uncertainty, and uncompleted work.
 
+Requirements are carried by the todo the worker takes, not by the chat message. See section 13.
+
 ## 9. Definition of Success
 
 Engineering work succeeds when:
@@ -475,3 +477,94 @@ When Skill availability or inheritance is uncertain:
 - Do not assume that a worker has read this document.
 
 Workers must follow the actual runtime capabilities and tool restrictions of the active Jcode version.
+
+## 11. Coordinator Practice
+
+Practice that makes the policy above work. It does not change the policy.
+
+- **Give every parallel lane its own file set.** A lane's ownership list is advisory, not a lock. Two workers handed the same files collide, and a reviewer reading that diff watches it change under them. Lanes that must share a file run one after the other, or they get separate files.
+- **Run the independent verification once, at acceptance.** One full run after the workers are done is evidence. Three overlapping runs are cost without evidence. Let each worker's own report carry its own narrow checks.
+- **Put an open product decision in front of the human before you delegate.** If the requirement leaves a choice open — what exit code a command returns, what counts as failure, which of two behaviours is correct — a worker cannot make that call for you. Ask once, up front, and write the answer into the brief so no round is spent on it later.
+- **An assignment names every surface the worker may touch.** Give it the files it may write, the commands it may run, and the surfaces it must not touch. A worker that meets a surface it was not given stops and reports. It does not explore, and it does not install anything into the host.
+- **Name one test file per function in every brief.** The Developer owns the implementation smoke test. The Tester owns the requirement-clause file. Two workers never author tests for the same clause, because that duplication is the defect the Tester is supposed to find in the implementation, not in another test file. The Tester's requirement-clause file cites the requirement each test covers, and a requirement with no test is a reported coverage gap, never a silent pass.
+- **Accept a worker's executed evidence as the evidence for that claim.** Re-run a check yourself only when the files changed after that worker's run, or when two reports disagree — and then run the independent verification once, at acceptance.
+- **Never poll with sleeps or wait loops.** Use `swarm await_members`, which waits in the background and notifies you when a worker finishes. Do other work, or wait for the completion notice.
+- **Keep one ledger row per round.** The `todo` list is the ledger: the lanes spawned, what each owns, the verdict, and where the evidence came from. Write it once, in order.
+
+## 12. Requirement Matching
+
+This section binds the Reviewer, and any worker asked to report against a requirement.
+
+For every requirement in your assignment, report one line: the requirement, a verdict, and the evidence that supports it.
+
+- `met` — the evidence shows the requirement is satisfied.
+- `not met` — the evidence shows it is not.
+- `not demonstrated` — no evidence either way.
+- `not in scope` — the requirement was outside this assignment.
+
+A verdict without evidence is `not demonstrated`, never `met`. The Tester's `passed` / `failed` / `blocked` / `not-tested` map onto `met` / `not met` / `not demonstrated` / `not demonstrated`.
+
+Two checks, not one: does the check discriminate — would it fail if the behaviour were wrong — and is the behaviour the one the requirement asked for. A review that runs only one of them has not matched the requirement.
+
+If your assignment carried no requirements, say so and report it as a gap. Do not invent requirements.
+
+This section adds to the review completion gate: a review is complete only when every requirement in the assignment carries a verdict and its evidence, or is reported as `not demonstrated`. A `not demonstrated` requirement blocks acceptance until it is checked, or until the Coordinator records an explicit waiver with a reason in the todo row.
+
+## 13. Requirement Handover
+
+Jcode has no separate requirements file. The requirement lives in the todo the worker takes, and the todo's `details` field is the only part handed to that worker.
+
+- The Coordinator writes the todo before dispatching, with one todo per requirement, or a todo whose `details` carries one requirement block per requirement.
+- The `details` field of a todo carries the requirement, the observable check that proves it, and its source:
+
+  ```
+  <the requirement>
+      check: <what proves it>
+      source: <the assignment | path:line | the behaviour that must not change>
+  ```
+
+- The brief names the todos it covers. It does not repeat the requirement text: a copy in a chat message is what drifts.
+- No worker authors requirements, and no worker keeps a copy of the requirement text in its own words.
+- The todo list is where the requirement text comes from. If the brief describes a requirement differently, or names a requirement the todo does not define, the worker REPORTS THE CONFLICT and stops that requirement. It does not pick a winner and it does not invent the missing one. The requirement is `not demonstrated` until the conflict is resolved; the other requirements are unaffected.
+- A worker cites the requirement as `<todo id>`. A verdict without that citation is `not demonstrated`.
+- A requirement whose todo cannot be read is `not demonstrated`, never `met`.
+- A todo is only authoritative over the behaviour it names. Before it is written, the Coordinator reconciles it with the repository's existing tests; a requirement that contradicts an existing test is a conflict in its own right, and it is reported like any other.
+
+## 14. Native Verification Surfaces
+
+Jcode verifies independently without a worker. Prefer these over spawning a
+critic.
+
+- **`/autoreview`** runs an end-of-turn reviewer over the session's actual
+  changes. It inspects the repo with `git diff --stat`, `git diff --name-only`,
+  and focused file reads, and reports concrete findings with severity and file
+  paths. It takes `on`, `off`, `status`, and `now`. Enabled per session with
+  `/autoreview on`, or globally with
+  `[autoreview] enabled = true` in `config.toml`. Its model is
+  `[autoreview] model`.
+- **`/autojudge`** runs an end-of-turn completion manager. It decides whether
+  the parent agent should keep going and tells it exactly what to do next. It
+  only says stop when the intent has been carried through. It takes the same
+  four arguments. Enabled with `/autojudge on` or
+  `[autojudge] enabled = true`. Its model is `[autojudge] model`.
+- **`/review` and `/judge`** are the one-shot forms. They launch a headed
+  review or judge session immediately, without waiting for an end of turn.
+
+These review the actual repo state, which is why they substitute for a Reviewer
+worker rather than complement it. The Reviewer section above still describes
+what their output should contain, and the finding classification still applies
+to their results.
+
+The two paths are not interchangeable. The native surfaces inspect the
+coordinator's working tree. If workers wrote into isolated worktrees, their
+changes are not in that tree and the native reviewer will not see them: verify
+per lane, or integrate first. A Reviewer worker, by contrast, receives the
+shared plan and its scoped instructions, and can be given a worktree scope or a
+different working directory. Use a Reviewer worker when the thing to review is
+not in the coordinator's tree, or when the review needs a specific lens you
+want stated in the brief.
+
+A worker whose only job is to critique is a poor use of a worker when the
+changes are in the coordinator's tree. It has the same tool description and the
+same skill, but it costs a lane, a slot, and a round trip for output the host
+can produce faster and against the real diff.

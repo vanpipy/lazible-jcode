@@ -25,6 +25,69 @@ scripts/install        ->  wires the two above
 | `scripts/uninstall` | Reverses install |
 | `scripts/common.sh` | Shared paths and helpers, sourced by both scripts |
 
+## The three prompt tiers
+
+The swarm guidance is split across three files because jcode loads them at
+different costs, in different places.
+
+| File | Loaded as | Cost | Holds |
+| --- | --- | --- | --- |
+| `config/swarm-prompt.md` | the `swarm` tool description | always-on, every session | model routing, when to spawn, what a brief must carry |
+| `config/prompt-overlay.md` | a system-prompt layer | always-on, every session | coordinator policy: delegation, verification, acceptance |
+| `config/skills/swarm-engineering/SKILL.md` | a Skill, on demand | only when loaded | the Developer / Tester / Reviewer methods |
+
+`swarm-prompt.md` is the expensive one. It becomes a tool description, so it
+is sent on every request in every session, including spawned workers. Keep it
+to routing and brief requirements, and put policy in the overlay instead.
+
+Measured on v0.99.1 with `jcode run --json`, three samples per cell, using
+input tokens per request:
+
+| swarm prompt | overlay | input tokens |
+| --- | --- | --- |
+| old | old | 18,453 |
+| new | old | 16,123 / 16,122 / 16,230 |
+| new | new | 17,695 / 17,695 / 17,695 |
+| old | new | 20,026 / 20,026 / 20,134 |
+
+Swapping only the swarm prompt saves about 2,300 input tokens per request.
+That is the isolated saving for the tool description, and it is the reason the
+split exists. The overlay grew to absorb the policy that used to live in the
+tool description, so the net saving of the combined change against the old
+baseline is smaller: 18,453 down to 17,695, about 758 tokens per request.
+
+In bytes the move is larger than the net suggests: the tool description shrank
+from 17,082 to 3,869 bytes and the overlay grew from 12,143 to 19,774. The
+net gain is the small part. The rest of the value is structural: the overlay
+is a system-prompt layer that can be edited on its own, and the two files
+have different reload behaviour, described below.
+
+Check those byte counts against the files themselves, `wc -c`, before trusting
+them. They describe one revision of this repository and will drift.
+
+The overlay is a separate file because jcode reloads it. Editing it mid-session
+picks the change up on the next turn. The swarm prompt is read when a session
+starts, so changing it affects the next session, not the current one.
+
+That difference is real, not documentation drift. On v0.99.1 the overlay is
+re-read from disk on every turn. The swarm prompt is baked into the `swarm`
+tool description when the tool registry is built, so within one session the
+description stays fixed: editing the file mid-session does not change the
+description that session already has.
+
+A worker spawned later does not inherit that. A worker builds its own tool
+registry when it starts, so it reads the swarm prompt from disk at that
+moment. Editing the file therefore changes the description a *future* worker
+gets, while the coordinator that spawned it keeps the description it started
+with. Verified on v0.99.1: stamping a marker into the live file left the
+running session's tool payload byte-identical, while a worker spawned
+immediately afterwards reported the marker in its own swarm tool
+description.
+
+The Skill is loaded only when an agent asks for it, which is why it can be
+long. It is also the file most likely to be read by a worker that was handed a
+brief, so a brief should say which section of it governs the task.
+
 ## Install
 
 ```bash

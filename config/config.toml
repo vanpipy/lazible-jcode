@@ -210,10 +210,15 @@ goal_window_turns = 5
 prevent_sleep_while_streaming = true
 
 [autoreview]
-enabled = false
+# End-of-turn reviewer. It inspects the repo's actual changes (git diff and
+# focused file reads) and reports findings with severity and file paths, so it
+# covers independent verification without spending a worker lane on it.
+enabled = true
 
 [autojudge]
-enabled = false
+# End-of-turn completion manager. It tells the agent whether to continue and
+# what to do next, and only says stop when the intent has been carried through.
+enabled = true
 
 [launch_hotkeys]
 enabled = true
