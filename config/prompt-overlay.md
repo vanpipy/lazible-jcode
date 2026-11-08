@@ -247,7 +247,7 @@ surfaces over a worker whose only job is critique.
   when the intent has been carried through. It takes the same four arguments.
   Model: `[autojudge] model`.
 - `/review` and `/judge` are the one-shot forms: they launch a headed review or
-  judge session on demand, without waiting for an end of turn.
+  judge session on demand, without relying on the end-of-turn trigger.
 
 The automatic end-of-turn trigger does not fire in every mode. On v0.99.1 it
 sits in the local turn path and the product TUI runs in remote mode, so

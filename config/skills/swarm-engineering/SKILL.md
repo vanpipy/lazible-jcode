@@ -549,7 +549,7 @@ critic.
   `now` launches the judge on demand. Enabled with `/autojudge on` or
   `[autojudge] enabled = true`. Its model is `[autojudge] model`.
 - **`/review` and `/judge`** are the one-shot forms. They launch a headed
-  review or judge session on demand, without waiting for an end of turn.
+  review or judge session on demand, without relying on the end-of-turn trigger.
 
 All of these are client-side TUI commands. A worker or a headless agent cannot
 type them into the user's composer, and no tool exposes them to the model. An

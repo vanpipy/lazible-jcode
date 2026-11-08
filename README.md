@@ -41,18 +41,11 @@ is sent on every request in every session, including spawned workers. Keep it
 to routing and brief requirements, and put policy in the overlay instead.
 
 Measured on v0.99.1 with `jcode run --json`, using input tokens per request.
-Run it from this repository so the working directory matches the table, and
-disable the memory sidecar, which injects a variable recall block and adds an
-unrelated jitter of about 108 tokens to every sample:
+Run it from this repository so the working directory matches the table:
 
 ```
-JCODE_MEMORY_SIDECAR_ENABLED=false jcode run --json "reply with the single word: ok"
+jcode run --json "reply with the single word: ok"
 ```
-
-With the sidecar off, every cell below is exactly reproducible across repeated
-runs. With the sidecar on, each cell splits into two clusters roughly 108
-tokens apart, which is a property of the memory injection and not of these
-files.
 
 | swarm prompt | overlay | input tokens per request |
 | --- | --- | --- |
@@ -60,6 +53,11 @@ files.
 | new | old | 16,163 |
 | new | new | 17,867 |
 | old | new | 20,144 |
+
+Each cell is the reading the provider gave most often, and each is subject to
+the spread described below. In a production log, the cell's own request-size
+class matched the value above 94%, 90%, 81% and 95% of the time respectively.
+Read a cell as "the usual reading", not as an exact constant.
 
 Swapping only the swarm prompt saves 2,277 input tokens per request. That is
 the isolated saving for the tool description, and it is the reason the split
@@ -69,13 +67,83 @@ saving of the combined change against the old baseline is smaller: the old
 baseline down to 17,867, a saving of 573 tokens per request.
 
 In bytes the move is larger than the net suggests: the tool description shrank
-from 17,082 to 4,084 bytes and the overlay grew from 12,143 to 20,130. The
+from 17,082 to 4,084 bytes and the overlay grew from 12,143 to 20,138. The
 net gain is the small part. The rest of the value is structural: the overlay
 is a system-prompt layer that can be edited on its own, and the two files
 have different reload behaviour, described below.
 
 Check those byte counts against the files themselves, `wc -c`, before trusting
 them. They describe one revision of this repository and will drift.
+
+### The provider's input count varies for the same request shape
+
+The table above is stable, but the provider's own input count is not always
+reproducible, and the cause is not in these files. On MiniMax-M3 through
+`/v1/chat/completions`, requests that carried the same provider-visible
+shape were sometimes reported 108 tokens apart.
+
+`input=` in the log is the provider's own number, not a jcode estimate. On
+v0.99.1 the provider's `usage.prompt_tokens` is read in
+`crates/jcode-provider-openrouter/src/stream.rs:481`, carried as
+`StreamEvent::TokenUsage { input_tokens }`, and written to the log unchanged at
+`crates/jcode-app-core/src/agent/turn_loops.rs:845`. jcode's own tokenizer
+estimate is a separate field, `Prompt prefix estimate: total=`.
+
+What was measured, on a production log window ending 2026-11-08 23:30, with
+694 request fingerprints paired to their completion by session id:
+
+- Every `request_hash` was unique, and each one mapped to exactly one
+  reported input count. No byte-identical request produced two counts.
+- Grouping requests by provider-visible shape (`request_json_chars`,
+  `item_count`, `system_hash`, `tools_hash`, `tool_count`) produced 107 groups,
+  29 of which received two or more different counts. In all 29 the only
+  fingerprint fields that differed were `request_hash`, `input_hash`,
+  `item_hashes_hash` and `last_item_hash`.
+- jcode's own `Prompt prefix estimate: total=` was **identical** in every one
+  of those 29 groups, so the two requests were the same size by jcode's own
+  measurement.
+- The common difference was 108 tokens: 16 of the 29 groups split by exactly
+  108, two by 109, one by 107, and the rest by smaller or larger amounts.
+
+The strongest evidence is in the cache accounting. In the 74,177-byte class,
+the provider reported `cache_read` values of 17,801 and 17,803 alongside the
+higher `input=17975`, against 17,664 and 17,695 alongside `input=17867`. Pair
+the two counts that share an uncached remainder and the whole difference lands
+in the cached part:
+
+| `input` | `cache_read` | uncached remainder | rows |
+| --- | --- | --- | --- |
+| 17,867 | 17,695 | 172 | 4 |
+| 17,975 | 17,803 | 172 | 11 |
+
+Same remainder, so the uncached tail did not move. The provider counted 108
+more tokens and also served 108 more tokens from its cache. The same pattern
+holds in the 74,032-byte class, where `17827`/`17695` and `17935`/`17803`
+share a remainder of 132.
+
+Replays do not reproduce it. 190 request bodies of 74,177 bytes were
+reconstructed from the production sessions and verified against the
+production `request_hash`, which is a hash of the request bytes, so each
+reconstructed body is byte-identical to the production body it stands for.
+Every one of the 190 replays reported `prompt_tokens=17867`, including the 73
+whose original production call had reported 17,975. Only the cached-token
+number moved between replays of the same body, taking ten distinct values. So
+the split is not reproducible from the request bytes alone, and the provider's
+cached-token accounting is not stable even when the reported input count is.
+
+What is not established: what makes the provider count the same request shape
+two ways. The evidence above shows the split is not explained by the request
+size, by jcode's own measurement, or by a request that reproduces a recorded
+production hash. It points at the provider's cached-prefix accounting, but it
+does not identify a provider-side trigger, and it does not exclude every
+possible contribution from request content: the split groups do contain
+different request hashes, and the fingerprint fields that differ are exactly
+the ones that track the conversation content. Treat the table as the
+reproducible measurement and the spread as a known provider-side uncertainty of
+the same order (108 tokens on a ~17,900-token prompt is about 0.6%). The spread
+is small next to the differences the table is comparing, so it does not change
+their ordering, but it does mean a single run can read up to 108 tokens above
+the value shown.
 
 The overlay is a separate file because jcode reloads it. Editing it mid-session
 picks the change up on the next turn. The swarm prompt is read when a session
