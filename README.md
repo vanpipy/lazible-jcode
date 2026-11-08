@@ -40,25 +40,36 @@ different costs, in different places.
 is sent on every request in every session, including spawned workers. Keep it
 to routing and brief requirements, and put policy in the overlay instead.
 
-Measured on v0.99.1 with `jcode run --json`, six samples per cell, using
-input tokens per request:
+Measured on v0.99.1 with `jcode run --json`, using input tokens per request.
+Run it from this repository so the working directory matches the table, and
+disable the memory sidecar, which injects a variable recall block and adds an
+unrelated jitter of about 108 tokens to every sample:
 
-| swarm prompt | overlay | input tokens (min to max) |
+```
+JCODE_MEMORY_SIDECAR_ENABLED=false jcode run --json "reply with the single word: ok"
+```
+
+With the sidecar off, every cell below is exactly reproducible across repeated
+runs. With the sidecar on, each cell splits into two clusters roughly 108
+tokens apart, which is a property of the memory injection and not of these
+files.
+
+| swarm prompt | overlay | input tokens per request |
 | --- | --- | --- |
-| old | old | 18,408 to 18,516 |
-| new | old | 16,131 to 16,239 |
-| new | new | 17,833 (stable) |
-| old | new | 20,110 to 20,218 |
+| old | old | 18,440 |
+| new | old | 16,163 |
+| new | new | 17,867 |
+| old | new | 20,144 |
 
-Swapping only the swarm prompt saves between 2,169 and 2,385 input tokens per
-request, depending on the sample. That is the isolated saving for the tool
-description, and it is the reason the split exists. The overlay grew to absorb
-the policy that used to live in the tool description, so the net saving of the
-combined change against the old baseline is smaller: the old baseline down to
-17,833, a saving of 575 to 683 tokens per request.
+Swapping only the swarm prompt saves 2,277 input tokens per request. That is
+the isolated saving for the tool description, and it is the reason the split
+exists. The overlay grew to absorb the policy that used to live in the tool
+description, and it costs 1,704 tokens wherever it is carried, so the net
+saving of the combined change against the old baseline is smaller: the old
+baseline down to 17,867, a saving of 573 tokens per request.
 
 In bytes the move is larger than the net suggests: the tool description shrank
-from 17,082 to 4,084 bytes and the overlay grew from 12,143 to 20,134. The
+from 17,082 to 4,084 bytes and the overlay grew from 12,143 to 20,130. The
 net gain is the small part. The rest of the value is structural: the overlay
 is a system-prompt layer that can be edited on its own, and the two files
 have different reload behaviour, described below.
@@ -104,9 +115,13 @@ runs in remote mode, and the hook never fires in the product TUI. The result:
 | Surface | What actually happens on v0.99.1 |
 | --- | --- |
 | `/autoreview status` | Reports the flag, which reads `enabled` from the config |
-| `/autoreview now`, `/autojudge now` | Launch a reviewer or judge immediately, in the TUI |
+| `/autoreview now`, `/autojudge now` | Launch a reviewer or judge on demand, in the TUI |
 | `/review`, `/judge` | Launch a one-shot review or judge session, in the TUI |
 | Automatic end-of-turn trigger | Does not fire in the product TUI |
+
+On demand means the command does not wait for the end-of-turn trigger. In the
+product TUI the launch happens straight away when no turn is running, and is
+queued until the current turn finishes when one is.
 
 Verified two ways. Observed: a headless `jcode run` in a fresh repository
 produced only the requested root session, and the session flags stayed unset;

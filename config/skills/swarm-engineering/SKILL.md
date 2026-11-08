@@ -538,7 +538,7 @@ critic.
 - **`/autoreview`** reviews the session's actual changes. It inspects the repo
   with `git diff --stat`, `git diff --name-only`, and focused file reads, and
   reports concrete findings with severity and file paths. It takes `on`, `off`,
-  `status`, and `now`. `now` launches the reviewer immediately. Enabled per
+  `status`, and `now`. `now` launches the reviewer on demand. Enabled per
   session with `/autoreview on`, or globally with
   `[autoreview] enabled = true` in `config.toml`. Its model is
   `[autoreview] model`. It is a TUI command, so it is typed by the user in
@@ -546,10 +546,10 @@ critic.
 - **`/autojudge`** is a completion manager. It decides whether the parent agent
   should keep going and tells it exactly what to do next. It only says stop
   when the intent has been carried through. It takes the same four arguments.
-  `now` launches the judge immediately. Enabled with `/autojudge on` or
+  `now` launches the judge on demand. Enabled with `/autojudge on` or
   `[autojudge] enabled = true`. Its model is `[autojudge] model`.
 - **`/review` and `/judge`** are the one-shot forms. They launch a headed
-  review or judge session immediately, without waiting for an end of turn.
+  review or judge session on demand, without waiting for an end of turn.
 
 All of these are client-side TUI commands. A worker or a headless agent cannot
 type them into the user's composer, and no tool exposes them to the model. An
