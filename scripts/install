@@ -40,6 +40,21 @@ check_only=0
 # Live prompt files. Mirrored into config/ for review, never written here.
 LIVE_PROMPTS=(prompt-overlay.md swarm-prompt.md)
 
+# The live path of every skill this repo owns.
+#
+# phase 3 copies into these, and the uninstaller removes them, so they are
+# the paths that have to be checked against the repo boundary. They are
+# listed here, once, so that the installer and the uninstaller agree on
+# exactly which skills are in scope.
+skill_targets=()
+skill_names=()
+for skill_src in "$REPO"/config/skills/*/; do
+    skill_src="${skill_src%/}"
+    [[ -f "$skill_src/SKILL.md" ]] || continue
+    skill_names+=("$(basename "$skill_src")")
+    skill_targets+=("$SKILLS_HOME/$(basename "$skill_src")")
+done
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) dry_run=1; shift ;;
@@ -88,7 +103,21 @@ phase_preflight() {
     # and the state directory, and if either path is a symlink into the repo
     # that mkdir would put a directory inside the repo before the refusal
     # ever ran. Checking first means a refusal leaves the repo untouched.
+    #
+    # The skills DIRECTORY is guarded as well as each skill's own directory.
+    # The skill list alone would catch a redirected skill, but not a skills
+    # directory that holds no skill this repo owns, and the mkdir loop
+    # below would create that directory inside the repo.
+    #
+    # Each skill's OWN directory is guarded too, not just the skills
+    # directory that holds them. A single skill directory symlinked into
+    # the repo is the same hazard one level down: the guard on
+    # $SKILLS_HOME alone would not see it, and the refusal would only
+    # happen once phase 3 reached that skill, by which time phase 2 had
+    # already written config.toml. Guarding it here keeps the refusal
+    # up front, where nothing has been written yet.
     guard_outside_repo "$JCODE_CONFIG" "$SKILLS_HOME" "$STATE_DIR" "$STATE_FILE"
+    guard_outside_repo "${skill_targets[@]}"
 
     # A symlinked config would let a write land in the repo base.
     if [[ -L "$JCODE_CONFIG" ]]; then
@@ -212,12 +241,10 @@ phase_config() {
 
 phase_skills() {
     section "phase 3: skills"
-    local n=0 src name
-    for src in "$REPO"/config/skills/*/; do
-        src="${src%/}"
-        [[ -f "$src/SKILL.md" ]] || continue
-        name="$(basename "$src")"
-        copy_file "$src/SKILL.md" "$SKILLS_HOME/$name/SKILL.md" 0644
+    local n=0 name
+    for name in "${skill_names[@]}"; do
+        copy_file "$REPO/config/skills/$name/SKILL.md" \
+            "$SKILLS_HOME/$name/SKILL.md" 0644
         n=$((n+1))
     done
     if [[ $dry_run -eq 1 ]]; then
@@ -285,11 +312,8 @@ phase_verify() {
     # Every repo skill must be present under ~/.jcode/skills. Extra live skills
     # are fine: this repo owns only what is under config/skills/, so anything
     # else jcode provides is left untouched.
-    local missing_skills=() src name
-    for src in "$REPO"/config/skills/*/; do
-        src="${src%/}"
-        [[ -f "$src/SKILL.md" ]] || continue
-        name="$(basename "$src")"
+    local missing_skills=() name
+    for name in "${skill_names[@]}"; do
         [[ -f "$SKILLS_HOME/$name/SKILL.md" ]] || missing_skills+=("$name")
     done
     [[ ${#missing_skills[@]} -eq 0 ]]

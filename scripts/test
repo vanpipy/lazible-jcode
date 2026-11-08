@@ -723,6 +723,18 @@ cp "$REPO/scripts/install" "$REPO/scripts/uninstall" "$REPO/scripts/common.sh" \
 # preflight's own dangling-symlink check, and the test would then pass for
 # the wrong reason instead of proving the repo boundary.
 mkdir -p "$BOUNDARY_REPO/state-in-repo"
+
+# A skills directory inside the repo whose own skill points back OUT of
+# the repo. Case 6c redirects the live skills dir at it.
+#
+# It is created BEFORE the fingerprint below, so the baseline includes it.
+# A fixture added after the baseline would make the final comparison fail
+# for the wrong reason: the test would be measuring its own setup.
+mkdir -p "$BOUNDARY_REPO/other-skills" "$SANDBOX/outside-skill"
+printf 'outside skill\n' > "$SANDBOX/outside-skill/SKILL.md"
+ln -s "$SANDBOX/outside-skill" \
+    "$BOUNDARY_REPO/other-skills/swarm-engineering"
+
 boundary_before="$(tree_fingerprint "$BOUNDARY_REPO")"
 
 # Case 1: ~/.jcode is a symlink into the repo.
@@ -837,6 +849,71 @@ assert_contains "install refuses a skills dir redirected into the repo" \
 assert_eq "install exits non-zero when the skills dir is inside the repo" \
     "1" "$b7_rc"
 
+# Case 6b: only ONE SKILL's own directory is redirected into the repo.
+#
+# This is the same hazard one level down. Guarding the skills directory is
+# not enough: the skills directory itself is real, so the guard on it sees
+# nothing wrong, and the refusal would only arrive once phase 3 reached
+# that skill, by which time phase 2 had already written config.toml.
+mkdir -p "$SANDBOX/b7b/home/.jcode/skills" "$SANDBOX/b7b/state"
+ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
+    "$SANDBOX/b7b/home/.jcode/skills/swarm-engineering"
+set +e
+b7b_out="$(HOME="$SANDBOX/b7b/home" XDG_STATE_HOME="$SANDBOX/b7b/state" \
+    "$BOUNDARY_REPO/scripts/install" 2>&1)"
+b7b_rc=$?
+set -e
+assert_contains "install refuses a skill's own directory redirected into the repo" \
+    "resolves inside this repo" "$b7b_out"
+assert_eq "install exits non-zero when a skill dir is inside the repo" \
+    "1" "$b7b_rc"
+
+# The refusal has to come BEFORE anything is written. Otherwise the
+# install is half done: the config is already in place when the refusal
+# arrives.
+if [[ -f "$SANDBOX/b7b/home/.jcode/config.toml" ]]; then
+    bad "a refused skill dir writes nothing at all" \
+        "config.toml was written before the refusal"
+else
+    ok "a refused skill dir writes nothing at all"
+fi
+if [[ -f "$SANDBOX/b7b/state/lazible-jcode/state.json" ]]; then
+    bad "a refused skill dir writes no state file" \
+        "state.json was written before the refusal"
+else
+    ok "a refused skill dir writes no state file"
+fi
+
+# Case 6c: the skills DIRECTORY is redirected into the repo, but the skill
+# inside it points back out.
+#
+# This is the only case that proves the skills-directory guard does its own
+# work. skill_targets holds $SKILLS_HOME/<skill>, and here that resolves
+# OUTSIDE the repo while $SKILLS_HOME itself resolves inside it. So the
+# skill-list guard sees nothing wrong, and only the skills-directory guard
+# can catch it.
+#
+# It needs a symlink chain: $SKILLS_HOME -> <repo>/other-skills, and
+# <repo>/other-skills/swarm-engineering -> a directory outside the repo.
+# Both ends of the chain were built with the fingerprint baseline above.
+mkdir -p "$SANDBOX/b7c/home/.jcode"
+ln -s "$BOUNDARY_REPO/other-skills" "$SANDBOX/b7c/home/.jcode/skills"
+set +e
+b7c_out="$(HOME="$SANDBOX/b7c/home" XDG_STATE_HOME="$SANDBOX/b7c/state" \
+    "$BOUNDARY_REPO/scripts/install" 2>&1)"
+b7c_rc=$?
+set -e
+assert_contains "install refuses a skills dir in the repo even when the skill points out" \
+    "resolves inside this repo" "$b7c_out"
+assert_eq "install exits non-zero when only the skills dir is inside the repo" \
+    "1" "$b7c_rc"
+if [[ -f "$SANDBOX/b7c/home/.jcode/config.toml" ]]; then
+    bad "a refused skills dir writes nothing at all" \
+        "config.toml was written before the refusal"
+else
+    ok "a refused skills dir writes nothing at all"
+fi
+
 # The repo must be byte-identical after all of that.
 boundary_after="$(tree_fingerprint "$BOUNDARY_REPO")"
 assert_eq "the repo is byte-identical after every symlinked attempt" \
@@ -869,6 +946,39 @@ if [[ -f "$SANDBOX/b8/home/.jcode/config.toml" ]]; then
     ok "a refused uninstall leaves the config in place"
 else
     bad "a refused uninstall leaves the config in place" "the config was removed"
+fi
+
+# Case 7b: the same, but with only ONE SKILL's own directory redirected.
+#
+# The uninstaller removes the skill directories, so a skill directory
+# symlinked into the repo would make "rm -rf" delete the repo's own skill
+# files. The refusal still has to be up front.
+mkdir -p "$SANDBOX/b9/home" "$SANDBOX/b9/state"
+HOME="$SANDBOX/b9/home" XDG_STATE_HOME="$SANDBOX/b9/state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+rm -rf "$SANDBOX/b9/home/.jcode/skills/swarm-engineering"
+ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
+    "$SANDBOX/b9/home/.jcode/skills/swarm-engineering"
+set +e
+b9_out="$(HOME="$SANDBOX/b9/home" XDG_STATE_HOME="$SANDBOX/b9/state" \
+    "$BOUNDARY_REPO/scripts/uninstall" --full --yes 2>&1)"
+b9_rc=$?
+set -e
+assert_contains "uninstall refuses a skill's own directory redirected into the repo" \
+    "resolves inside this repo" "$b9_out"
+assert_eq "uninstall exits non-zero when a skill dir is inside the repo" \
+    "1" "$b9_rc"
+if [[ -f "$SANDBOX/b9/state/lazible-jcode/state.json" ]]; then
+    ok "a refused skill dir removes nothing, not even the state file"
+else
+    bad "a refused skill dir removes nothing, not even the state file" \
+        "the state file was deleted before the refusal"
+fi
+if [[ -f "$BOUNDARY_REPO/config/skills/swarm-engineering/SKILL.md" ]]; then
+    ok "a refused skill dir leaves the repo's own skill file in place"
+else
+    bad "a refused skill dir leaves the repo's own skill file in place" \
+        "the repo's SKILL.md was deleted"
 fi
 
 # ---------------------------------------------------------------------------

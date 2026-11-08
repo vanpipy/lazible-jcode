@@ -1,0 +1,491 @@
+#!/usr/bin/env bash
+# doc-check : verify that the README's factual claims are actually true.
+#
+# The README makes promises about what the installer and the uninstaller do.
+# A promise in prose is only worth as much as the check behind it, so this
+# script turns those promises into assertions and runs them against the real
+# scripts.
+#
+# Each check does two things:
+#
+#   1. it finds the claim in the README, and fails if the README no longer
+#      states it in a form this script can read, and
+#   2. it verifies the claim against the real code, and fails if the code
+#      no longer keeps it.
+#
+# A doc that drifts from the code, and a code that drifts from the doc, both
+# show up here as a failure.
+#
+# Everything runs against throwaway copies. Nothing here touches the real
+# ~/.jcode or the real repo.
+
+set -uo pipefail
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+README="$REPO/README.md"
+
+pass=0
+fail=0
+
+ok()  { pass=$((pass+1)); echo "  ok   $1"; }
+bad() {
+    fail=$((fail+1))
+    echo "  FAIL $1"
+    shift
+    local detail
+    for detail in "$@"; do echo "       $detail"; done
+}
+
+# check_claim <label> <readme-pattern> <description>
+#
+# The claim has to be findable in the README. If it is not, the README
+# changed its wording and this check no longer knows what it was asserting.
+check_claim() {
+    local label="$1" pattern="$2"
+    if grep -qF "$pattern" "$README"; then
+        ok "$label"
+    else
+        bad "$label" "the README no longer states: $pattern"
+    fi
+}
+
+# The fingerprint of a tree: every path with its type and content.
+#
+# Content is hashed, not just the size, so that a change which keeps the
+# same length still shows up.
+tree_fingerprint() {
+    local root="$1"
+    if [[ ! -e "$root" && ! -L "$root" ]]; then
+        echo "(absent)"
+        return 0
+    fi
+    ( cd "$root" && find . -mindepth 1 | sort | while read -r p; do
+        if [[ -L "$p" ]]; then
+            echo "l $p -> $(readlink "$p")"
+            if [[ -f "$p" ]]; then
+                echo "l $p content $(sha256sum < "$p" | cut -d' ' -f1)"
+            elif [[ -d "$p" ]]; then
+                echo "l $p dir $(cd "$p" && find . -mindepth 1 -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)"
+            fi
+        elif [[ -d "$p" ]]; then
+            echo "d $p"
+        elif [[ -f "$p" ]]; then
+            echo "f $p $(sha256sum < "$p" | cut -d' ' -f1)"
+        else
+            echo "? $p"
+        fi
+    done )
+}
+
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lazible-doc-check.XXXXXX")"
+trap 'rm -rf "$SANDBOX"' EXIT
+
+echo "lazible-jcode doc check"
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1. the structure the README describes
+# ---------------------------------------------------------------------------
+
+echo "=== the README describes the real structure ==="
+
+# "Five phases: preflight, config, skills, verify, state."
+readme_phases="$(grep -o 'Five phases: [a-z, ]*' "$README" | head -1 |
+    sed 's/^Five phases: //')"
+code_phases="$(grep -o 'section "phase [0-9]*: [a-z]*"' "$REPO/scripts/install" |
+    sed 's/.*: //; s/"$//' | tr '\n' ',' | sed 's/,$//')"
+# The README writes "preflight, config, ..." with spaces, the code has
+# "preflight,config,...". Normalise both to the same shape.
+readme_phases_norm="$(echo "$readme_phases" | tr -d ' ')"
+if [[ -n "$readme_phases" && "$readme_phases_norm" == "$code_phases" ]]; then
+    ok "the README's phase list matches the installer's phases"
+else
+    bad "the README's phase list matches the installer's phases" \
+        "README: $readme_phases" "code:   $code_phases"
+fi
+
+# "Verify ends with 5 checks."
+check_count="$(grep -c '^\s*\(check\|warn_check\) "' "$REPO/scripts/install")"
+if grep -q 'Verify ends with 5 checks' "$README" &&
+   grep -q 'the same 5 checks' "$README" &&
+   [[ "$check_count" -eq 5 ]]; then
+    ok "the README's 5 checks match the installer's verify phase"
+else
+    bad "the README's 5 checks match the installer's verify phase" \
+        "the installer's verify phase has $check_count check calls" \
+        "the README says 5"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. the repo boundary
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README's repo boundary claims hold ==="
+
+# A throwaway copy of the repo, used as the "repo" the symlinks point at.
+# A check must never be able to damage the repository it runs in.
+BOUNDARY_REPO="$SANDBOX/repo"
+cp -r "$REPO" "$BOUNDARY_REPO"
+rm -rf "$BOUNDARY_REPO/.git"
+mkdir -p "$BOUNDARY_REPO/state-in-repo"
+
+# A skills directory inside the repo whose own skill points back OUT of
+# the repo. The skills-dir case below redirects the live skills dir at it.
+#
+# It is created BEFORE the fingerprint below, so the baseline includes it.
+# A fixture added after the baseline would make the final comparison fail
+# for the wrong reason: the test would be measuring its own setup.
+mkdir -p "$BOUNDARY_REPO/other-skills" "$SANDBOX/outside-skill"
+printf 'outside skill\n' > "$SANDBOX/outside-skill/SKILL.md"
+ln -s "$SANDBOX/outside-skill" \
+    "$BOUNDARY_REPO/other-skills/swarm-engineering"
+
+boundary_before="$(tree_fingerprint "$BOUNDARY_REPO")"
+
+# refuses <label> <setup-command...>
+#
+# Runs install with HOME set up by the caller and reports whether it refused.
+refuses_install() {
+    local home="$1" state="$2"
+    ! HOME="$home" XDG_STATE_HOME="$state" \
+        "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+}
+
+# The README lists the paths that are covered. Each one is redirected into
+# the repo and has to cause a refusal.
+#
+# ~/.jcode/config.toml
+mkdir -p "$SANDBOX/p1/home/.jcode"
+ln -s "$BOUNDARY_REPO/config/config.toml" "$SANDBOX/p1/home/.jcode/config.toml"
+if refuses_install "$SANDBOX/p1/home" "$SANDBOX/p1/state"; then
+    ok "a ~/.jcode/config.toml redirected into the repo is refused"
+else
+    bad "a ~/.jcode/config.toml redirected into the repo is refused" \
+        "install exited 0"
+fi
+
+# ~/.jcode/skills/
+mkdir -p "$SANDBOX/p2/home/.jcode"
+ln -s "$BOUNDARY_REPO/config/skills" "$SANDBOX/p2/home/.jcode/skills"
+if refuses_install "$SANDBOX/p2/home" "$SANDBOX/p2/state"; then
+    ok "a ~/.jcode/skills redirected into the repo is refused"
+else
+    bad "a ~/.jcode/skills redirected into the repo is refused" \
+        "install exited 0"
+fi
+
+# the state directory
+mkdir -p "$SANDBOX/p3/home"
+ln -s "$BOUNDARY_REPO/state-in-repo" "$SANDBOX/p3/state"
+if refuses_install "$SANDBOX/p3/home" "$SANDBOX/p3/state"; then
+    ok "a state directory redirected into the repo is refused"
+else
+    bad "a state directory redirected into the repo is refused" \
+        "install exited 0"
+fi
+
+# the state file
+mkdir -p "$SANDBOX/p4/home" "$SANDBOX/p4/state/lazible-jcode"
+ln -s "$BOUNDARY_REPO/state-in-repo/state.json" \
+    "$SANDBOX/p4/state/lazible-jcode/state.json"
+if refuses_install "$SANDBOX/p4/home" "$SANDBOX/p4/state"; then
+    ok "a state file redirected into the repo is refused"
+else
+    bad "a state file redirected into the repo is refused" "install exited 0"
+fi
+
+# Each skill's own directory. The README says the skills are covered, and
+# a skill directory is a skills path one level down.
+mkdir -p "$SANDBOX/p5/home/.jcode/skills"
+ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
+    "$SANDBOX/p5/home/.jcode/skills/swarm-engineering"
+if refuses_install "$SANDBOX/p5/home" "$SANDBOX/p5/state"; then
+    ok "a skill's own directory redirected into the repo is refused"
+else
+    bad "a skill's own directory redirected into the repo is refused" \
+        "install exited 0"
+fi
+
+# The skills DIRECTORY, with the skill inside it pointing back out.
+#
+# This is the case that proves the skills-directory guard does its own
+# work. The skill path resolves outside the repo while the skills directory
+# itself resolves inside it, so a guard on the skill list alone would see
+# nothing wrong.
+mkdir -p "$SANDBOX/p5b/home/.jcode"
+ln -s "$BOUNDARY_REPO/other-skills" "$SANDBOX/p5b/home/.jcode/skills"
+if refuses_install "$SANDBOX/p5b/home" "$SANDBOX/p5b/state"; then
+    ok "a skills dir in the repo is refused even when the skill points out"
+else
+    bad "a skills dir in the repo is refused even when the skill points out" \
+        "install exited 0"
+fi
+
+# "The check runs before the first mkdir, not when the write happens."
+#
+# A refusal has to leave nothing behind. If the check ran at write time,
+# the config would already be in place.
+mkdir -p "$SANDBOX/p6/home/.jcode/skills"
+ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
+    "$SANDBOX/p6/home/.jcode/skills/swarm-engineering"
+HOME="$SANDBOX/p6/home" XDG_STATE_HOME="$SANDBOX/p6/state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+if [[ -f "$SANDBOX/p6/home/.jcode/config.toml" ]]; then
+    bad "a refused install writes nothing at all" \
+        "config.toml was written before the refusal"
+else
+    ok "a refused install writes nothing at all"
+fi
+
+# "uninstall checks every path it intends to remove up front, so a refusal
+# cannot leave a half-finished uninstall behind."
+mkdir -p "$SANDBOX/p7/home" "$SANDBOX/p7/state"
+HOME="$SANDBOX/p7/home" XDG_STATE_HOME="$SANDBOX/p7/state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+rm -rf "$SANDBOX/p7/home/.jcode/skills/swarm-engineering"
+ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
+    "$SANDBOX/p7/home/.jcode/skills/swarm-engineering"
+HOME="$SANDBOX/p7/home" XDG_STATE_HOME="$SANDBOX/p7/state" \
+    "$BOUNDARY_REPO/scripts/uninstall" --full --yes >/dev/null 2>&1
+if [[ -f "$SANDBOX/p7/state/lazible-jcode/state.json" &&
+      -f "$SANDBOX/p7/home/.jcode/config.toml" ]]; then
+    ok "a refused uninstall removes nothing at all"
+else
+    bad "a refused uninstall removes nothing at all" \
+        "the state file or the config was removed before the refusal"
+fi
+
+# "A refusal therefore leaves the repo byte-identical."
+boundary_after="$(tree_fingerprint "$BOUNDARY_REPO")"
+if [[ "$boundary_before" == "$boundary_after" ]]; then
+    ok "a refusal leaves the repo byte-identical"
+else
+    bad "a refusal leaves the repo byte-identical" "the repo copy changed"
+fi
+
+# "A sibling directory whose name merely resembles the repo is not a match."
+mkdir -p "$SANDBOX/lazible-jcode-backup"
+
+# The guard harness needs its own repo-shaped directory.
+#
+# common.sh derives REPO from the location of the entry script, one level
+# up from it. So the harness has to sit at "<repo>/scripts/<name>" for REPO
+# to come out as "<repo>". It cannot live in the boundary copy's scripts
+# directory, because that would overwrite the real installer the checks
+# above run.
+GUARD_REPO="$SANDBOX/guard-repo"
+mkdir -p "$GUARD_REPO/scripts"
+cp "$REPO/scripts/common.sh" "$GUARD_REPO/scripts/common.sh"
+
+# It is called "install" so that common.sh's SCRIPT_NAME comes out as
+# "install", the same as the real script. The README quotes the message the
+# installer prints, and this is the message that has to match it.
+cat > "$GUARD_REPO/scripts/install" <<'GUARD'
+#!/usr/bin/env bash
+set -uo pipefail
+. "$(dirname "$0")/common.sh"
+guard_outside_repo "$1"
+GUARD
+if bash "$GUARD_REPO/scripts/install" \
+    "$SANDBOX/lazible-jcode-backup/config.toml" >/dev/null 2>&1; then
+    ok "a sibling directory with a similar name is accepted"
+else
+    bad "a sibling directory with a similar name is accepted" \
+        "the guard refused it"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. the quoted refusal message
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README quotes the real refusal message ==="
+
+# The real message, produced by the guard itself.
+real_msg="$(bash "$GUARD_REPO/scripts/install" \
+    "$GUARD_REPO/config/config.toml" 2>&1 || true)"
+real_line1="$(echo "$real_msg" | head -1)"
+real_line2="$(echo "$real_msg" | sed -n 2p)"
+real_line3="$(echo "$real_msg" | sed -n 3p)"
+
+# The README's quote, with the path generalised so the two can be compared.
+readme_line1="$(grep -m1 '^\[install\] ERR: .* resolves inside this repo$' "$README" || true)"
+readme_line2="$(grep -m1 '^\[install\] ERR: install refuses to touch it\. Fix the symlink first:$' "$README" || true)"
+readme_line3="$(grep -m1 '^\[install\] ERR:   rm .* && mkdir -p .*$' "$README" || true)"
+
+if [[ -n "$readme_line1" && -n "$readme_line2" && -n "$readme_line3" ]]; then
+    ok "the README quotes the refusal message"
+else
+    bad "the README quotes the refusal message" \
+        "the quoted block is missing or has changed shape"
+fi
+
+# The shape of the message the README quotes has to match the shape the
+# guard produces.
+if [[ "$readme_line1" == \[install\]\ ERR:\ *\ resolves\ inside\ this\ repo ]]; then
+    if [[ "$real_line1" == *' ERR: '*' resolves inside this repo' ]]; then
+        ok "the quoted first line matches the real one"
+    else
+        bad "the quoted first line matches the real one" "real: $real_line1"
+    fi
+else
+    bad "the quoted first line matches the real one" "readme: $readme_line1"
+fi
+
+if [[ "$readme_line2" == "$real_line2" ]]; then
+    ok "the quoted second line matches the real one"
+else
+    bad "the quoted second line matches the real one" \
+        "readme: $readme_line2" "real:   $real_line2"
+fi
+
+if [[ "$readme_line3" == "[install] ERR:   rm "*" && mkdir -p "* ]]; then
+    if [[ "$real_line3" == *' ERR:   rm '*' && mkdir -p '* ]]; then
+        ok "the quoted third line matches the real one"
+    else
+        bad "the quoted third line matches the real one" "real: $real_line3"
+    fi
+else
+    bad "the quoted third line matches the real one" "readme: $readme_line3"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. running it twice
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README's idempotency claims hold ==="
+
+idem_home="$SANDBOX/idem/home"
+idem_state="$SANDBOX/idem/state"
+idem_state_file="$idem_state/lazible-jcode/state.json"
+
+idem_fingerprint() {
+    tree_fingerprint "$idem_home"
+    tree_fingerprint "$idem_state"
+}
+
+# The recorded timestamp has one second of resolution, so two installs in
+# the same second are indistinguishable by construction. Every timestamp
+# comparison waits for the clock to move on.
+wait_for_next_second() {
+    local now
+    now="$(date +%S)"
+    while [[ "$(date +%S)" == "$now" ]]; do
+        sleep 0.05
+    done
+}
+
+HOME="$idem_home" XDG_STATE_HOME="$idem_state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+
+# "A second install with nothing changed is a no-op."
+idem_before="$(idem_fingerprint)"
+wait_for_next_second
+HOME="$idem_home" XDG_STATE_HOME="$idem_state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+idem_after="$(idem_fingerprint)"
+if [[ "$idem_before" == "$idem_after" ]]; then
+    ok "a second install with nothing changed is a no-op"
+else
+    bad "a second install with nothing changed is a no-op" \
+        "the install changed something"
+fi
+
+# "state.json keeps the timestamp of the install that actually wrote it."
+installed_at_first="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+wait_for_next_second
+HOME="$idem_home" XDG_STATE_HOME="$idem_state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+installed_at_second="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+if [[ "$installed_at_first" == "$installed_at_second" ]]; then
+    ok "the recorded timestamp holds when nothing changed"
+else
+    bad "the recorded timestamp holds when nothing changed" \
+        "before: $installed_at_first" "after:  $installed_at_second"
+fi
+
+# "The timestamp only moves when the config or the skill list actually
+# changed."
+printf '\n# a change\n' >> "$BOUNDARY_REPO/config/config.toml"
+wait_for_next_second
+HOME="$idem_home" XDG_STATE_HOME="$idem_state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+installed_at_third="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+if [[ "$installed_at_second" != "$installed_at_third" ]]; then
+    ok "the recorded timestamp moves when the config changes"
+else
+    bad "the recorded timestamp moves when the config changes" \
+        "the timestamp did not move: $installed_at_third"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. the claims the README already made before this round
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README's other claims still hold ==="
+
+# "install never writes prompt-overlay.md or swarm-prompt.md"
+mkdir -p "$SANDBOX/pr/home"
+HOME="$SANDBOX/pr/home" XDG_STATE_HOME="$SANDBOX/pr/state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+if [[ ! -f "$SANDBOX/pr/home/.jcode/prompt-overlay.md" &&
+      ! -f "$SANDBOX/pr/home/.jcode/swarm-prompt.md" ]]; then
+    ok "install never writes the two prompt files"
+else
+    bad "install never writes the two prompt files" "a prompt file was written"
+fi
+
+# "The jcode binary and ~/AGENTS.md are never removed."
+mkdir -p "$SANDBOX/pr/home/.local/bin"
+touch "$SANDBOX/pr/home/.local/bin/jcode"
+touch "$SANDBOX/pr/home/AGENTS.md"
+HOME="$SANDBOX/pr/home" XDG_STATE_HOME="$SANDBOX/pr/state" \
+    "$BOUNDARY_REPO/scripts/uninstall" --full --yes >/dev/null 2>&1
+if [[ -f "$SANDBOX/pr/home/.local/bin/jcode" &&
+      -f "$SANDBOX/pr/home/AGENTS.md" ]]; then
+    ok "uninstall never removes the jcode binary or ~/AGENTS.md"
+else
+    bad "uninstall never removes the jcode binary or ~/AGENTS.md" \
+        "one of them was removed"
+fi
+
+# "--full does remove ~/.jcode/skills/swarm-engineering/."
+if [[ ! -e "$SANDBOX/pr/home/.jcode/skills/swarm-engineering" ]]; then
+    ok "uninstall --full removes the repo's own skill"
+else
+    bad "uninstall --full removes the repo's own skill" "the skill is still there"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. the README has to actually state the claims
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README states the claims this script checks ==="
+
+check_claim "the README states the repo boundary" \
+    "Neither script may write into it or"
+check_claim "the README states the up-front check" \
+    "The check runs before the first"
+check_claim "the README states the atomic uninstall" \
+    "uninstall\` checks every path it intends to remove up front"
+check_claim "the README states the idempotency" \
+    "A second install with nothing changed is a no-op"
+check_claim "the README states the timestamp meaning" \
+    "The timestamp only moves when the config or the skill list actually changed"
+check_claim "the README states the per-skill boundary" \
+    "Each skill's own directory is covered too"
+check_claim "the README documents the doc-check script" \
+    "./scripts/doc-check"
+
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "doc check: $pass passed, $fail failed"
+[[ "$fail" -eq 0 ]]

@@ -49,6 +49,19 @@ full=0
 yes=0
 dry_run=0
 
+# The live path of every skill this repo owns.
+#
+# The installer builds the same list, so the two scripts agree on exactly
+# which skills are in scope. Without that agreement, a skill the installer
+# would write could be one the uninstaller never checks, and the repo
+# boundary would hold for one script and not the other.
+skill_targets=()
+for skill_src in "$REPO"/config/skills/*/; do
+    skill_src="${skill_src%/}"
+    [[ -f "$skill_src/SKILL.md" ]] || continue
+    skill_targets+=("$SKILLS_HOME/$(basename "$skill_src")")
+done
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --full)    full=1; shift ;;
@@ -94,13 +107,10 @@ remove_state() {
 remove_full() {
     rm_safe "$JCODE_CONFIG"
 
-    if [[ -d "$REPO/config/skills" && -d "$SKILLS_HOME" ]]; then
-        local skill_dir
-        for skill_dir in "$REPO/config/skills"/*/; do
-            [[ -d "$skill_dir" ]] || continue
-            rm_safe "$SKILLS_HOME/$(basename "$skill_dir")"
-        done
-    fi
+    local skill_target
+    for skill_target in "${skill_targets[@]}"; do
+        rm_safe "$skill_target"
+    done
 }
 
 # Every path this run would touch, checked before anything is removed.
@@ -112,12 +122,8 @@ guard_repo_boundary() {
     local p
     p=("$STATE_FILE" "$JCODE_CONFIG")
 
-    if [[ $full -eq 1 && -d "$REPO/config/skills" ]]; then
-        local skill_dir
-        for skill_dir in "$REPO/config/skills"/*/; do
-            [[ -d "$skill_dir" ]] || continue
-            p+=("$SKILLS_HOME/$(basename "$skill_dir")")
-        done
+    if [[ $full -eq 1 ]]; then
+        p+=("${skill_targets[@]}")
     fi
 
     guard_outside_repo "${p[@]}"

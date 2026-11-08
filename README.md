@@ -24,6 +24,7 @@ scripts/install        ->  wires the two above
 | `scripts/install` | Copies config and skills into `~/.jcode` |
 | `scripts/uninstall` | Reverses install |
 | `scripts/test` | Exercises the real install and uninstall against a sandbox HOME |
+| `scripts/doc-check` | Checks the claims in this README against the real scripts |
 | `scripts/common.sh` | Shared paths and helpers, sourced by both scripts |
 
 ## The three prompt tiers
@@ -277,6 +278,12 @@ checked against the repo before anything happens. `~/.jcode/config.toml`,
 `~/.jcode/skills/`, the state directory and the state file are all covered,
 in both `install` and `uninstall`.
 
+Each skill's own directory is covered too, not just the skills directory that
+holds them. A single skill directory symlinked into the repo is the same
+hazard one level down, and it is a separate check: the skills directory can
+resolve inside the repo while the skill inside it resolves back out, and only
+checking both ends catches that.
+
 The check runs before the first `mkdir`, not when the write happens. A
 refusal therefore leaves the repo byte-identical and creates nothing on the
 way out. `uninstall` checks every path it intends to remove up front, so a
@@ -378,11 +385,12 @@ A refusal to touch the repo is checked before anything is removed, so
 
 ```bash
 ./scripts/test
+./scripts/doc-check
 ```
 
-This runs the real `scripts/install` and `scripts/uninstall`, not a copy of
-their logic. Every check drives the actual script with `HOME` pointed at a
-throwaway directory and asserts on the real output and the real filesystem
+`scripts/test` runs the real `scripts/install` and `scripts/uninstall`, not a
+copy of their logic. Every check drives the actual script with `HOME` pointed
+at a throwaway directory and asserts on the real output and the real filesystem
 state. The sandbox is removed on exit, and the real `~/.jcode` is never
 touched.
 
@@ -401,6 +409,19 @@ of this repo with `~/.jcode` symlinked into it, and the suite asserts that
 the copy comes out byte-identical, that the scripts exit non-zero, and that
 a refused uninstall removes nothing at all.
 
+`scripts/doc-check` checks the other direction. It reads this README and
+turns its claims into assertions: that the phase list matches the installer's
+real phases, that the refusal message quoted above is the message the
+installer actually prints, that the paths this section lists are the paths
+that are refused, and that a refusal leaves the repo byte-identical. It fails
+if this file and the scripts disagree.
+
+That matters because a README can drift from the code while every other test
+still passes. A claim in prose has no test behind it unless something checks
+it, and a check that only reads this file would only prove the file is
+self-consistent. So `doc-check` runs the real scripts and compares what they
+do against what is written here.
+
 The fingerprint those checks rest on hashes file *content*, not file size.
 A size-only fingerprint misses any change that keeps the same length, and
 `state.json` is exactly that case: a different timestamp of exactly the same
@@ -408,7 +429,9 @@ length.
 
 Every check has been shown to fail against the code it is meant to catch:
 each fix was reverted in a scratch copy and the suite was confirmed to fail
-against the broken code.
+against the broken code. The same is true of the claims in this README: each
+one has been broken in a scratch copy and confirmed to fail the check written
+for it.
 
 Exit code 0 means every check passed.
 
