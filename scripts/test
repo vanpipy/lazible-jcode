@@ -48,6 +48,15 @@ set -euo pipefail
 # shellcheck source=scripts/common.sh
 . "$(dirname "$0")/common.sh"
 
+# testlib.sh holds the helpers both test scripts share.
+#
+# It is separate from common.sh on purpose: common.sh sets `set -euo
+# pipefail`, and scripts/doc-check has to drive commands that are
+# expected to fail, so it cannot source common.sh. A shared helper must
+# not change how a script that sources it behaves.
+# shellcheck source=scripts/testlib.sh
+. "$(dirname "$0")/testlib.sh"
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage ;;
@@ -109,39 +118,10 @@ assert_ne() {
 # The fingerprint of a sandbox tree: every path with its type and content.
 # Used to prove that a dry-run changed nothing.
 #
-# File CONTENT is hashed, not just the size. A size-only fingerprint misses
-# any change that happens to keep the same length, and state.json is the
-# obvious case: it carries a timestamp, so re-running install rewrites it
-# with a different installed_at of exactly the same length.
-#
-# Symlinks are recorded by their target AND by what they point at. A symlink
-# swapped for a directory of the same name would otherwise look unchanged,
-# and a symlink retargeted at different content would too.
-tree_fingerprint() {
-    local root="$1"
-    if [[ ! -e "$root" && ! -L "$root" ]]; then
-        echo "(absent)"
-        return 0
-    fi
-    ( cd "$root" && find . -mindepth 1 | sort | while read -r p; do
-        if [[ -L "$p" ]]; then
-            echo "l $p -> $(readlink "$p")"
-            # The link's target content counts too, so that a link
-            # retargeted at different content is a visible change.
-            if [[ -f "$p" ]]; then
-                echo "l $p content $(sha256sum < "$p" | cut -d' ' -f1)"
-            elif [[ -d "$p" ]]; then
-                echo "l $p dir $(cd "$p" && find . -mindepth 1 -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)"
-            fi
-        elif [[ -d "$p" ]]; then
-            echo "d $p"
-        elif [[ -f "$p" ]]; then
-            echo "f $p $(sha256sum < "$p" | cut -d' ' -f1)"
-        else
-            echo "? $p"
-        fi
-    done )
-}
+# tree_fingerprint itself lives in testlib.sh. It used to be a copy in
+# this file and a second copy in scripts/doc-check, which meant a fix to
+# one would silently not apply to the other, and the two suites could
+# disagree about the same tree.
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lazible-jcode-test.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -1213,6 +1193,93 @@ if [[ -f "$SANDBOX/fallback/home/.local/state/lazible-jcode/state.json" ]]; then
 else
     bad "the state file falls back to \$HOME/.local/state" \
         "not found under $SANDBOX/fallback/home/.local/state"
+fi
+
+# ---------------------------------------------------------------------------
+# 23. more than one skill
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the repo can hold more than one skill ==="
+
+# This repo ships exactly one skill, so the skill list the installer and
+# the uninstaller build has only ever had one element in it. An array that
+# is built in a loop has to work for more than one, so a second skill is
+# added to a throwaway copy of the repo.
+#
+# A directory that is not a skill (no SKILL.md) is added too. It has to be
+# ignored: it is not something this repo owns, so the installer must not
+# copy it and the uninstaller must not remove it.
+mkdir -p "$SANDBOX/multi"
+cp -r "$REPO" "$SANDBOX/multi/repo"
+rm -rf "$SANDBOX/multi/repo/.git"
+mkdir -p "$SANDBOX/multi/repo/config/skills/second-skill"
+printf '# second skill\n' > "$SANDBOX/multi/repo/config/skills/second-skill/SKILL.md"
+mkdir -p "$SANDBOX/multi/repo/config/skills/not-a-skill"
+printf 'stray\n' > "$SANDBOX/multi/repo/config/skills/not-a-skill/NOTES.md"
+
+mkdir -p "$SANDBOX/multi/home" "$SANDBOX/multi/state"
+set +e
+HOME="$SANDBOX/multi/home" XDG_STATE_HOME="$SANDBOX/multi/state" \
+    "$SANDBOX/multi/repo/scripts/install" >/dev/null 2>&1
+multi_rc=$?
+set -e
+assert_eq "install succeeds with two skills" "0" "$multi_rc"
+
+# What the live skills dir holds, for the failure messages.
+multi_live="$(find "$SANDBOX/multi/home/.jcode/skills" -mindepth 1 -maxdepth 1 \
+    -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ')"
+
+if [[ -f "$SANDBOX/multi/home/.jcode/skills/second-skill/SKILL.md" &&
+      -f "$SANDBOX/multi/home/.jcode/skills/swarm-engineering/SKILL.md" ]]; then
+    ok "install copies every skill in the repo"
+else
+    bad "install copies every skill in the repo" \
+        "the live skills dir holds: $multi_live"
+fi
+
+if [[ ! -e "$SANDBOX/multi/home/.jcode/skills/not-a-skill" ]]; then
+    ok "install ignores a directory that is not a skill"
+else
+    bad "install ignores a directory that is not a skill" \
+        "not-a-skill was copied"
+fi
+
+# The recorded skill list has to name both skills, and only the real ones.
+multi_recorded="$(python3 -c \
+    "import json;print(' '.join(json.load(open('$SANDBOX/multi/state/lazible-jcode/state.json'))['skills']))" 2>/dev/null)"
+assert_eq "the recorded skill list names both skills" \
+    "second-skill swarm-engineering" "$multi_recorded"
+
+# The uninstaller has to remove both. It builds its own list from the
+# repo, so a list that stopped at the first element would leave the
+# second skill behind.
+set +e
+HOME="$SANDBOX/multi/home" XDG_STATE_HOME="$SANDBOX/multi/state" \
+    "$SANDBOX/multi/repo/scripts/uninstall" --full --yes >/dev/null 2>&1
+multi_un_rc=$?
+set -e
+assert_eq "uninstall --full succeeds with two skills" "0" "$multi_un_rc"
+
+if [[ ! -e "$SANDBOX/multi/home/.jcode/skills/second-skill" &&
+      ! -e "$SANDBOX/multi/home/.jcode/skills/swarm-engineering" ]]; then
+    ok "uninstall --full removes every skill in the repo"
+else
+    bad "uninstall --full removes every skill in the repo" \
+        "the live skills dir holds: $(find "$SANDBOX/multi/home/.jcode/skills" -mindepth 1 -maxdepth 1 -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ')"
+fi
+
+# A skill the repo does NOT own must survive the uninstall. This is the
+# same promise the uninstaller makes in its own output.
+mkdir -p "$SANDBOX/multi/home/.jcode/skills/someone-elses-skill"
+printf 'not ours\n' > "$SANDBOX/multi/home/.jcode/skills/someone-elses-skill/SKILL.md"
+HOME="$SANDBOX/multi/home" XDG_STATE_HOME="$SANDBOX/multi/state" \
+    "$SANDBOX/multi/repo/scripts/uninstall" --full --yes >/dev/null 2>&1
+if [[ -f "$SANDBOX/multi/home/.jcode/skills/someone-elses-skill/SKILL.md" ]]; then
+    ok "uninstall leaves a skill this repo does not own"
+else
+    bad "uninstall leaves a skill this repo does not own" \
+        "the other skill was removed"
 fi
 
 # ---------------------------------------------------------------------------

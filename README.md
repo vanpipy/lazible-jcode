@@ -25,6 +25,7 @@ scripts/install        ->  wires the two above
 | `scripts/uninstall` | Reverses install |
 | `scripts/test` | Exercises the real install and uninstall against a sandbox HOME |
 | `scripts/doc-check` | Checks the claims in this README against the real scripts |
+| `scripts/testlib.sh` | Shared helpers for the two test scripts |
 | `scripts/common.sh` | Shared paths and helpers, sourced by both scripts |
 
 ## The three prompt tiers
@@ -350,6 +351,13 @@ cp ~/.jcode/swarm-prompt.md   config/swarm-prompt.md
 is its only source. Keep it under `config/skills/` and do not delete it, or
 you lose the skill.
 
+Every directory under `config/skills/` that holds a `SKILL.md` is a skill this
+repo owns, and the installer and the uninstaller both work from that list. Add
+a skill by adding the directory; nothing has to be registered anywhere else.
+A directory under `config/skills/` without a `SKILL.md` is not a skill, so it
+is ignored. A skill under `~/.jcode/skills/` that this repo does not own is
+left alone by the uninstaller.
+
 ## Not managed here
 
 - the jcode binary, install it separately
@@ -421,6 +429,12 @@ still passes. A claim in prose has no test behind it unless something checks
 it, and a check that only reads this file would only prove the file is
 self-consistent. So `doc-check` runs the real scripts and compares what they
 do against what is written here.
+
+A refusal has to be a refusal, not just a failure. The boundary checks ask
+whether the installer refused *for the repo boundary*, not whether it exited
+non-zero. An installer that failed for some unrelated reason would satisfy a
+weaker check, and the boundary claim would look proven by a script that never
+checked a single path.
 
 The fingerprint those checks rest on hashes file *content*, not file size.
 A size-only fingerprint misses any change that keeps the same length, and

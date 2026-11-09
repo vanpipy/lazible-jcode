@@ -24,6 +24,14 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 README="$REPO/README.md"
 
+# testlib.sh holds the helpers both test scripts share.
+#
+# It is separate from common.sh on purpose: common.sh sets `set -euo
+# pipefail`, and these scripts drive commands that are expected to fail.
+# A shared helper must not change how a script that sources it behaves.
+# shellcheck source=scripts/testlib.sh
+. "$(dirname "$0")/testlib.sh"
+
 pass=0
 fail=0
 
@@ -49,33 +57,7 @@ check_claim() {
     fi
 }
 
-# The fingerprint of a tree: every path with its type and content.
-#
-# Content is hashed, not just the size, so that a change which keeps the
-# same length still shows up.
-tree_fingerprint() {
-    local root="$1"
-    if [[ ! -e "$root" && ! -L "$root" ]]; then
-        echo "(absent)"
-        return 0
-    fi
-    ( cd "$root" && find . -mindepth 1 | sort | while read -r p; do
-        if [[ -L "$p" ]]; then
-            echo "l $p -> $(readlink "$p")"
-            if [[ -f "$p" ]]; then
-                echo "l $p content $(sha256sum < "$p" | cut -d' ' -f1)"
-            elif [[ -d "$p" ]]; then
-                echo "l $p dir $(cd "$p" && find . -mindepth 1 -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)"
-            fi
-        elif [[ -d "$p" ]]; then
-            echo "d $p"
-        elif [[ -f "$p" ]]; then
-            echo "f $p $(sha256sum < "$p" | cut -d' ' -f1)"
-        else
-            echo "? $p"
-        fi
-    done )
-}
+# tree_fingerprint is in testlib.sh.
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lazible-doc-check.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -143,13 +125,41 @@ ln -s "$SANDBOX/outside-skill" \
 
 boundary_before="$(tree_fingerprint "$BOUNDARY_REPO")"
 
-# refuses <label> <setup-command...>
+# refuses <home> <state> -> 0 if the install REFUSED for the boundary
+#                          reason, 1 otherwise
 #
-# Runs install with HOME set up by the caller and reports whether it refused.
+# It checks the refusal MESSAGE, not just that the exit code was non-zero.
+#
+# A non-zero exit is not enough. The install can fail for reasons that have
+# nothing to do with the repo boundary: a missing config, an unwritable
+# home, a broken path. If this helper only asked "did it exit non-zero?",
+# every boundary check below would pass whenever the installer failed for
+# ANY reason, and the boundary claim would look proven by a script that
+# never checked a single path.
+#
+# So the refusal has to be the boundary refusal: exit 1, and the message
+# that names the path and says it resolves inside the repo.
 refuses_install() {
-    local home="$1" state="$2"
-    ! HOME="$home" XDG_STATE_HOME="$state" \
-        "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+    local home="$1" state="$2" out rc
+    out="$(HOME="$home" XDG_STATE_HOME="$state" \
+        "$BOUNDARY_REPO/scripts/install" 2>&1)"
+    rc=$?
+    [[ "$rc" -eq 1 ]] || return 1
+    grep -q 'resolves inside this repo' <<<"$out" || return 1
+    grep -q 'refuses to touch it' <<<"$out" || return 1
+    return 0
+}
+
+# The same, for the uninstaller.
+refuses_uninstall() {
+    local home="$1" state="$2" out rc
+    out="$(HOME="$home" XDG_STATE_HOME="$state" \
+        "$BOUNDARY_REPO/scripts/uninstall" --full --yes 2>&1)"
+    rc=$?
+    [[ "$rc" -eq 1 ]] || return 1
+    grep -q 'resolves inside this repo' <<<"$out" || return 1
+    grep -q 'refuses to touch it' <<<"$out" || return 1
+    return 0
 }
 
 # The README lists the paths that are covered. Each one is redirected into
@@ -162,7 +172,7 @@ if refuses_install "$SANDBOX/p1/home" "$SANDBOX/p1/state"; then
     ok "a ~/.jcode/config.toml redirected into the repo is refused"
 else
     bad "a ~/.jcode/config.toml redirected into the repo is refused" \
-        "install exited 0"
+        "install did not refuse for the boundary reason"
 fi
 
 # ~/.jcode/skills/
@@ -172,7 +182,7 @@ if refuses_install "$SANDBOX/p2/home" "$SANDBOX/p2/state"; then
     ok "a ~/.jcode/skills redirected into the repo is refused"
 else
     bad "a ~/.jcode/skills redirected into the repo is refused" \
-        "install exited 0"
+        "install did not refuse for the boundary reason"
 fi
 
 # the state directory
@@ -182,7 +192,7 @@ if refuses_install "$SANDBOX/p3/home" "$SANDBOX/p3/state"; then
     ok "a state directory redirected into the repo is refused"
 else
     bad "a state directory redirected into the repo is refused" \
-        "install exited 0"
+        "install did not refuse for the boundary reason"
 fi
 
 # the state file
@@ -192,7 +202,7 @@ ln -s "$BOUNDARY_REPO/state-in-repo/state.json" \
 if refuses_install "$SANDBOX/p4/home" "$SANDBOX/p4/state"; then
     ok "a state file redirected into the repo is refused"
 else
-    bad "a state file redirected into the repo is refused" "install exited 0"
+    bad "a state file redirected into the repo is refused" "install did not refuse for the boundary reason"
 fi
 
 # Each skill's own directory. The README says the skills are covered, and
@@ -204,7 +214,7 @@ if refuses_install "$SANDBOX/p5/home" "$SANDBOX/p5/state"; then
     ok "a skill's own directory redirected into the repo is refused"
 else
     bad "a skill's own directory redirected into the repo is refused" \
-        "install exited 0"
+        "install did not refuse for the boundary reason"
 fi
 
 # The skills DIRECTORY, with the skill inside it pointing back out.
@@ -219,7 +229,7 @@ if refuses_install "$SANDBOX/p5b/home" "$SANDBOX/p5b/state"; then
     ok "a skills dir in the repo is refused even when the skill points out"
 else
     bad "a skills dir in the repo is refused even when the skill points out" \
-        "install exited 0"
+        "install did not refuse for the boundary reason"
 fi
 
 # "The check runs before the first mkdir, not when the write happens."
@@ -246,8 +256,15 @@ HOME="$SANDBOX/p7/home" XDG_STATE_HOME="$SANDBOX/p7/state" \
 rm -rf "$SANDBOX/p7/home/.jcode/skills/swarm-engineering"
 ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
     "$SANDBOX/p7/home/.jcode/skills/swarm-engineering"
-HOME="$SANDBOX/p7/home" XDG_STATE_HOME="$SANDBOX/p7/state" \
-    "$BOUNDARY_REPO/scripts/uninstall" --full --yes >/dev/null 2>&1
+# The uninstall has to REFUSE. Checking only that nothing was removed
+# would also pass if the uninstall had failed for an unrelated reason,
+# which would prove nothing about the up-front check.
+if refuses_uninstall "$SANDBOX/p7/home" "$SANDBOX/p7/state"; then
+    ok "a redirected skill makes the uninstall refuse"
+else
+    bad "a redirected skill makes the uninstall refuse" \
+        "the uninstall did not refuse for the boundary reason"
+fi
 if [[ -f "$SANDBOX/p7/state/lazible-jcode/state.json" &&
       -f "$SANDBOX/p7/home/.jcode/config.toml" ]]; then
     ok "a refused uninstall removes nothing at all"
@@ -462,6 +479,60 @@ else
     bad "uninstall --full removes the repo's own skill" "the skill is still there"
 fi
 
+# "Every directory under config/skills/ that holds a SKILL.md is a skill
+# this repo owns."
+#
+# The repo ships exactly one skill, so this has to be checked against a
+# copy that holds two. A list that stopped at the first skill would copy
+# one and leave the other behind, and nothing else here would notice.
+mkdir -p "$SANDBOX/skills"
+cp -r "$REPO" "$SANDBOX/skills/repo"
+rm -rf "$SANDBOX/skills/repo/.git"
+mkdir -p "$SANDBOX/skills/repo/config/skills/second-skill"
+printf '# second skill\n' > "$SANDBOX/skills/repo/config/skills/second-skill/SKILL.md"
+mkdir -p "$SANDBOX/skills/repo/config/skills/not-a-skill"
+printf 'stray\n' > "$SANDBOX/skills/repo/config/skills/not-a-skill/NOTES.md"
+mkdir -p "$SANDBOX/skills/home" "$SANDBOX/skills/state"
+
+HOME="$SANDBOX/skills/home" XDG_STATE_HOME="$SANDBOX/skills/state" \
+    "$SANDBOX/skills/repo/scripts/install" >/dev/null 2>&1
+
+if [[ -f "$SANDBOX/skills/home/.jcode/skills/second-skill/SKILL.md" &&
+      -f "$SANDBOX/skills/home/.jcode/skills/swarm-engineering/SKILL.md" ]]; then
+    ok "install copies every skill the repo owns"
+else
+    bad "install copies every skill the repo owns" \
+        "the live skills dir holds: $(find "$SANDBOX/skills/home/.jcode/skills" -mindepth 1 -maxdepth 1 -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ')"
+fi
+
+if [[ ! -e "$SANDBOX/skills/home/.jcode/skills/not-a-skill" ]]; then
+    ok "install ignores a directory that is not a skill"
+else
+    bad "install ignores a directory that is not a skill" "not-a-skill was copied"
+fi
+
+# "A skill under ~/.jcode/skills/ that this repo does not own is left
+# alone by the uninstaller."
+mkdir -p "$SANDBOX/skills/home/.jcode/skills/someone-elses-skill"
+printf 'not ours\n' > "$SANDBOX/skills/home/.jcode/skills/someone-elses-skill/SKILL.md"
+HOME="$SANDBOX/skills/home" XDG_STATE_HOME="$SANDBOX/skills/state" \
+    "$SANDBOX/skills/repo/scripts/uninstall" --full --yes >/dev/null 2>&1
+
+if [[ ! -e "$SANDBOX/skills/home/.jcode/skills/second-skill" &&
+      ! -e "$SANDBOX/skills/home/.jcode/skills/swarm-engineering" ]]; then
+    ok "uninstall --full removes every skill the repo owns"
+else
+    bad "uninstall --full removes every skill the repo owns" \
+        "the live skills dir holds: $(find "$SANDBOX/skills/home/.jcode/skills" -mindepth 1 -maxdepth 1 -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ')"
+fi
+
+if [[ -f "$SANDBOX/skills/home/.jcode/skills/someone-elses-skill/SKILL.md" ]]; then
+    ok "uninstall leaves a skill the repo does not own"
+else
+    bad "uninstall leaves a skill the repo does not own" \
+        "the other skill was removed"
+fi
+
 # ---------------------------------------------------------------------------
 # 6. the README has to actually state the claims
 # ---------------------------------------------------------------------------
@@ -481,8 +552,14 @@ check_claim "the README states the timestamp meaning" \
     "The timestamp only moves when the config or the skill list actually changed"
 check_claim "the README states the per-skill boundary" \
     "Each skill's own directory is covered too"
+check_claim "the README states the skill list rule" \
+    "Every directory under \`config/skills/\` that holds a \`SKILL.md\`"
+check_claim "the README states that a refusal is not just a failure" \
+    "A refusal has to be a refusal, not just a failure"
 check_claim "the README documents the doc-check script" \
     "./scripts/doc-check"
+check_claim "the README documents the test library" \
+    "scripts/testlib.sh"
 
 # ---------------------------------------------------------------------------
 
