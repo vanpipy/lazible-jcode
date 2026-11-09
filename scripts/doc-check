@@ -86,16 +86,16 @@ else
         "README: $readme_phases" "code:   $code_phases"
 fi
 
-# "Verify ends with 5 checks."
+# "Verify ends with 6 checks."
 check_count="$(grep -c '^\s*\(check\|warn_check\) "' "$REPO/scripts/install")"
-if grep -q 'Verify ends with 5 checks' "$README" &&
-   grep -q 'the same 5 checks' "$README" &&
-   [[ "$check_count" -eq 5 ]]; then
-    ok "the README's 5 checks match the installer's verify phase"
+if grep -q 'Verify ends with 6 checks' "$README" &&
+   grep -q 'the same 6 checks' "$README" &&
+   [[ "$check_count" -eq 6 ]]; then
+    ok "the README's 6 checks match the installer's verify phase"
 else
-    bad "the README's 5 checks match the installer's verify phase" \
+    bad "the README's 6 checks match the installer's verify phase" \
         "the installer's verify phase has $check_count check calls" \
-        "the README says 5"
+        "the README says 6"
 fi
 
 # ---------------------------------------------------------------------------
@@ -637,6 +637,52 @@ else
     bad "install ignores a directory that is not a skill" "not-a-skill was copied"
 fi
 
+# "Skills in this repo are rewritten on every install, so a hand-edited
+# copy under ~/.jcode/skills/ cannot drift."
+#
+# That claim has two halves, and only the first was ever checked.
+#
+# The first half is that the install REWRITES the skill. That was already
+# covered by the idempotency checks: a second install changes nothing,
+# and the installed copy matches the repo.
+#
+# The second half is that a drifted copy gets FIXED, and that --check
+# can SEE the drift. The skill check used to look for the file's
+# existence, so an edited skill still reported "all repo skills
+# installed" as ok, while a real install would have overwritten the
+# edit. The config right above was compared with cmp, so the skills are
+# now compared the same way.
+#
+# The skill is edited AFTER the install, so the install cannot have
+# overwritten the edit itself.
+printf '\n# a local edit\n' >> "$SANDBOX/skills/home/.jcode/skills/second-skill/SKILL.md"
+
+set +e
+skills_check_out="$(HOME="$SANDBOX/skills/home" XDG_STATE_HOME="$SANDBOX/skills/state" \
+    "$SANDBOX/skills/repo/scripts/install" --check 2>&1)"
+skills_check_rc=$?
+set -e
+
+if [[ "$skills_check_rc" -eq 6 ]] &&
+   grep -q 'installed skills match the repo' <<<"$skills_check_out" &&
+   grep -q 'second-skill' <<<"$skills_check_out"; then
+    ok "--check reports a skill whose content drifted"
+else
+    bad "--check reports a skill whose content drifted" \
+        "the check exited $skills_check_rc" "$skills_check_out"
+fi
+
+# And a real install puts it back.
+HOME="$SANDBOX/skills/home" XDG_STATE_HOME="$SANDBOX/skills/state" \
+    "$SANDBOX/skills/repo/scripts/install" >/dev/null 2>&1
+if cmp -s "$SANDBOX/skills/repo/config/skills/second-skill/SKILL.md" \
+    "$SANDBOX/skills/home/.jcode/skills/second-skill/SKILL.md"; then
+    ok "a real install restores a skill whose content drifted"
+else
+    bad "a real install restores a skill whose content drifted" \
+        "the installed skill still differs from the repo"
+fi
+
 # "A skill under ~/.jcode/skills/ that this repo does not own is left
 # alone by the uninstaller."
 mkdir -p "$SANDBOX/skills/home/.jcode/skills/someone-elses-skill"
@@ -676,6 +722,8 @@ check_claim "the README states the idempotency" \
     "A second install with nothing changed is a no-op"
 check_claim "the README states the timestamp meaning" \
     "The timestamp only moves when the config or the skill list actually changed"
+check_claim "the README states the skill drift check" \
+    "compares the installed skills"
 check_claim "the README states the per-skill boundary" \
     "Each skill's own directory is covered too"
 check_claim "the README states the skill list rule" \

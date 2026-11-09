@@ -23,7 +23,7 @@
 #   5. install --check writes nothing and reports its result
 #   6. a real install writes config, skills and state
 #   7. install --check detects missing live prompt files
-#   8. install --check passes all 5 checks when nothing has drifted
+#   8. install --check passes all 6 checks when nothing has drifted
 #   9. a second install is idempotent
 #   10. uninstall --dry-run removes nothing
 #   11. uninstall --dry-run claims nothing was removed
@@ -341,8 +341,8 @@ check2_rc=$?
 set -e
 
 assert_eq "--check exits 6 when the live prompt files are missing" "6" "$check2_rc"
-assert_contains "--check reports 4 passed, 0 failed, 1 warning" \
-    "verify: 4 passed, 0 failed, 1 warning" "$check2_out"
+assert_contains "--check reports 5 passed, 0 failed, 1 warning" \
+    "verify: 5 passed, 0 failed, 1 warning" "$check2_out"
 assert_contains "--check names the prompt drift" \
     "prompt-overlay.md / swarm-prompt.md vs live" "$check2_out"
 
@@ -350,7 +350,7 @@ echo ""
 echo "=== install --check (with the live prompt files in place) ==="
 
 # Seed the sandbox with the repo's own copies of the two prompt files, the
-# same state the real machine is in. --check must then pass all 5 checks.
+# same state the real machine is in. --check must then pass all 6 checks.
 mkdir -p "$SBHOME/.jcode"
 for f in prompt-overlay.md swarm-prompt.md; do
     cp "$REPO/config/$f" "$SBHOME/.jcode/$f"
@@ -362,8 +362,49 @@ check3_rc=$?
 set -e
 
 assert_eq "--check exits 0 when nothing has drifted" "0" "$check3_rc"
-assert_contains "--check reports 5 passed, 0 failed, 0 warnings" \
-    "verify: 5 passed, 0 failed, 0 warnings" "$check3_out"
+assert_contains "--check reports 6 passed, 0 failed, 0 warnings" \
+    "verify: 6 passed, 0 failed, 0 warnings" "$check3_out"
+
+echo ""
+echo "=== install --check detects a skill whose CONTENT drifted ==="
+
+# The README says the skills are rewritten on every install, so a
+# hand-edited copy under ~/.jcode/skills cannot drift. That only holds
+# if something actually notices the drift.
+#
+# The skill check used to look for the file's EXISTENCE, so a skill whose
+# content had been edited still reported "all repo skills installed" as
+# ok, while a real install would have overwritten the edit. The config
+# right above was compared with cmp, so the skills are now compared the
+# same way.
+#
+# The skill has to be edited AFTER the install, otherwise the install
+# would have overwritten the edit itself.
+printf '\n# a local edit\n' >> "$SBHOME/.jcode/skills/swarm-engineering/SKILL.md"
+
+set +e
+check4_out="$("$REPO/scripts/install" --check 2>&1)"
+check4_rc=$?
+set -e
+
+assert_eq "--check exits 6 when an installed skill drifted" "6" "$check4_rc"
+assert_contains "--check names the drifted skill" \
+    "installed skills match the repo (differ: swarm-engineering)" "$check4_out"
+
+# And a real install puts it back, so the drift does not survive.
+set +e
+"$REPO/scripts/install" >/dev/null 2>&1
+fix_rc=$?
+set -e
+assert_eq "a real install fixes the drifted skill" "0" "$fix_rc"
+
+if cmp -s "$REPO/config/skills/swarm-engineering/SKILL.md" \
+    "$SBHOME/.jcode/skills/swarm-engineering/SKILL.md"; then
+    ok "a real install restores the drifted skill"
+else
+    bad "a real install restores the drifted skill" \
+        "the installed skill still differs from the repo"
+fi
 
 echo ""
 echo "=== install (idempotency) ==="

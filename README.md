@@ -256,7 +256,7 @@ cd ~/Project/lazible-jcode
 
 Five phases: preflight, config, skills, verify, state. Preflight fails if
 `~/.jcode/config.toml` is a symlink, because writing through it would corrupt
-this repo. Verify ends with 5 checks.
+this repo. Verify ends with 6 checks.
 
 Preview first with `./scripts/install --dry-run`. It writes nothing, including
 on a machine where `~/.jcode` does not exist yet, and it says what it *would*
@@ -319,7 +319,7 @@ it worth recording. Both triggers are checked: adding or removing a skill
 moves the timestamp even when the config is untouched.
 
 Check the current state without touching anything, using
-`./scripts/install --check`. It runs the same 5 checks and writes nothing at
+`./scripts/install --check`. It runs the same 6 checks and writes nothing at
 all, not even the state file. Unlike `--dry-run`, which previews an install
 and skips verification, `--check` actually verifies.
 
@@ -339,7 +339,9 @@ $EDITOR config/config.toml && ./scripts/install
 ```
 
 Skills in this repo are rewritten on every install, so a hand-edited copy under
-`~/.jcode/skills/` cannot drift.
+`~/.jcode/skills/` cannot drift. `--check` compares the installed skills
+against the repo the same way it compares the config, so a skill whose content
+has drifted is reported rather than passed over.
 
 The two prompt files go the other way. `~/.jcode/prompt-overlay.md` and
 `~/.jcode/swarm-prompt.md` are edited live; the copies in `config/` exist for

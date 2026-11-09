@@ -309,15 +309,35 @@ phase_verify() {
     cmp -s "$REPO/config/config.toml" "$JCODE_CONFIG"
     check "live config matches config/config.toml"
 
-    # Every repo skill must be present under ~/.jcode/skills. Extra live skills
-    # are fine: this repo owns only what is under config/skills/, so anything
-    # else jcode provides is left untouched.
-    local missing_skills=() name
+    # Every repo skill must be present under ~/.jcode/skills, AND match
+    # the repo's copy.
+    #
+    # The CONTENT comparison is not optional. The skills are rewritten on
+    # every install, so a hand-edited copy under ~/.jcode/skills cannot
+    # drift -- but that only holds if a check actually notices the drift.
+    # A check that only looked for the file's existence would report
+    # "all repo skills installed" for a skill whose content had been
+    # edited, while a real install would overwrite that edit.
+    #
+    # The config right above is compared with cmp, so comparing the skills
+    # the same way is what keeps the two consistent.
+    #
+    # Extra live skills are fine: this repo owns only what is under
+    # config/skills/, so anything else jcode provides is left untouched.
+    local missing_skills=() drifted_skills=() name
     for name in "${skill_names[@]}"; do
-        [[ -f "$SKILLS_HOME/$name/SKILL.md" ]] || missing_skills+=("$name")
+        if [[ ! -f "$SKILLS_HOME/$name/SKILL.md" ]]; then
+            missing_skills+=("$name")
+        elif ! cmp -s "$REPO/config/skills/$name/SKILL.md" \
+            "$SKILLS_HOME/$name/SKILL.md"; then
+            drifted_skills+=("$name")
+        fi
     done
     [[ ${#missing_skills[@]} -eq 0 ]]
     check "all repo skills installed under ~/.jcode/skills${missing_skills:+ (missing: ${missing_skills[*]})}"
+
+    [[ ${#drifted_skills[@]} -eq 0 ]]
+    check "installed skills match the repo${drifted_skills:+ (differ: ${drifted_skills[*]})}"
 
     local f drift=0
     for f in "${LIVE_PROMPTS[@]}"; do
