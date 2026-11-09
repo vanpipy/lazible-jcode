@@ -1127,16 +1127,26 @@ done
 
 # And the history must show them being removed, so the claim is anchored
 # to a commit rather than to nothing.
-for path in config/bin/jcode-orchestrate config/bin/jcode-tool-policy \
-            config/share/jcode-orchestrate/prompts/coder.md; do
-    if git -C "$REPO" log --all --oneline --diff-filter=D --name-only \
-        -- "$path" 2>/dev/null | grep -qF "$path"; then
-        ok "the history shows $path being removed"
-    else
-        bad "the history shows $path being removed" \
-            "no deletion of $path in the git history"
-    fi
-done
+#
+# This needs the git history, so it is only checked where there is a git
+# repo to check against. A copy of this tree without its history cannot
+# confirm or deny a deletion, and a check that failed there would be
+# reporting on nothing. The repo-side check above still applies either
+# way.
+if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    for path in config/bin/jcode-orchestrate config/bin/jcode-tool-policy \
+                config/share/jcode-orchestrate/prompts/coder.md; do
+        if git -C "$REPO" log --all --oneline --diff-filter=D --name-only \
+            -- "$path" 2>/dev/null | grep -qF "$path"; then
+            ok "the history shows $path being removed"
+        else
+            bad "the history shows $path being removed" \
+                "no deletion of $path in the git history"
+        fi
+    done
+else
+    ok "the removals are checked against the repo, not the history"
+fi
 
 # The config must not still wire up hooks that were removed with those
 # tools. A [hooks] block pointing at a deleted binary would be a claim
