@@ -87,7 +87,33 @@ else
 fi
 
 # "Verify ends with 6 checks."
+#
+# Counting the call sites is not enough. The installer's OWN dry-run text
+# used to say "would run 5 checks" while the verify phase produced 6
+# result lines, and the call-site count could not see that: 6 call sites
+# really do produce 6 results. The README was right and the installer was
+# wrong, and nothing noticed.
+#
+# So the count is checked twice: against the call sites, and against what
+# the installer actually prints. The runtime count is the one that
+# catches a disagreement between the source and the output.
 check_count="$(grep -c '^\s*\(check\|warn_check\) "' "$REPO/scripts/install")"
+
+# How many result lines does a real verify phase print? Run the install
+# in a sandbox and count the "ok"/"FAIL"/"WARN" lines in the verify
+# phase.
+runtime_count="$(
+    mkdir -p "$SANDBOX/count/home" "$SANDBOX/count/state"
+    HOME="$SANDBOX/count/home" XDG_STATE_HOME="$SANDBOX/count/state" \
+        "$REPO/scripts/install" 2>&1 |
+        grep -cE '^  (ok|FAIL|WARN) '
+)"
+
+# And what does the dry run SAY it would run?
+dryrun_says="$(HOME="$SANDBOX/count/home2" XDG_STATE_HOME="$SANDBOX/count/state2" \
+    "$REPO/scripts/install" --dry-run 2>&1 |
+    grep -oE 'would run [0-9]+ checks' | grep -oE '[0-9]+' || true)"
+
 if grep -q 'Verify ends with 6 checks' "$README" &&
    grep -q 'the same 6 checks' "$README" &&
    [[ "$check_count" -eq 6 ]]; then
@@ -96,6 +122,20 @@ else
     bad "the README's 6 checks match the installer's verify phase" \
         "the installer's verify phase has $check_count check calls" \
         "the README says 6"
+fi
+
+if [[ "$runtime_count" -eq 6 ]]; then
+    ok "the verify phase really prints 6 results"
+else
+    bad "the verify phase really prints 6 results" \
+        "it printed $runtime_count result lines"
+fi
+
+if [[ "$dryrun_says" == "$runtime_count" ]]; then
+    ok "the dry run's own count agrees with what the verify phase prints"
+else
+    bad "the dry run's own count agrees with what the verify phase prints" \
+        "the dry run says $dryrun_says" "the verify phase prints $runtime_count"
 fi
 
 # ---------------------------------------------------------------------------
@@ -181,6 +221,82 @@ refuses_uninstall() {
     grep -qE "($path resolves inside this repo|$path lives inside this repo)" <<<"$out" || return 1
     return 0
 }
+
+# The README quotes the uninstaller's refusal:
+#
+#   [uninstall] ERR: <path> lives inside this repo
+#   [uninstall] ERR: uninstall refuses to remove it. Fix the symlink first:
+#
+# A README that quotes output has to quote the REAL output, so this asks
+# the uninstaller to refuse for real and compares what it printed against
+# the line the README shows.
+#
+# The shape is the one that actually broke the uninstaller: the live
+# skills dir points into the repo, and the repo's own skill entry points
+# back out. The skill target resolves outside the repo, so only the
+# "where does the entry live" check can catch it.
+echo ""
+echo "=== the README quotes the real uninstaller refusal ==="
+
+mkdir -p "$SANDBOX/quote/home/.jcode" "$SANDBOX/quote/state" \
+         "$SANDBOX/quote/outside"
+printf 'outside skill\n' > "$SANDBOX/quote/outside/SKILL.md"
+
+# A throwaway copy of the repo, so the refusal can point at it.
+QUOTE_REPO="$SANDBOX/quote/repo"
+mkdir -p "$QUOTE_REPO/config/skills" "$QUOTE_REPO/scripts"
+cp "$REPO/config/config.toml" "$QUOTE_REPO/config/config.toml"
+cp "$REPO/scripts/install" "$REPO/scripts/uninstall" "$REPO/scripts/common.sh" \
+   "$QUOTE_REPO/scripts/"
+
+# The repo's own skill entry is a symlink pointing OUT of the repo, and
+# the live skills dir points INTO the repo.
+ln -s "$SANDBOX/quote/outside" "$QUOTE_REPO/config/skills/swarm-engineering"
+ln -s "$QUOTE_REPO/config/skills" "$SANDBOX/quote/home/.jcode/skills"
+
+set +e
+quote_out="$(HOME="$SANDBOX/quote/home" XDG_STATE_HOME="$SANDBOX/quote/state" \
+    "$QUOTE_REPO/scripts/uninstall" --full --yes 2>&1)"
+quote_rc=$?
+# Back to the script's own flag state, which is `set -uo pipefail` and NOT
+# errexit. Turning errexit on here would abort the whole run at the next
+# command that returns non-zero, which is exactly the command this
+# section is checking.
+set +e
+
+quote_real="$(grep -m1 'inside this repo' <<<"$quote_out" | sed 's/^[[:space:]]*//')"
+quote_readme="$(grep -m1 'lives inside this repo' "$README" | sed 's/^[[:space:]]*//')"
+
+# The README uses a placeholder home, /home/you, and the real run uses the
+# sandbox path. Only the SHAPE of the message is compared: the same
+# prefix, and the same tail. A message that says something else about
+# the refusal would not match.
+quote_shape_real="${quote_real##* ERR: }"
+quote_shape_real="${quote_shape_real#*.jcode/skills/}"
+quote_shape_readme="${quote_readme##* ERR: }"
+quote_shape_readme="${quote_shape_readme#*.jcode/skills/}"
+
+if [[ "$quote_rc" -eq 1 ]]; then
+    ok "the uninstaller refuses the skill entry that lives inside the repo"
+else
+    bad "the uninstaller refuses the skill entry that lives inside the repo" \
+        "it exited $quote_rc" "$quote_out"
+fi
+
+if [[ "$quote_shape_real" == "$quote_shape_readme" ]]; then
+    ok "the README quotes the real uninstaller refusal"
+else
+    bad "the README quotes the real uninstaller refusal" \
+        "the README shows: $quote_readme" "the uninstaller prints: $quote_real"
+fi
+
+# And the repo's own entry has to survive it.
+if [[ -L "$QUOTE_REPO/config/skills/swarm-engineering" ]]; then
+    ok "the repo's own skill entry survives the refused uninstall"
+else
+    bad "the repo's own skill entry survives the refused uninstall" \
+        "the repo's config/skills/swarm-engineering was deleted"
+fi
 
 # The README lists the paths that are covered. Each one is redirected into
 # the repo and has to cause a refusal.
@@ -268,8 +384,13 @@ fi
 mkdir -p "$SANDBOX/p6/home/.jcode/skills"
 ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
     "$SANDBOX/p6/home/.jcode/skills/swarm-engineering"
+# The install is EXPECTED to refuse here, so its non-zero exit must not
+# abort the run. The script does not use errexit, so this is belt and
+# braces, but it documents the intent.
+set +e
 HOME="$SANDBOX/p6/home" XDG_STATE_HOME="$SANDBOX/p6/state" \
     "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+set +e
 if [[ -f "$SANDBOX/p6/home/.jcode/config.toml" ]]; then
     bad "a refused install writes nothing at all" \
         "config.toml was written before the refusal"

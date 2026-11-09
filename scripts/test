@@ -1105,7 +1105,111 @@ cp "$REPO/config/skills/swarm-engineering/SKILL.md" \
    "$BOUNDARY_REPO/config/skills/swarm-engineering/SKILL.md"
 
 # ---------------------------------------------------------------------------
-# 19. the shared guard itself
+# 19. the symlinked live config is refused
+#
+# The README says the installer refuses a live config that is a symlink,
+# because writing through it would corrupt whatever it points at. The
+# refusal has to name the file and say what to do, and it has to happen
+# BEFORE anything is written.
+#
+# This was the one refusal in the preflight with nothing behind it:
+# deleting the whole block left every test passing.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== a symlinked live config is refused ==="
+
+mkdir -p "$SANDBOX/symcfg/home/.jcode" "$SANDBOX/symcfg/state"
+printf 'some other config\n' > "$SANDBOX/symcfg/elsewhere.toml"
+ln -s "$SANDBOX/symcfg/elsewhere.toml" "$SANDBOX/symcfg/home/.jcode/config.toml"
+
+set +e
+symcfg_out="$(HOME="$SANDBOX/symcfg/home" XDG_STATE_HOME="$SANDBOX/symcfg/state" \
+    "$REPO/scripts/install" 2>&1)"
+symcfg_rc=$?
+set -e
+
+assert_eq "install exits non-zero when the live config is a symlink" \
+    "1" "$symcfg_rc"
+assert_contains "install refuses a symlinked live config" \
+    "is a symlink ->" "$symcfg_out"
+assert_contains "install says it refuses to write through the symlink" \
+    "refuse to write through it" "$symcfg_out"
+
+# The file it pointed at must be untouched. Writing through the symlink
+# would have replaced its contents.
+if grep -q 'some other config' "$SANDBOX/symcfg/elsewhere.toml"; then
+    ok "a refused symlinked config leaves its target untouched"
+else
+    bad "a refused symlinked config leaves its target untouched" \
+        "the target was overwritten"
+fi
+
+# And nothing else was written either.
+if [[ -f "$SANDBOX/symcfg/state/lazible-jcode/state.json" ]]; then
+    bad "a refused symlinked config writes no state file" \
+        "state.json was written before the refusal"
+else
+    ok "a refused symlinked config writes no state file"
+fi
+
+# The dry run has to predict the same refusal, with the same message.
+set +e
+symcfg_dry_out="$(HOME="$SANDBOX/symcfg/home" XDG_STATE_HOME="$SANDBOX/symcfg/state" \
+    "$REPO/scripts/install" --dry-run 2>&1)"
+symcfg_dry_rc=$?
+set -e
+assert_eq "install --dry-run exits non-zero when the live config is a symlink" \
+    "1" "$symcfg_dry_rc"
+assert_contains "install --dry-run predicts the symlinked-config refusal" \
+    "is a symlink ->" "$symcfg_dry_out"
+
+# ---------------------------------------------------------------------------
+# 20. a drifted live config is reported by --check
+#
+# The verify phase compares the live config against config/config.toml.
+# That comparison is what makes the config a one-way street: the repo is
+# the source of truth, and a hand-edited live config is drift.
+#
+# This check also had nothing behind it: forcing it to always pass left
+# every test passing.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== a drifted live config is reported ==="
+
+mkdir -p "$SANDBOX/driftcfg/home" "$SANDBOX/driftcfg/state"
+HOME="$SANDBOX/driftcfg/home" XDG_STATE_HOME="$SANDBOX/driftcfg/state" \
+    "$REPO/scripts/install" >/dev/null 2>&1
+
+# Edit the LIVE config, not the repo's copy.
+printf '\n# a local edit\n' >> "$SANDBOX/driftcfg/home/.jcode/config.toml"
+
+set +e
+driftcfg_out="$(HOME="$SANDBOX/driftcfg/home" XDG_STATE_HOME="$SANDBOX/driftcfg/state" \
+    "$REPO/scripts/install" --check 2>&1)"
+driftcfg_rc=$?
+set -e
+
+assert_eq "--check exits non-zero when the live config drifted" \
+    "6" "$driftcfg_rc"
+assert_contains "--check reports the drifted live config" \
+    "live config matches config/config.toml" "$driftcfg_out"
+assert_contains "--check counts the drifted config as a failure" \
+    "verify: 4 passed, 1 failed, 1 warning" "$driftcfg_out"
+
+# And a real install puts it back, because the repo is the source of truth.
+HOME="$SANDBOX/driftcfg/home" XDG_STATE_HOME="$SANDBOX/driftcfg/state" \
+    "$REPO/scripts/install" >/dev/null 2>&1
+if cmp -s "$REPO/config/config.toml" "$SANDBOX/driftcfg/home/.jcode/config.toml"; then
+    ok "a real install restores a live config that drifted"
+else
+    bad "a real install restores a live config that drifted" \
+        "the live config still differs from the repo"
+fi
+
+# ---------------------------------------------------------------------------
+# 21. the shared guard itself
 #
 # The guard lives in common.sh so that both scripts enforce the same rule.
 # These check the rule directly, which pins down exactly which paths are

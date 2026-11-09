@@ -264,7 +264,7 @@ cd ~/Project/lazible-jcode
 
 Five phases: preflight, config, skills, verify, state. Preflight fails if
 `~/.jcode/config.toml` is a symlink, because writing through it would corrupt
-this repo. Verify ends with 6 checks.
+this repo. Verify ends with 6 checks, and the dry run says so too.
 
 Preview first with `./scripts/install --dry-run`. It writes nothing, including
 on a machine where `~/.jcode` does not exist yet, and it says what it *would*
@@ -295,6 +295,31 @@ holds them. A single skill directory symlinked into the repo is the same
 hazard one level down, and it is a separate check: the skills directory can
 resolve inside the repo while the skill inside it resolves back out, and only
 checking both ends catches that.
+
+The uninstaller asks a slightly different question, because `rm` behaves
+differently from a write. `rm -rf` does not follow a final symlink: it
+removes the directory *entry*. So the uninstaller checks both where the
+path points and where the entry lives, which is the resolved parent plus
+the literal last component.
+
+The two disagree in exactly the dangerous shape:
+
+```
+~/.jcode/skills              -> <repo>/config/skills
+<repo>/config/skills/<skill> -> a directory outside the repo
+```
+
+The skill target resolves outside the repo, so a check that only asks
+where the path points sees nothing wrong. But the entry `rm` would delete
+is the repo's own `config/skills/<skill>`, because the parent
+`~/.jcode/skills` *is* `<repo>/config/skills`. The uninstaller now
+refuses this shape, exits non-zero, and removes nothing:
+
+```
+[uninstall] ERR: /home/you/.jcode/skills/swarm-engineering lives inside this repo
+[uninstall] ERR: uninstall refuses to remove it. Fix the symlink first:
+[uninstall] ERR:   rm /home/you/.jcode/skills/swarm-engineering && mkdir -p /home/you/.jcode/skills/swarm-engineering
+```
 
 The check runs before the first `mkdir`, not when the write happens. A
 refusal therefore leaves the repo byte-identical and creates nothing on the
