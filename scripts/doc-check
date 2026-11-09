@@ -125,8 +125,8 @@ ln -s "$SANDBOX/outside-skill" \
 
 boundary_before="$(tree_fingerprint "$BOUNDARY_REPO")"
 
-# refuses <home> <state> -> 0 if the install REFUSED for the boundary
-#                          reason, 1 otherwise
+# refuses <home> <state> <path> -> 0 if the install REFUSED for the
+#                                  boundary reason, about <path>
 #
 # It checks the refusal MESSAGE, not just that the exit code was non-zero.
 #
@@ -138,27 +138,34 @@ boundary_before="$(tree_fingerprint "$BOUNDARY_REPO")"
 # never checked a single path.
 #
 # So the refusal has to be the boundary refusal: exit 1, and the message
-# that names the path and says it resolves inside the repo.
+# that says the path resolves inside the repo.
+#
+# The PATH matters too. The message names the offending path, so the
+# check can insist on that exact path. Without it, an installer that
+# refused some OTHER path inside the repo would satisfy a check about
+# this one, and the check would prove nothing about the path it names.
 refuses_install() {
-    local home="$1" state="$2" out rc
+    local home="$1" state="$2" path="$3" out rc
     out="$(HOME="$home" XDG_STATE_HOME="$state" \
         "$BOUNDARY_REPO/scripts/install" 2>&1)"
     rc=$?
     [[ "$rc" -eq 1 ]] || return 1
     grep -q 'resolves inside this repo' <<<"$out" || return 1
     grep -q 'refuses to touch it' <<<"$out" || return 1
+    grep -qF "$path resolves inside this repo" <<<"$out" || return 1
     return 0
 }
 
 # The same, for the uninstaller.
 refuses_uninstall() {
-    local home="$1" state="$2" out rc
+    local home="$1" state="$2" path="$3" out rc
     out="$(HOME="$home" XDG_STATE_HOME="$state" \
         "$BOUNDARY_REPO/scripts/uninstall" --full --yes 2>&1)"
     rc=$?
     [[ "$rc" -eq 1 ]] || return 1
     grep -q 'resolves inside this repo' <<<"$out" || return 1
     grep -q 'refuses to touch it' <<<"$out" || return 1
+    grep -qF "$path resolves inside this repo" <<<"$out" || return 1
     return 0
 }
 
@@ -168,7 +175,8 @@ refuses_uninstall() {
 # ~/.jcode/config.toml
 mkdir -p "$SANDBOX/p1/home/.jcode"
 ln -s "$BOUNDARY_REPO/config/config.toml" "$SANDBOX/p1/home/.jcode/config.toml"
-if refuses_install "$SANDBOX/p1/home" "$SANDBOX/p1/state"; then
+if refuses_install "$SANDBOX/p1/home" "$SANDBOX/p1/state" \
+    "$SANDBOX/p1/home/.jcode/config.toml"; then
     ok "a ~/.jcode/config.toml redirected into the repo is refused"
 else
     bad "a ~/.jcode/config.toml redirected into the repo is refused" \
@@ -178,7 +186,8 @@ fi
 # ~/.jcode/skills/
 mkdir -p "$SANDBOX/p2/home/.jcode"
 ln -s "$BOUNDARY_REPO/config/skills" "$SANDBOX/p2/home/.jcode/skills"
-if refuses_install "$SANDBOX/p2/home" "$SANDBOX/p2/state"; then
+if refuses_install "$SANDBOX/p2/home" "$SANDBOX/p2/state" \
+    "$SANDBOX/p2/home/.jcode/skills"; then
     ok "a ~/.jcode/skills redirected into the repo is refused"
 else
     bad "a ~/.jcode/skills redirected into the repo is refused" \
@@ -186,9 +195,13 @@ else
 fi
 
 # the state directory
+#
+# The refusal names the state DIRECTORY, which is $XDG_STATE_HOME/
+# lazible-jcode -- the path under the symlink, not the symlink itself.
 mkdir -p "$SANDBOX/p3/home"
 ln -s "$BOUNDARY_REPO/state-in-repo" "$SANDBOX/p3/state"
-if refuses_install "$SANDBOX/p3/home" "$SANDBOX/p3/state"; then
+if refuses_install "$SANDBOX/p3/home" "$SANDBOX/p3/state" \
+    "$SANDBOX/p3/state/lazible-jcode"; then
     ok "a state directory redirected into the repo is refused"
 else
     bad "a state directory redirected into the repo is refused" \
@@ -199,7 +212,8 @@ fi
 mkdir -p "$SANDBOX/p4/home" "$SANDBOX/p4/state/lazible-jcode"
 ln -s "$BOUNDARY_REPO/state-in-repo/state.json" \
     "$SANDBOX/p4/state/lazible-jcode/state.json"
-if refuses_install "$SANDBOX/p4/home" "$SANDBOX/p4/state"; then
+if refuses_install "$SANDBOX/p4/home" "$SANDBOX/p4/state" \
+    "$SANDBOX/p4/state/lazible-jcode/state.json"; then
     ok "a state file redirected into the repo is refused"
 else
     bad "a state file redirected into the repo is refused" "install did not refuse for the boundary reason"
@@ -210,7 +224,8 @@ fi
 mkdir -p "$SANDBOX/p5/home/.jcode/skills"
 ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
     "$SANDBOX/p5/home/.jcode/skills/swarm-engineering"
-if refuses_install "$SANDBOX/p5/home" "$SANDBOX/p5/state"; then
+if refuses_install "$SANDBOX/p5/home" "$SANDBOX/p5/state" \
+    "$SANDBOX/p5/home/.jcode/skills/swarm-engineering"; then
     ok "a skill's own directory redirected into the repo is refused"
 else
     bad "a skill's own directory redirected into the repo is refused" \
@@ -225,7 +240,8 @@ fi
 # nothing wrong.
 mkdir -p "$SANDBOX/p5b/home/.jcode"
 ln -s "$BOUNDARY_REPO/other-skills" "$SANDBOX/p5b/home/.jcode/skills"
-if refuses_install "$SANDBOX/p5b/home" "$SANDBOX/p5b/state"; then
+if refuses_install "$SANDBOX/p5b/home" "$SANDBOX/p5b/state" \
+    "$SANDBOX/p5b/home/.jcode/skills"; then
     ok "a skills dir in the repo is refused even when the skill points out"
 else
     bad "a skills dir in the repo is refused even when the skill points out" \
@@ -259,7 +275,8 @@ ln -s "$BOUNDARY_REPO/config/skills/swarm-engineering" \
 # The uninstall has to REFUSE. Checking only that nothing was removed
 # would also pass if the uninstall had failed for an unrelated reason,
 # which would prove nothing about the up-front check.
-if refuses_uninstall "$SANDBOX/p7/home" "$SANDBOX/p7/state"; then
+if refuses_uninstall "$SANDBOX/p7/home" "$SANDBOX/p7/state" \
+    "$SANDBOX/p7/home/.jcode/skills/swarm-engineering"; then
     ok "a redirected skill makes the uninstall refuse"
 else
     bad "a redirected skill makes the uninstall refuse" \
@@ -367,6 +384,42 @@ else
     bad "the quoted third line matches the real one" "readme: $readme_line3"
 fi
 
+# The preview has to PREDICT the real run.
+#
+# The README says "Preflight checks the same things in both modes, so a
+# --dry-run that reports success is a promise the real install keeps."
+# The boundary refusal is one of those preflight checks, so a dry run
+# that skipped it would report success on a home that the real install
+# is going to refuse.
+mkdir -p "$SANDBOX/dryrefuse/home/.jcode"
+ln -s "$BOUNDARY_REPO/config/config.toml" \
+    "$SANDBOX/dryrefuse/home/.jcode/config.toml"
+dryrefuse_out="$(HOME="$SANDBOX/dryrefuse/home" \
+    XDG_STATE_HOME="$SANDBOX/dryrefuse/state" \
+    "$BOUNDARY_REPO/scripts/install" --dry-run 2>&1)"
+dryrefuse_rc=$?
+if [[ "$dryrefuse_rc" -eq 1 ]]; then
+    ok "install --dry-run exits 1 on a boundary violation"
+else
+    bad "install --dry-run exits 1 on a boundary violation" \
+        "the dry run exited $dryrefuse_rc"
+fi
+if grep -q 'resolves inside this repo' <<<"$dryrefuse_out" &&
+   grep -q 'refuses to touch it' <<<"$dryrefuse_out"; then
+    ok "install --dry-run reports the boundary refusal"
+else
+    bad "install --dry-run reports the boundary refusal" \
+        "the dry run did not report the refusal"
+fi
+
+# And it has to write nothing while refusing.
+if [[ ! -e "$SANDBOX/dryrefuse/state/lazible-jcode/state.json" ]]; then
+    ok "a refused install --dry-run writes no state file"
+else
+    bad "a refused install --dry-run writes no state file" \
+        "a state file was written"
+fi
+
 # ---------------------------------------------------------------------------
 # 4. running it twice
 # ---------------------------------------------------------------------------
@@ -438,6 +491,79 @@ if [[ "$installed_at_second" != "$installed_at_third" ]]; then
 else
     bad "the recorded timestamp moves when the config changes" \
         "the timestamp did not move: $installed_at_third"
+fi
+
+# The README's sentence has TWO halves: "the config OR the skill list
+# actually changed". The config half is above. This is the skill half:
+# the config is untouched, and only the skill list changes.
+#
+# Without this, a state writer that compared the config but ignored the
+# skill list would satisfy every check so far, and the README would be
+# stating something the code never did.
+mkdir -p "$BOUNDARY_REPO/config/skills/second-skill"
+printf '# second skill\n' > "$BOUNDARY_REPO/config/skills/second-skill/SKILL.md"
+config_sha_before_skills="$(sha256sum "$BOUNDARY_REPO/config/config.toml" | cut -d' ' -f1)"
+wait_for_next_second
+HOME="$idem_home" XDG_STATE_HOME="$idem_state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+installed_at_fourth="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+if [[ "$installed_at_third" != "$installed_at_fourth" ]]; then
+    ok "the recorded timestamp moves when the skill list changes"
+else
+    bad "the recorded timestamp moves when the skill list changes" \
+        "the timestamp did not move: $installed_at_fourth"
+fi
+
+# The config really was untouched, so the move above can only have come
+# from the skill list.
+config_sha_after_skills="$(sha256sum "$BOUNDARY_REPO/config/config.toml" | cut -d' ' -f1)"
+if [[ "$config_sha_before_skills" == "$config_sha_after_skills" ]]; then
+    ok "the config was untouched while the skill list changed"
+else
+    bad "the config was untouched while the skill list changed" \
+        "the config hash changed too"
+fi
+
+# Put the skill list back, so the rest of the suite sees the repo the
+# README describes.
+rm -rf "$BOUNDARY_REPO/config/skills/second-skill"
+
+# A repo with NO skills at all has to install cleanly.
+#
+# The installer finds the skills it owns with a glob, and an unmatched
+# glob yields nothing. The state writer had its own way of finding them
+# and did not agree with the glob, so a repo with no skills used to
+# crash in the last phase, after the config had already been installed.
+mkdir -p "$SANDBOX/noskills"
+cp -r "$REPO" "$SANDBOX/noskills/repo"
+rm -rf "$SANDBOX/noskills/repo/.git"
+rm -rf "$SANDBOX/noskills/repo/config/skills"
+mkdir -p "$SANDBOX/noskills/home"
+HOME="$SANDBOX/noskills/home" XDG_STATE_HOME="$SANDBOX/noskills/state" \
+    "$SANDBOX/noskills/repo/scripts/install" >/dev/null 2>&1
+noskills_rc=$?
+if [[ "$noskills_rc" -eq 0 ]]; then
+    ok "install succeeds for a repo with no skills"
+else
+    bad "install succeeds for a repo with no skills" \
+        "the install exited $noskills_rc"
+fi
+
+# And the state file has to exist, recording an empty skill list.
+noskills_state="$SANDBOX/noskills/state/lazible-jcode/state.json"
+if [[ -f "$noskills_state" ]]; then
+    noskills_recorded="$(python3 -c \
+        "import json;print(json.load(open('$noskills_state'))['skills'])")"
+    if [[ "$noskills_recorded" == "[]" ]]; then
+        ok "a repo with no skills records an empty skill list"
+    else
+        bad "a repo with no skills records an empty skill list" \
+            "the recorded list is $noskills_recorded"
+    fi
+else
+    bad "a repo with no skills records an empty skill list" \
+        "no state file at $noskills_state"
 fi
 
 # ---------------------------------------------------------------------------

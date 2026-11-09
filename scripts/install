@@ -371,10 +371,19 @@ def sha(path):
         return hashlib.sha256(f.read()).hexdigest()
 
 config_sha = sha(os.path.join(repo, "config", "config.toml"))
+
+# The skills this repo owns.
+#
+# A repo is allowed to hold no skills at all: the directory may not
+# exist. The shell side builds its list from a glob, and a glob that
+# matches nothing yields nothing, so the two sides have to agree. An
+# os.listdir on a missing directory raises, which would abort the state
+# write after the config had already been installed.
+skills_dir = os.path.join(repo, "config", "skills")
 skills = sorted(
-    d for d in os.listdir(os.path.join(repo, "config", "skills"))
-    if os.path.isfile(os.path.join(repo, "config", "skills", d, "SKILL.md"))
-)
+    d for d in os.listdir(skills_dir)
+    if os.path.isfile(os.path.join(skills_dir, d, "SKILL.md"))
+) if os.path.isdir(skills_dir) else []
 
 data = {
     "config_sha256": config_sha,

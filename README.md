@@ -266,7 +266,10 @@ The preview also predicts the real run. Preflight checks the same things in
 both modes, so a `--dry-run` that reports success is a promise the real
 install keeps. It fails the same way and with the same message when a path
 is not creatable: a `~/.jcode` that is a regular file, a dangling symlink, or
-a home directory that cannot be written to.
+a home directory that cannot be written to. A path that resolves inside the
+repo is refused by the dry run too, with the same message and the same exit
+code, so the preview never reports success for an install that is going to
+refuse.
 
 ### The repo boundary
 
@@ -312,7 +315,8 @@ script last ran.
 
 The timestamp only moves when the config or the skill list actually changed.
 So `installed_at` means "when this config was installed", which is what makes
-it worth recording.
+it worth recording. Both triggers are checked: adding or removing a skill
+moves the timestamp even when the config is untouched.
 
 Check the current state without touching anything, using
 `./scripts/install --check`. It runs the same 5 checks and writes nothing at
@@ -357,6 +361,9 @@ a skill by adding the directory; nothing has to be registered anywhere else.
 A directory under `config/skills/` without a `SKILL.md` is not a skill, so it
 is ignored. A skill under `~/.jcode/skills/` that this repo does not own is
 left alone by the uninstaller.
+
+A repo may ship no skills at all. `config/skills/` does not have to exist, and
+a repo without it installs cleanly and records an empty skill list.
 
 ## Not managed here
 
@@ -411,6 +418,12 @@ nothing, and that `uninstall` never reaches the jcode binary.
 It also checks fidelity. For each shape of home directory, the `--dry-run`
 and the real install have to reach the same verdict, because a preview that
 promises a success the real run cannot deliver is worse than no preview.
+That includes the repo boundary: a dry run against a redirected path refuses
+the same way the real run does.
+
+It also covers the edges of the skill list. A repo with no skills at all
+installs cleanly and records an empty list, and a repo with two skills
+installs and removes both of them.
 
 And it checks the repo boundary. The scripts are pointed at a throwaway copy
 of this repo with `~/.jcode` symlinked into it, and the suite asserts that
@@ -434,7 +447,8 @@ A refusal has to be a refusal, not just a failure. The boundary checks ask
 whether the installer refused *for the repo boundary*, not whether it exited
 non-zero. An installer that failed for some unrelated reason would satisfy a
 weaker check, and the boundary claim would look proven by a script that never
-checked a single path.
+checked a single path. The refusal also has to name the path it is about, so
+a refusal about some other path cannot satisfy a check about this one.
 
 The fingerprint those checks rest on hashes file *content*, not file size.
 A size-only fingerprint misses any change that keeps the same length, and

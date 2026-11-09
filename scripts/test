@@ -1153,6 +1153,73 @@ repo_skills="$(cd "$BOUNDARY_REPO/config/skills" && find . -mindepth 1 -maxdepth
 assert_eq "the recorded skill list matches the skills in the repo" \
     "$repo_skills" "$recorded_skills"
 
+# The timestamp must ALSO move when the SKILL LIST changes, with the
+# config untouched. The README says the timestamp moves when "the config
+# or the skill list actually changed", and those are two separate
+# triggers. The config half was proven above; without this, the skill
+# half would be an unbacked claim, and the state writer's skill
+# comparison would be untested.
+#
+# A second skill is added to the throwaway repo copy AFTER the installs
+# above, so the skill list really does change between the two runs. The
+# config is not touched, so a moved timestamp can only come from the
+# skill list.
+#
+# This runs last on purpose. Adding a skill changes what the installer
+# writes, so it has to come after the checks that assert a settled
+# state.
+wait_for_next_second
+mkdir -p "$BOUNDARY_REPO/config/skills/second-skill"
+printf '# second skill\n' > "$BOUNDARY_REPO/config/skills/second-skill/SKILL.md"
+config_sha_before_skills="$(sha256sum "$BOUNDARY_REPO/config/config.toml" | cut -d' ' -f1)"
+set +e
+idem_install "$BOUNDARY_REPO"
+set -e
+installed_at_skill_changed="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+assert_ne "the recorded timestamp moves when the skill list changes" \
+    "$installed_at_stable" "$installed_at_skill_changed"
+
+# The config really was untouched, so the move above can only have come
+# from the skill list.
+config_sha_after_skills="$(sha256sum "$BOUNDARY_REPO/config/config.toml" | cut -d' ' -f1)"
+assert_eq "the config was untouched while the skill list changed" \
+    "$config_sha_before_skills" "$config_sha_after_skills"
+
+# And the recorded skill list picked the new skill up.
+recorded_after_skills="$(python3 -c \
+    "import json;print(' '.join(json.load(open('$idem_state_file'))['skills']))")"
+assert_eq "the recorded skill list picked the new skill up" \
+    "second-skill swarm-engineering" "$recorded_after_skills"
+
+# Put the skill list back the way it was, so the rest of the suite sees
+# the same repo the README describes.
+rm -rf "$BOUNDARY_REPO/config/skills/second-skill"
+
+# And removing the skill again moves the timestamp once more, because
+# the skill list changed back. The rule is "the timestamp moves when the
+# skill list changed", and going back IS a change. This is the same
+# trigger from the other direction.
+wait_for_next_second
+set +e
+idem_install "$BOUNDARY_REPO"
+set -e
+installed_at_resettled="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+assert_ne "the recorded timestamp moves when the skill list changes back" \
+    "$installed_at_skill_changed" "$installed_at_resettled"
+
+# And once the list is back to where it started, the timestamp holds
+# again. Two installs with the same list are a no-op.
+wait_for_next_second
+set +e
+idem_install "$BOUNDARY_REPO"
+set -e
+installed_at_held="$(python3 -c \
+    "import json;print(json.load(open('$idem_state_file'))['installed_at'])")"
+assert_eq "the recorded timestamp holds when the skill list settles" \
+    "$installed_at_resettled" "$installed_at_held"
+
 # ---------------------------------------------------------------------------
 # 22. the uninstall confirmation and the state path fallback
 # ---------------------------------------------------------------------------
@@ -1280,6 +1347,116 @@ if [[ -f "$SANDBOX/multi/home/.jcode/skills/someone-elses-skill/SKILL.md" ]]; th
 else
     bad "uninstall leaves a skill this repo does not own" \
         "the other skill was removed"
+fi
+
+# ---------------------------------------------------------------------------
+# 25. a repo with no skills at all
+#
+# The installer builds its skill list from a glob over config/skills/*/.
+# When the repo has no skills, that glob matches nothing and the list is
+# empty. The state writer had its own way of finding the skills, and it
+# did not agree with the glob: it raised on a missing directory, which
+# aborted the install in the LAST phase, after the config had already
+# been copied. The install reported failure while leaving a half-finished
+# result behind.
+#
+# So this case has to be exercised: a repo is allowed to ship no skills,
+# and it has to install cleanly.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== a repo with no skills at all ==="
+
+mkdir -p "$SANDBOX/noskills"
+cp -r "$REPO" "$SANDBOX/noskills/repo"
+rm -rf "$SANDBOX/noskills/repo/.git"
+rm -rf "$SANDBOX/noskills/repo/config/skills"
+mkdir -p "$SANDBOX/noskills/home"
+
+set +e
+HOME="$SANDBOX/noskills/home" XDG_STATE_HOME="$SANDBOX/noskills/state" \
+    "$SANDBOX/noskills/repo/scripts/install" >"$SANDBOX/noskills/out" 2>&1
+noskills_rc=$?
+set -e
+assert_eq "install succeeds for a repo with no skills" "0" "$noskills_rc"
+
+# The state file has to exist and record an EMPTY skill list. A crash in
+# the state writer would leave no state file at all.
+noskills_state="$SANDBOX/noskills/state/lazible-jcode/state.json"
+if [[ -f "$noskills_state" ]]; then
+    ok "install writes a state file for a repo with no skills"
+else
+    bad "install writes a state file for a repo with no skills" \
+        "no state file at $noskills_state"
+    bad "the state file records an empty skill list" \
+        "no state file to read"
+fi
+
+if [[ -f "$noskills_state" ]]; then
+    noskills_recorded="$(python3 -c \
+        "import json;print(json.load(open('$noskills_state'))['skills'])")"
+    assert_eq "the state file records an empty skill list" "[]" "$noskills_recorded"
+fi
+
+# The config still has to be installed. The bug was a crash in the LAST
+# phase, so a passing exit code alone would not prove the earlier phases
+# ran.
+if [[ -f "$SANDBOX/noskills/home/.jcode/config.toml" ]]; then
+    ok "install copies the config for a repo with no skills"
+else
+    bad "install copies the config for a repo with no skills" \
+        "the config is missing"
+fi
+
+# And the uninstall has to handle the same repo.
+set +e
+HOME="$SANDBOX/noskills/home" XDG_STATE_HOME="$SANDBOX/noskills/state" \
+    "$SANDBOX/noskills/repo/scripts/uninstall" --full --yes >/dev/null 2>&1
+noskills_un_rc=$?
+set -e
+assert_eq "uninstall succeeds for a repo with no skills" "0" "$noskills_un_rc"
+
+# ---------------------------------------------------------------------------
+# 26. install --dry-run predicts the boundary refusal
+#
+# The uninstall dry-run is already checked to predict its own refusal.
+# The install dry-run has to do the same: if a dry run said "this will
+# work" and the real run refused, the preview would be a lie. The
+# refusal happens in the preflight phase, which the dry run still runs,
+# so the prediction has to hold.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== install --dry-run predicts the boundary refusal ==="
+
+mkdir -p "$SANDBOX/dryrefuse/home/.jcode"
+ln -s "$BOUNDARY_REPO/config/config.toml" \
+    "$SANDBOX/dryrefuse/home/.jcode/config.toml"
+
+set +e
+dryrefuse_out="$(HOME="$SANDBOX/dryrefuse/home" \
+    XDG_STATE_HOME="$SANDBOX/dryrefuse/state" \
+    "$BOUNDARY_REPO/scripts/install" --dry-run 2>&1)"
+dryrefuse_rc=$?
+set -e
+
+assert_eq "install --dry-run exits 1 on a boundary violation" \
+    "1" "$dryrefuse_rc"
+if grep -q 'resolves inside this repo' <<<"$dryrefuse_out" &&
+   grep -q 'refuses to touch it' <<<"$dryrefuse_out"; then
+    ok "install --dry-run reports the boundary refusal"
+else
+    bad "install --dry-run reports the boundary refusal" \
+        "the dry run did not report the refusal"
+fi
+
+# A dry run must not have side effects. The refusal is up front, so
+# nothing may have been written.
+if [[ ! -e "$SANDBOX/dryrefuse/state/lazible-jcode/state.json" ]]; then
+    ok "a refused install --dry-run writes no state file"
+else
+    bad "a refused install --dry-run writes no state file" \
+        "a state file was written"
 fi
 
 # ---------------------------------------------------------------------------
