@@ -157,15 +157,28 @@ refuses_install() {
 }
 
 # The same, for the uninstaller.
+#
+# The uninstaller runs the REMOVAL guard, which has two checks:
+#
+#   1. the path resolves inside the repo
+#   2. the ENTRY lives inside the repo, even when the path points out
+#
+# Check 1 fires when the target is a redirect into the repo. Check 2 fires
+# when the entry rm would delete is inside the repo but the path points
+# elsewhere. Both refuse, and both name the path.
+#
+# The two messages differ on purpose: "resolves inside" is about where
+# the path points, "lives inside" is about where the entry is.
 refuses_uninstall() {
     local home="$1" state="$2" path="$3" out rc
     out="$(HOME="$home" XDG_STATE_HOME="$state" \
         "$BOUNDARY_REPO/scripts/uninstall" --full --yes 2>&1)"
     rc=$?
     [[ "$rc" -eq 1 ]] || return 1
-    grep -q 'resolves inside this repo' <<<"$out" || return 1
-    grep -q 'refuses to touch it' <<<"$out" || return 1
-    grep -qF "$path resolves inside this repo" <<<"$out" || return 1
+    grep -q 'inside this repo' <<<"$out" || return 1
+    grep -q 'refuses to remove it' <<<"$out" || return 1
+    grep -qF "$path " <<<"$out" || return 1
+    grep -qE "($path resolves inside this repo|$path lives inside this repo)" <<<"$out" || return 1
     return 0
 }
 

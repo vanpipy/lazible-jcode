@@ -79,7 +79,13 @@ rm_safe() {
     # Never delete from inside the repo. A symlinked ~/.jcode or skills
     # directory would otherwise redirect "rm -rf" onto the repo's own
     # config and skill files, which is data loss, not an uninstall.
-    guard_outside_repo "$p"
+    #
+    # The REMOVAL guard is the right one here, not the plain one. rm
+    # removes the directory ENTRY and does not follow a final symlink, so
+    # the question is not "where does this path point" but "where does
+    # this entry live". The plain guard resolves the final component and
+    # would say "outside the repo" for a path whose entry is inside it.
+    guard_outside_repo_for_removal "$p"
 
     if [[ -e "$p" || -L "$p" ]]; then
         if [[ $dry_run -eq 1 ]]; then
@@ -118,6 +124,11 @@ remove_full() {
 # The check has to be up front rather than inside rm_safe. Otherwise a
 # refusal halfway through would leave the uninstall half done: the state
 # file already gone, the config still there.
+#
+# The removal semantics are what matter here. rm removes the directory
+# entry and does not follow a final symlink, so the path that matters is
+# the resolved PARENT plus the literal last component. A path can point
+# outside the repo and still be an entry that lives inside it.
 guard_repo_boundary() {
     local p
     p=("$STATE_FILE" "$JCODE_CONFIG")
@@ -126,7 +137,7 @@ guard_repo_boundary() {
         p+=("${skill_targets[@]}")
     fi
 
-    guard_outside_repo "${p[@]}"
+    guard_outside_repo_for_removal "${p[@]}"
 }
 
 main() {

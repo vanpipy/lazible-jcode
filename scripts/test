@@ -824,7 +824,7 @@ b3_out="$(HOME="$SANDBOX/b3/home" XDG_STATE_HOME="$SANDBOX/b3/state" \
 b3_rc=$?
 set -e
 assert_contains "uninstall refuses to delete from inside the repo" \
-    "resolves inside this repo" "$b3_out"
+    "inside this repo" "$b3_out"
 assert_eq "uninstall exits non-zero when the target is inside the repo" \
     "1" "$b3_rc"
 
@@ -835,7 +835,7 @@ b4_out="$(HOME="$SANDBOX/b3/home" XDG_STATE_HOME="$SANDBOX/b3/state" \
 b4_rc=$?
 set -e
 assert_contains "uninstall --dry-run predicts the repo-boundary refusal" \
-    "resolves inside this repo" "$b4_out"
+    "inside this repo" "$b4_out"
 assert_eq "uninstall --dry-run exits non-zero inside the repo" \
     "1" "$b4_rc"
 
@@ -1017,7 +1017,7 @@ b9_out="$(HOME="$SANDBOX/b9/home" XDG_STATE_HOME="$SANDBOX/b9/state" \
 b9_rc=$?
 set -e
 assert_contains "uninstall refuses a skill's own directory redirected into the repo" \
-    "resolves inside this repo" "$b9_out"
+    "inside this repo" "$b9_out"
 assert_eq "uninstall exits non-zero when a skill dir is inside the repo" \
     "1" "$b9_rc"
 if [[ -f "$SANDBOX/b9/state/lazible-jcode/state.json" ]]; then
@@ -1032,6 +1032,77 @@ else
     bad "a refused skill dir leaves the repo's own skill file in place" \
         "the repo's SKILL.md was deleted"
 fi
+
+# Case 7d: the shape that actually broke the uninstaller.
+#
+#   ~/.jcode/skills                     -> <repo>/config/skills
+#   <repo>/config/skills/<skill>        -> a directory OUTSIDE the repo
+#
+# The live skills dir points INTO the repo, and the repo's own skill entry
+# is a symlink pointing back OUT.
+#
+# The skill target is $SKILLS_HOME/<skill>, which here resolves to a
+# directory outside the repo. A guard that resolves the final component
+# sees nothing wrong with it, and reports success. But rm does not follow
+# a final symlink: it removes the ENTRY, and that entry is the repo's own
+# config/skills/<skill>. The uninstaller deleted a file out of the repo
+# and printed "uninstall complete".
+#
+# So the removal guard has to ask where the entry LIVES, not where the
+# path POINTS. The parent is what matters.
+mkdir -p "$SANDBOX/b7d/home" "$SANDBOX/b7d/state"
+HOME="$SANDBOX/b7d/home" XDG_STATE_HOME="$SANDBOX/b7d/state" \
+    "$BOUNDARY_REPO/scripts/install" >/dev/null 2>&1
+rm -rf "$SANDBOX/b7d/home/.jcode/skills"
+ln -s "$BOUNDARY_REPO/config/skills" "$SANDBOX/b7d/home/.jcode/skills"
+
+# The repo's own skill entry must BE the symlink. ln -s onto an existing
+# directory nests the link inside it, which is a different shape entirely.
+rm -rf "$BOUNDARY_REPO/config/skills/swarm-engineering"
+ln -s "$SANDBOX/outside-skill" "$BOUNDARY_REPO/config/skills/swarm-engineering"
+
+set +e
+b7d_uninstall_out="$(HOME="$SANDBOX/b7d/home" XDG_STATE_HOME="$SANDBOX/b7d/state" \
+    "$BOUNDARY_REPO/scripts/uninstall" --full --yes 2>&1)"
+b7d_uninstall_rc=$?
+set -e
+
+assert_eq "uninstall exits non-zero when a skill entry lives inside the repo" \
+    "1" "$b7d_uninstall_rc"
+assert_contains "uninstall refuses a skill entry that lives inside the repo" \
+    "inside this repo" "$b7d_uninstall_out"
+assert_not_contains "a refused uninstall does not claim it completed" \
+    "uninstall complete" "$b7d_uninstall_out"
+
+if [[ -L "$BOUNDARY_REPO/config/skills/swarm-engineering" ]]; then
+    ok "the repo's own skill entry survives the refused uninstall"
+else
+    bad "the repo's own skill entry survives the refused uninstall" \
+        "the repo's config/skills/swarm-engineering was deleted"
+fi
+
+# The refusal also has to come UP FRONT. rm_safe guards each path as it
+# goes, so a per-path guard alone would let the uninstall remove the
+# state file and the config first, and only refuse when it reached the
+# skill. A refused uninstall has to remove nothing at all.
+if [[ -f "$SANDBOX/b7d/state/lazible-jcode/state.json" ]]; then
+    ok "a refused uninstall removes nothing, not even the state file"
+else
+    bad "a refused uninstall removes nothing, not even the state file" \
+        "the state file was deleted before the refusal"
+fi
+if [[ -f "$SANDBOX/b7d/home/.jcode/config.toml" ]]; then
+    ok "a refused uninstall leaves the config in place"
+else
+    bad "a refused uninstall leaves the config in place" "the config was removed"
+fi
+
+# Put the fixture back so the fingerprint comparison at the end of this
+# section measures the uninstaller, not this test's own setup.
+rm -rf "$BOUNDARY_REPO/config/skills/swarm-engineering"
+mkdir -p "$BOUNDARY_REPO/config/skills/swarm-engineering"
+cp "$REPO/config/skills/swarm-engineering/SKILL.md" \
+   "$BOUNDARY_REPO/config/skills/swarm-engineering/SKILL.md"
 
 # ---------------------------------------------------------------------------
 # 19. the shared guard itself

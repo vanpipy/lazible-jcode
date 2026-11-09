@@ -74,3 +74,70 @@ guard_outside_repo() {
         fi
     done
 }
+
+# Refuse to REMOVE any of the given paths, if removing them would touch
+# something inside this repo.
+#
+# There are two ways a removal can land inside the repo, and they need
+# two different checks.
+#
+# CHECK 1: the path itself resolves inside the repo.
+#
+#   ~/.jcode/skills/swarm-engineering -> <repo>/config/skills/swarm-engineering
+#
+# The target resolves into the repo. rm -rf on that path removes the
+# SYMLINK and not the repo's directory, so no harm happens, but the
+# shape is still a redirect into the repo and is worth refusing.
+#
+# CHECK 2: the ENTRY lives inside the repo, even though the path points
+# out of it.
+#
+#   ~/.jcode/skills              -> <repo>/config/skills
+#   <repo>/config/skills/<skill> -> a directory OUTSIDE the repo
+#
+# The skill target $SKILLS_HOME/<skill> resolves to a directory outside
+# the repo, so check 1 sees nothing wrong with it. But rm does not
+# follow a final symlink: it removes the ENTRY, and that entry is the
+# repo's own <repo>/config/skills/<skill>. Without check 2 the
+# uninstaller deletes a file out of the repo and reports success.
+#
+# Check 1 asks "where does this path point". Check 2 asks "where does
+# this entry live", which is the resolved parent plus the literal
+# basename. The two disagree exactly in the dangerous case, so both run.
+#
+# Refusing on check 1 even though rm would be harmless there is
+# deliberate. A redirect into the repo is a broken setup either way, and
+# a refusal is cheap while a repo deletion is not.
+#
+# The parent is resolved with readlink -m, the same way inside_repo does
+# it, so the two agree on how a path is normalised.
+inside_repo_for_removal() {
+    local parent resolved
+    parent="$(dirname -- "$1")"
+    # Resolve the PARENT only. Resolving the target itself would follow
+    # the final symlink and then answer the wrong question: the entry rm
+    # removes is the one named by the parent plus the literal basename,
+    # not the thing that basename happens to point at.
+    parent="$(readlink -m -- "$parent" 2>/dev/null)" || return 1
+    resolved="$(readlink -m -- "$REPO" 2>/dev/null)" || return 1
+    [[ -n "$parent" && -n "$resolved" ]] || return 1
+    [[ "$parent" == "$resolved" || "$parent" == "$resolved"/* ]]
+}
+
+guard_outside_repo_for_removal() {
+    local p
+    for p in "$@"; do
+        if inside_repo "$p"; then
+            err "$p resolves inside this repo"
+            err "$SCRIPT_NAME refuses to remove it. Fix the symlink first:"
+            err "  rm $p && mkdir -p $p"
+            exit 1
+        fi
+        if inside_repo_for_removal "$p"; then
+            err "$p lives inside this repo"
+            err "$SCRIPT_NAME refuses to remove it. Fix the symlink first:"
+            err "  rm $p && mkdir -p $p"
+            exit 1
+        fi
+    done
+}
