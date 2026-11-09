@@ -337,6 +337,16 @@ Prompt drift is reported as a warning, not a failure. `install` never writes
 Under `--check` the question is whether anything at all is off, so drift exits
 non-zero there.
 
+The warning names the file that drifted, not just the pair, the same way the
+skills check names the skill that drifted:
+
+```
+  WARN prompt-overlay.md / swarm-prompt.md vs live (differ: swarm-prompt.md)
+```
+
+A warning that only said "one of these two differs" would leave the reader
+diffing both to find out which one, when the fix is a single copy per file.
+
 ## Editing
 
 The repo is the source of truth for `config.toml` and the skills. Change the

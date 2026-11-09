@@ -369,6 +369,34 @@ assert_contains "--check reports 6 passed, 0 failed, 0 warnings" \
     "verify: 6 passed, 0 failed, 0 warnings" "$check3_out"
 
 echo ""
+echo "=== install --check names the individual drifted prompt file ==="
+
+# The skills check above names the skill that drifted ("differ: <name>").
+# The prompt check has to name the file that drifted for the same reason:
+# a warning that only says "one of these two differs" leaves the reader
+# diffing both to find out which one, when the fix is one copy per file.
+# Drift exactly one of the two and assert the warning names that one and
+# does not name the other.
+printf '\nlocal hand edit that was never copied back into config/\n' \
+    >> "$SBHOME/.jcode/swarm-prompt.md"
+
+set +e
+check4_out="$("$REPO/scripts/install" --check 2>&1)"
+check4_rc=$?
+set -e
+
+assert_eq "--check exits 6 when one prompt file drifted" "6" "$check4_rc"
+assert_contains "--check names the drifted prompt file" \
+    "vs live (differ: swarm-prompt.md)" "$check4_out"
+assert_not_contains "--check does not name the prompt file that did not drift" \
+    "differ: prompt-overlay.md" "$check4_out"
+assert_contains "--check still counts exactly one warning" \
+    "verify: 5 passed, 0 failed, 1 warning" "$check4_out"
+
+# Put it back so the later checks start from a clean, non-drifted state.
+cp "$REPO/config/swarm-prompt.md" "$SBHOME/.jcode/swarm-prompt.md"
+
+echo ""
 echo "=== install --check detects a skill whose CONTENT drifted ==="
 
 # The README says the skills are rewritten on every install, so a

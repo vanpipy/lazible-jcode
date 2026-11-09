@@ -368,12 +368,16 @@ phase_verify() {
     [[ ${#drifted_skills[@]} -eq 0 ]]
     check "installed skills match the repo${drifted_skills:+ (differ: ${drifted_skills[*]})}"
 
-    local f drift=0
+    # Same reasoning as the skills check above: name the file that drifted,
+    # not just the pair. A warning that says "one of these two differs"
+    # makes the reader diff both to find out which one, and the fix is a
+    # single copy per file.
+    local f drifted_prompts=()
     for f in "${LIVE_PROMPTS[@]}"; do
-        cmp -s "$REPO/config/$f" "$HOME/.jcode/$f" || drift=1
+        cmp -s "$REPO/config/$f" "$HOME/.jcode/$f" || drifted_prompts+=("$f")
     done
-    [[ $drift -eq 0 ]]
-    warn_check "prompt-overlay.md / swarm-prompt.md vs live (drift = edit live, then re-copy into config/)"
+    [[ ${#drifted_prompts[@]} -eq 0 ]]
+    warn_check "prompt-overlay.md / swarm-prompt.md vs live${drifted_prompts:+ (differ: ${drifted_prompts[*]})}"
 
     set -${saved_opts}
 

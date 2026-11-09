@@ -706,6 +706,61 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. the drift warning names the file that drifted
+#
+# The README quotes the warning line:
+#
+#   WARN prompt-overlay.md / swarm-prompt.md vs live (differ: swarm-prompt.md)
+#
+# A README that quotes output has to quote the REAL output. The check
+# below drifts one of the two prompt files and asks the installer what it
+# prints, then compares that against the line the README shows.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the drift warning names the file that drifted ==="
+
+# Fresh sandbox: the skills sandbox has had its live prompt files
+# removed by the uninstall above.
+mkdir -p "$SANDBOX/drift/home/.jcode"
+cp "$SANDBOX/skills/repo/config/prompt-overlay.md" "$SANDBOX/drift/home/.jcode/prompt-overlay.md"
+cp "$SANDBOX/skills/repo/config/swarm-prompt.md" "$SANDBOX/drift/home/.jcode/swarm-prompt.md"
+
+# Drift exactly one of the two.
+printf '\nlocal hand edit\n' >> "$SANDBOX/drift/home/.jcode/swarm-prompt.md"
+
+set +e
+drift_out="$(HOME="$SANDBOX/drift/home" XDG_STATE_HOME="$SANDBOX/drift/state" \
+    "$SANDBOX/skills/repo/scripts/install" --check 2>&1)"
+drift_rc=$?
+set -e
+
+drift_warn="$(grep -m1 'vs live' <<<"$drift_out" | sed 's/^[[:space:]]*//')"
+
+# The README's quoted line, minus the leading two spaces. The `|| true`
+# matters: if the README stops quoting the warning at all, grep finds
+# nothing and returns non-zero, which under `set -e` would abort the
+# whole run before the remaining checks got a chance to run.
+readme_drift_warn="$(grep -m1 'vs live' "$README" | sed 's/^[[:space:]]*//' || true)"
+
+if [[ "$drift_rc" -eq 6 ]] &&
+   [[ "$drift_warn" == "WARN prompt-overlay.md / swarm-prompt.md vs live (differ: swarm-prompt.md)" ]]; then
+    ok "--check names the prompt file that drifted"
+else
+    bad "--check names the prompt file that drifted" \
+        "the check exited $drift_rc" "it printed: $drift_warn"
+fi
+
+# And the README has to quote that same line, so the doc and the code
+# cannot drift apart without this check noticing.
+if [[ "$readme_drift_warn" == "$drift_warn" ]]; then
+    ok "the README quotes the real drift warning"
+else
+    bad "the README quotes the real drift warning" \
+        "the README shows: $readme_drift_warn" "the installer prints: $drift_warn"
+fi
+
+# ---------------------------------------------------------------------------
 # 6. the "not managed here" guarantees
 #
 # The README lists four categories of file the scripts never touch. Only
