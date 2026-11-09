@@ -1085,6 +1085,137 @@ check_claim "the README states that the unmanaged files are checked" \
     "it plants one artifact per category"
 check_claim "the README states that mcp.json is not tracked" \
     "**not tracked**"
+check_claim "the README states that the symlinked config is refused" \
+    "that is a symlink is refused by name"
+check_claim "the README states that a drifted config is repaired" \
+    "install puts the repo's copy back"
+check_claim "the README states that the cleanup is checked" \
+    "verified against the git history"
+check_claim "the README states that the test header is checked" \
+    "compared against that file's own section banners"
+check_claim "the README scopes the mutation claim to what it can check" \
+    "the two kinds of claim that no script in this repo could ever break"
+check_claim "the README says the provider measurements are not checked by doc-check" \
+    "reproduced by hand against that log, not by \`doc-check\`"
+
+# ---------------------------------------------------------------------------
+# 9. the historical cleanup claims
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the removed tools really are gone ==="
+
+# The README says earlier versions of this repo installed helper CLIs to
+# ~/.local/bin and orchestrator prompts to ~/.local/share/jcode-orchestrate/,
+# and that this repo no longer manages them. "No longer manages them" is
+# checkable here: the paths are not in the repo, and the history shows
+# when they were removed. What is NOT checkable here is the state of the
+# user's machine, which is where those files would have been installed to.
+#
+# So the check is about the repo side of the claim. The README already
+# says the machine-side part is historical.
+
+# The paths must not exist in the repo at all.
+for path in config/bin config/share/jcode-orchestrate; do
+    if [[ -e "$REPO/$path" ]]; then
+        bad "the removed tool paths are gone from the repo" \
+            "$path still exists"
+    else
+        ok "the removed tool paths are gone from the repo"
+    fi
+done
+
+# And the history must show them being removed, so the claim is anchored
+# to a commit rather than to nothing.
+for path in config/bin/jcode-orchestrate config/bin/jcode-tool-policy \
+            config/share/jcode-orchestrate/prompts/coder.md; do
+    if git -C "$REPO" log --all --oneline --diff-filter=D --name-only \
+        -- "$path" 2>/dev/null | grep -qF "$path"; then
+        ok "the history shows $path being removed"
+    else
+        bad "the history shows $path being removed" \
+            "no deletion of $path in the git history"
+    fi
+done
+
+# The config must not still wire up hooks that were removed with those
+# tools. A [hooks] block pointing at a deleted binary would be a claim
+# about the past that the present contradicts.
+if grep -qE '^\s*\[hooks\]' "$REPO/config/config.toml"; then
+    bad "the config has no live [hooks] block" \
+        "config/config.toml still declares [hooks]"
+else
+    ok "the config has no live [hooks] block"
+fi
+
+# The config may still MENTION the removed hooks, as a comment recording
+# that they are gone. That mention has to say they were removed, or it
+# reads as a live reference.
+if grep -qE '^\s*\[hooks\]' "$REPO/config/config.toml"; then
+    :
+elif grep -q '\[hooks\] was removed' "$REPO/config/config.toml"; then
+    ok "the config records the [hooks] block as removed"
+else
+    bad "the config records the [hooks] block as removed" \
+        "config/config.toml does not say the [hooks] block was removed"
+fi
+
+# ---------------------------------------------------------------------------
+# 10. the test script's own header has to match its own sections
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== scripts/test documents its own checks ==="
+
+# The header at the top of scripts/test lists the checks by number. If a
+# check is added and the header is not updated, the header becomes a
+# false description of the file. The section banners in the body are the
+# source of truth, so the header is compared against them.
+#
+# Both sides are reduced to a list of "number: title" pairs. The header
+# uses ranges ("2-5.") and the banners use ranges too ("2-5."), so the
+# ranges are compared as written rather than expanded.
+
+header_list="$(
+    sed -n '/^# Checks:$/,/^#$/p' "$REPO/scripts/test" \
+        | sed -n 's/^#  *\([0-9][0-9-]*\.\) *\(.*\)$/\1 \2/p'
+)"
+
+banner_list="$(
+    grep -E '^# [0-9]+(-[0-9]+)?\. ' "$REPO/scripts/test" \
+        | sed 's/^# //'
+)"
+
+# The banners carry the same numbers but the titles are not the same
+# words, so only the numbers are compared. That is what can drift.
+header_nums="$(
+    printf '%s\n' "$header_list" \
+        | sed -n 's/^\([0-9][0-9-]*\)\..*$/\1/p' \
+        | tr '\n' ' '
+)"
+
+banner_nums="$(
+    printf '%s\n' "$banner_list" \
+        | sed -n 's/^\([0-9][0-9-]*\)\..*$/\1/p' \
+        | tr '\n' ' '
+)"
+
+if [[ "$header_nums" == "$banner_nums" ]]; then
+    ok "the scripts/test header lists the same sections as the file has"
+else
+    bad "the scripts/test header lists the same sections as the file has" \
+        "header: $header_nums" \
+        "banners: $banner_nums"
+fi
+
+# The header also has to actually list something. An empty list would
+# compare equal to an empty banner list and pass vacuously.
+if [[ -n "$header_list" ]]; then
+    ok "the scripts/test header lists its checks"
+else
+    bad "the scripts/test header lists its checks" \
+        "the 'Checks:' block is missing or empty"
+fi
 
 # ---------------------------------------------------------------------------
 

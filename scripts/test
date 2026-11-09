@@ -16,26 +16,39 @@
 # sandbox.
 #
 # Checks:
-#   1. install --dry-run on a clean HOME exits 0
-#   2. install --dry-run leaves the sandbox byte-identical
-#   3. install --dry-run claims nothing was installed
-#   4. install --dry-run announces what it would do
-#   5. install --check writes nothing and reports its result
-#   6. a real install writes config, skills and state
-#   7. install --check detects missing live prompt files
-#   8. install --check passes all 6 checks when nothing has drifted
-#   9. a second install is idempotent
-#   10. uninstall --dry-run removes nothing
-#   11. uninstall --dry-run claims nothing was removed
+#   1.  the fingerprint itself: it sees a content change that keeps the
+#       same length, which is what every "nothing changed" claim rests on
+#   2-5. install --dry-run on a clean HOME: exits 0, leaves the sandbox
+#       byte-identical, and never claims it installed anything
+#   6.  install --check on a clean HOME: writes nothing and reports its
+#       result
+#   7-9. a real install: writes config, skills and state, is idempotent,
+#       and --check reports what drifted
+#   10-11. uninstall --dry-run: removes nothing and claims it removed
+#       nothing
 #   12. uninstall removes state.json
 #   13. uninstall --full --yes removes config and skills
 #   14. uninstall never touches the jcode binary
 #   15. the --dry-run predicts the real install, for every home shape
 #   16. argument handling: --help and unknown arguments
 #   17. the installer never writes to the repo
-#   18. preflight refuses a python3 older than 3.11, before writing anything
-#   19. every file the README lists as not managed survives install and
+#   18. the repo boundary holds against symlinks
+#   19. a symlinked live config is refused, named, and leaves the target
+#       and the sandbox untouched
+#   20. a drifted live config is reported by --check and repaired by a
+#       real install
+#   21. the shared repo guard itself, over the paths it covers
+#   22. a real install never writes to the repo
+#   23. install is genuinely idempotent, over file content
+#   24. the uninstall confirmation and the state path fallback
+#   25. the repo can hold more than one skill
+#   26. a repo with no skills at all installs and records an empty list
+#   27. install --dry-run predicts the boundary refusal
+#   28. preflight refuses a python3 older than 3.11, before writing anything
+#   29. every file the README lists as not managed survives install and
 #       uninstall --full, byte-identical
+#
+# The numbered section banners in this file use the same numbering.
 #
 # "Leaves the sandbox byte-identical" covers both HOME and XDG_STATE_HOME.
 # The state directory is not under HOME, so fingerprinting HOME alone would
@@ -130,7 +143,7 @@ SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lazible-jcode-test.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 
 # ---------------------------------------------------------------------------
-# 0. the fingerprint itself
+# 1. the fingerprint itself
 #
 # The fingerprint is what every "nothing changed" claim rests on, so it is
 # checked on its own terms first. A fingerprint that cannot see a change
@@ -232,7 +245,7 @@ echo "  sandbox HOME: $SBHOME"
 echo ""
 
 # ---------------------------------------------------------------------------
-# 1-4. install --dry-run on a clean HOME
+# 2-5. install --dry-run on a clean HOME
 # ---------------------------------------------------------------------------
 
 echo "=== install --dry-run (clean HOME) ==="
@@ -270,7 +283,7 @@ assert_contains "dry-run ends with a dry-run completion notice" \
     "dry-run complete" "$dry_out"
 
 # ---------------------------------------------------------------------------
-# 5. install --check on a clean HOME
+# 6. install --check on a clean HOME
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -291,7 +304,7 @@ after_check="$(sandbox_fingerprint)"
 assert_eq "--check leaves the sandbox byte-identical" "$before" "$after_check"
 
 # ---------------------------------------------------------------------------
-# 6-8. a real install
+# 7-9. a real install
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -451,7 +464,7 @@ assert_eq "second install exits 0" "0" "$second_rc"
 assert_eq "second install changes nothing" "$before_second" "$after_second"
 
 # ---------------------------------------------------------------------------
-# 9-10. uninstall --dry-run
+# 10-11. uninstall --dry-run
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -477,7 +490,7 @@ assert_contains "uninstall --dry-run ends with a dry-run completion notice" \
     "dry-run complete" "$udry_out"
 
 # ---------------------------------------------------------------------------
-# 11. uninstall removes state.json
+# 12. uninstall removes state.json
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -504,7 +517,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 12. uninstall --full removes config and skills
+# 13. uninstall --full removes config and skills
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -531,7 +544,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 13. uninstall never touches the jcode binary
+# 14. uninstall never touches the jcode binary
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -553,7 +566,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 14. the dry-run predicts the real install
+# 15. the dry-run predicts the real install
 #
 # A preview that promises a success the real run cannot deliver is worse
 # than no preview. For each environment shape, the dry-run and the real
@@ -671,7 +684,7 @@ fidelity "the state dir's parent is a dangling symlink" \
 chmod -R u+w "$SANDBOX" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 15. argument handling
+# 16. argument handling
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -1275,7 +1288,7 @@ assert_eq "install still works when nothing points into the repo" \
     "0" "$b5_rc"
 
 # ---------------------------------------------------------------------------
-# 20. a real install never writes to the repo
+# 22. a real install never writes to the repo
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -1294,7 +1307,7 @@ assert_eq "a real install never writes to the repo" \
     "$repo_before_real" "$repo_after_real"
 
 # ---------------------------------------------------------------------------
-# 21. install is genuinely idempotent
+# 23. install is genuinely idempotent
 #
 # The fingerprint hashes file CONTENT, so this is a real check. It was
 # vacuous before: state.json carried a fresh timestamp on every run, and
@@ -1468,7 +1481,7 @@ assert_eq "the recorded timestamp holds when the skill list settles" \
     "$installed_at_resettled" "$installed_at_held"
 
 # ---------------------------------------------------------------------------
-# 22. the uninstall confirmation and the state path fallback
+# 24. the uninstall confirmation and the state path fallback
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -1510,7 +1523,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 23. more than one skill
+# 25. more than one skill
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -1597,7 +1610,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 25. a repo with no skills at all
+# 26. a repo with no skills at all
 #
 # The installer builds its skill list from a glob over config/skills/*/.
 # When the repo has no skills, that glob matches nothing and the list is
@@ -1664,7 +1677,7 @@ set -e
 assert_eq "uninstall succeeds for a repo with no skills" "0" "$noskills_un_rc"
 
 # ---------------------------------------------------------------------------
-# 26. install --dry-run predicts the boundary refusal
+# 27. install --dry-run predicts the boundary refusal
 #
 # The uninstall dry-run is already checked to predict its own refusal.
 # The install dry-run has to do the same: if a dry run said "this will
@@ -1707,7 +1720,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 27. preflight refuses a python3 that is too old for tomllib
+# 28. preflight refuses a python3 that is too old for tomllib
 #
 # The README requires python3 3.11 or newer, because tomllib landed in
 # 3.11. Preflight used to check only that python3 EXISTED, so on an older
@@ -1787,7 +1800,7 @@ assert_contains "the dry run reports the same python3 refusal" \
     "tomllib" "$oldpy_dry_out"
 
 # ---------------------------------------------------------------------------
-# 28. everything the README lists as "not managed here" survives
+# 29. everything the README lists as "not managed here" survives
 #
 # The README's "Not managed here" section names four categories: the
 # jcode binary, MCP servers, ~/AGENTS.md, and everything else under

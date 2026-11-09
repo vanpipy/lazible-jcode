@@ -117,6 +117,15 @@ What was measured, on a production log window ending 2026-11-08 23:30, with
   108, four by 109, one by 107, and three by 1. The largest spread anywhere in
   the window was 109 tokens.
 
+Those three bullets are reproducible from the production log alone, and the
+analysis script is kept outside this repo because it reads the machine's log
+directory. It is a read-only script, and the pairing rule it applies is
+described below. Running it against the same log window reproduces the
+figures: 694 paired rows, 105 shape groups, 24 split groups, and the delta
+histogram `{1: 3, 107: 1, 108: 16, 109: 4}`. What is *not* reproducible is
+anything that needed the captured wire bodies, because that capture set was
+deleted. The section below says which is which.
+
 The pairing rule matters here, so it is stated rather than assumed. The log
 truncates the session name to 20 characters
 (`crates/jcode-logging/src/lib.rs:184`), so one log prefix can cover several
@@ -438,9 +447,18 @@ orchestrator prompts to `~/.local/share/jcode-orchestrate/`. This repo no
 longer manages them; all of them have since been deleted from the machine, and
 `uninstall` never touched them.
 
+The repo side of that is checkable and is checked: those paths are gone from
+the repo, and the git history shows the commit that removed them
+(`c330070`, "chore: clean legacy docs and tools"). The machine side is
+historical: it describes what happened on the machine this repo was developed
+on, and `doc-check` does not and cannot verify another machine's
+`~/.local/bin`.
+
 The `[hooks]` block that referenced two of those CLIs is gone too. Nothing now
 gates a remote push or a commit on an `ambient/*` branch, and the
-`~/.jcode/audit.log` trail those hooks maintained has been deleted.
+`~/.jcode/audit.log` trail those hooks maintained has been deleted. The
+config still records the removal in a comment rather than dropping it
+silently, and `doc-check` checks that the block is not live.
 
 ## Uninstall
 
@@ -503,12 +521,25 @@ of this repo with `~/.jcode` symlinked into it, and the suite asserts that
 the copy comes out byte-identical, that the scripts exit non-zero, and that
 a refused uninstall removes nothing at all.
 
+It also covers the two ways the live config can be wrong. A live `config.toml`
+that is a symlink is refused by name, and the suite asserts the file it
+points at comes out byte-identical. A live config whose content has drifted
+from `config/config.toml` is reported by `--check` as a failure, and a real
+install puts the repo's copy back.
+
 `scripts/doc-check` checks the other direction. It reads this README and
 turns its claims into assertions: that the phase list matches the installer's
 real phases, that the refusal message quoted above is the message the
 installer actually prints, that the paths this section lists are the paths
 that are refused, and that a refusal leaves the repo byte-identical. It fails
 if this file and the scripts disagree.
+
+It also checks the claims that only this repo can check. The historical
+statement about the removed helper CLIs is verified against the git history
+and against the current tree, and the config's record of the removed
+`[hooks]` block is checked to be a record and not a live block. The
+`scripts/test` header is compared against that file's own section banners,
+so the list of checks cannot quietly stop describing the file.
 
 That matters because a README can drift from the code while every other test
 still passes. A claim in prose has no test behind it unless something checks
@@ -530,9 +561,20 @@ length.
 
 Every check has been shown to fail against the code it is meant to catch:
 each fix was reverted in a scratch copy and the suite was confirmed to fail
-against the broken code. The same is true of the claims in this README: each
-one has been broken in a scratch copy and confirmed to fail the check written
-for it.
+against the broken code. The same is true of the claims in this README that
+are about this repo's own behavior: each one has been broken in a scratch
+copy and confirmed to fail the check written for it.
+
+That last sentence is scoped to the claims this repo can check. It does not
+cover the two kinds of claim that no script in this repo could ever break:
+
+- The provider measurements above, which are computed from a production log
+  on one machine. The analysis script is kept outside this repo and is
+  reproduced by hand against that log, not by `doc-check`.
+- The historical statements about what happened on the development machine,
+  such as the removed helper CLIs. `doc-check` checks the repo side of
+  those claims, which is the part that can still be wrong. It cannot check
+  what another machine's `~/.local/bin` contains.
 
 Exit code 0 means every check passed.
 
