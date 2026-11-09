@@ -706,7 +706,157 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. the README has to actually state the claims
+# 6. the "not managed here" guarantees
+#
+# The README lists four categories of file the scripts never touch. Only
+# the binary and ~/AGENTS.md were checked, and both by the same two-file
+# assertion above. The other two categories were prose with nothing
+# behind them.
+#
+# One artifact per category is planted, and every one of them has to
+# survive BOTH the install and the --full uninstall. The --full uninstall
+# is the one that matters: it is the mode that removes things.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the files the README does not manage survive ==="
+
+mkdir -p "$SANDBOX/unmanaged/home/.jcode/sessions/abc123" \
+         "$SANDBOX/unmanaged/home/.jcode/goals/global" \
+         "$SANDBOX/unmanaged/state"
+
+printf 'session transcript\n' > "$SANDBOX/unmanaged/home/.jcode/sessions/abc123/turns.jsonl"
+printf 'goal history\n' > "$SANDBOX/unmanaged/home/.jcode/goals/global/goal-1.json"
+printf '{"meadow":{"pid":1}}\n' > "$SANDBOX/unmanaged/home/.jcode/servers.json"
+printf '{"mcpServers":{}}\n' > "$SANDBOX/unmanaged/home/.jcode/mcp.json"
+printf 'settings\n' > "$SANDBOX/unmanaged/home/.jcode/settings.json"
+
+# The paths the README names, relative to the sandbox HOME.
+unmanaged_paths=(
+    ".jcode/sessions/abc123/turns.jsonl"
+    ".jcode/goals/global/goal-1.json"
+    ".jcode/servers.json"
+    ".jcode/mcp.json"
+    ".jcode/settings.json"
+)
+
+# The CONTENT of the unmanaged files, before anything runs. An existence
+# check would miss an install that overwrote a file with different bytes
+# and left it in place.
+unmanaged_fingerprint() {
+    local p out=""
+    for p in "${unmanaged_paths[@]}"; do
+        if [[ -e "$SANDBOX/unmanaged/home/$p" ]]; then
+            out+="$p=$(sha256sum < "$SANDBOX/unmanaged/home/$p" | cut -d' ' -f1)
+"
+        else
+            out+="$p=REMOVED
+"
+        fi
+    done
+    printf '%s' "$out"
+}
+
+unmanaged_before="$(unmanaged_fingerprint)"
+
+HOME="$SANDBOX/unmanaged/home" XDG_STATE_HOME="$SANDBOX/unmanaged/state" \
+    "$REPO/scripts/install" >/dev/null 2>&1
+for p in "${unmanaged_paths[@]}"; do
+    if [[ -e "$SANDBOX/unmanaged/home/$p" ]]; then
+        ok "install leaves $p alone"
+    else
+        bad "install leaves $p alone" "it was removed"
+    fi
+done
+if [[ "$(unmanaged_fingerprint)" == "$unmanaged_before" ]]; then
+    ok "install leaves every unmanaged file byte-identical"
+else
+    bad "install leaves every unmanaged file byte-identical" \
+        "the content of an unmanaged file changed"
+fi
+
+HOME="$SANDBOX/unmanaged/home" XDG_STATE_HOME="$SANDBOX/unmanaged/state" \
+    "$REPO/scripts/uninstall" --full --yes >/dev/null 2>&1
+for p in "${unmanaged_paths[@]}"; do
+    if [[ -e "$SANDBOX/unmanaged/home/$p" ]]; then
+        ok "uninstall --full leaves $p alone"
+    else
+        bad "uninstall --full leaves $p alone" "it was removed"
+    fi
+done
+if [[ "$(unmanaged_fingerprint)" == "$unmanaged_before" ]]; then
+    ok "uninstall --full leaves every unmanaged file byte-identical"
+else
+    bad "uninstall --full leaves every unmanaged file byte-identical" \
+        "the content of an unmanaged file changed"
+fi
+
+# The uninstall has to have actually removed what it owns, or the checks
+# above would pass on a run that removed nothing at all.
+if [[ ! -e "$SANDBOX/unmanaged/home/.jcode/config.toml" ]]; then
+    ok "uninstall --full removed the config it owns"
+else
+    bad "uninstall --full removed the config it owns" "the config is still there"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. the python3 version requirement is enforced, not just stated
+#
+# The README requires python3 3.11 or newer, because tomllib landed in
+# 3.11. Preflight used to check only that python3 EXISTED, so on an older
+# python3 the installer copied the config and the skills and then failed
+# its own verification, exiting 6 with a half-finished install and no
+# state file behind it.
+#
+# The refusal has to be in preflight, so the exit code has to be 1 and
+# not 6, and nothing may have been written.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== an old python3 is refused before anything is written ==="
+
+mkdir -p "$SANDBOX/oldpy/bin" "$SANDBOX/oldpy/home" "$SANDBOX/oldpy/state"
+cat > "$SANDBOX/oldpy/bin/python3" <<'STUB'
+#!/usr/bin/env bash
+for a in "$@"; do
+    case "$a" in
+        *'sys.version_info[:2]'*)
+            echo "3.10"
+            exit 0
+            ;;
+        *tomllib*)
+            echo "ModuleNotFoundError: No module named 'tomllib'" >&2
+            exit 1
+            ;;
+    esac
+done
+exec /usr/bin/python3 "$@"
+STUB
+chmod +x "$SANDBOX/oldpy/bin/python3"
+
+set +e
+oldpy_out="$(PATH="$SANDBOX/oldpy/bin:$PATH" \
+    HOME="$SANDBOX/oldpy/home" XDG_STATE_HOME="$SANDBOX/oldpy/state" \
+    "$REPO/scripts/install" 2>&1)"
+oldpy_rc=$?
+set -e
+
+if [[ "$oldpy_rc" -eq 1 ]] && grep -q 'tomllib' <<<"$oldpy_out"; then
+    ok "install refuses a python3 older than 3.11 in preflight"
+else
+    bad "install refuses a python3 older than 3.11 in preflight" \
+        "the install exited $oldpy_rc" "$oldpy_out"
+fi
+
+if [[ ! -e "$SANDBOX/oldpy/home/.jcode/config.toml" ]]; then
+    ok "an old python3 is refused before the config is written"
+else
+    bad "an old python3 is refused before the config is written" \
+        "the config was written"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. the README has to actually state the claims
 # ---------------------------------------------------------------------------
 
 echo ""
@@ -734,6 +884,18 @@ check_claim "the README documents the doc-check script" \
     "./scripts/doc-check"
 check_claim "the README documents the test library" \
     "scripts/testlib.sh"
+check_claim "the README states the python3 version requirement" \
+    "python3\` 3.11 or newer"
+check_claim "the README states that the python3 version is checked" \
+    "the installer checks it"
+check_claim "the README states the MCP config path" \
+    "MCP servers, they live in \`~/.jcode/mcp.json\`"
+check_claim "the README states that servers.json is not the MCP config" \
+    "is not the MCP config"
+check_claim "the README states that the unmanaged files are checked" \
+    "it plants one artifact per category"
+check_claim "the README states that mcp.json is not tracked" \
+    "**not tracked**"
 
 # ---------------------------------------------------------------------------
 

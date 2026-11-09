@@ -27,6 +27,14 @@ scripts/install        ->  wires the two above
 | `scripts/doc-check` | Checks the claims in this README against the real scripts |
 | `scripts/testlib.sh` | Shared helpers for the two test scripts |
 | `scripts/common.sh` | Shared paths and helpers, sourced by both scripts |
+| `.gitignore` | Keeps the live secrets out of git |
+
+`config/mcp.json` is the real MCP server list, with the servers you actually
+run. It is **not tracked**: `.gitignore` excludes it, because a live MCP
+config can carry a bearer token. Nothing in this repo deploys it either. Copy
+it to `~/.jcode/mcp.json` yourself if you want those servers live;
+`config/mcp.example.json` is the tracked, placeholder-shaped version of the
+same file.
 
 ## The three prompt tiers
 
@@ -370,9 +378,25 @@ a repo without it installs cleanly and records an empty skill list.
 ## Not managed here
 
 - the jcode binary, install it separately
-- MCP servers, they live in `~/.jcode/servers.json` and `~/.jcode/mcp.json`
+- MCP servers, they live in `~/.jcode/mcp.json`
 - `~/AGENTS.md`, yours to edit
 - everything else under `~/.jcode`, including runtime state and goal history
+
+Every one of those is something the scripts never write and never remove,
+and `scripts/test` checks it: it plants one artifact per category, then
+asserts that both the install and `uninstall --full` leave every one of
+them byte-identical. The planted paths are the real ones jcode uses on
+v0.99.1: `~/.jcode/sessions/`, `~/.jcode/goals/global/`,
+`~/.jcode/servers.json`, `~/.jcode/mcp.json`, `~/.local/bin/jcode`,
+`~/AGENTS.md`, and a skill directory this repo does not own.
+
+`~/.jcode/servers.json` is not the MCP config, despite the file name
+being adjacent to it. On v0.99.1 it is the registry of *running* jcode
+servers, one entry per server with its socket path, pid and git hash
+(`crates/jcode-base/src/registry.rs:5`). The MCP server list is
+`~/.jcode/mcp.json`, which jcode reads as its own global MCP config
+(`crates/jcode-base/src/mcp/protocol.rs:725`). Neither file is touched
+here.
 
 Earlier versions of this repo installed helper CLIs to `~/.local/bin` and
 orchestrator prompts to `~/.local/share/jcode-orchestrate/`. This repo no
@@ -416,6 +440,18 @@ It covers the paths that are easy to get wrong: that `--dry-run` and
 neither dry-run claims it installed or removed something, that a real install
 writes all three of config, skills and state, that a second install changes
 nothing, and that `uninstall` never reaches the jcode binary.
+
+It also covers the files this repo does not manage. One artifact per
+category is planted, and the suite asserts that the install and
+`uninstall --full` both leave every one of them byte-identical: the
+sessions, the goal history, `servers.json`, `mcp.json`, `~/AGENTS.md`,
+the binary, and a skill this repo does not own.
+
+And it covers the dependency check. The installer parses the config with
+`tomllib`, so `python3` has to be 3.11 or newer. The suite runs the
+installer against a `python3` that reports itself as 3.10 and asserts
+that preflight refuses it, that the refusal names the version, and that
+nothing was written when it refused.
 
 It also checks fidelity. For each shape of home directory, the `--dry-run`
 and the real install have to reach the same verdict, because a preview that
@@ -469,3 +505,16 @@ Exit code 0 means every check passed.
 
 - `jcode` on `PATH`, installed separately
 - `bash`, `python3` 3.11 or newer (for `tomllib`)
+
+The `python3` version is not a suggestion, and the installer checks it
+before it writes anything. `tomllib` landed in Python 3.11, and the
+installer parses the installed config with it. On an older `python3` the
+install would copy the config, copy the skills, and only then fail its
+own verification, leaving a half-finished install behind with no state
+file. Instead, preflight refuses up front and the dry run predicts the
+same refusal with the same message:
+
+```
+[install] ERR: python3 3.10 is too old; tomllib needs 3.11 or newer
+[install] ERR: the installed config is parsed with tomllib, so an older python3 cannot install it
+```

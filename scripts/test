@@ -33,6 +33,9 @@
 #   15. the --dry-run predicts the real install, for every home shape
 #   16. argument handling: --help and unknown arguments
 #   17. the installer never writes to the repo
+#   18. preflight refuses a python3 older than 3.11, before writing anything
+#   19. every file the README lists as not managed survives install and
+#       uninstall --full, byte-identical
 #
 # "Leaves the sandbox byte-identical" covers both HOME and XDG_STATE_HOME.
 # The state directory is not under HOME, so fingerprinting HOME alone would
@@ -1498,6 +1501,217 @@ if [[ ! -e "$SANDBOX/dryrefuse/state/lazible-jcode/state.json" ]]; then
 else
     bad "a refused install --dry-run writes no state file" \
         "a state file was written"
+fi
+
+# ---------------------------------------------------------------------------
+# 27. preflight refuses a python3 that is too old for tomllib
+#
+# The README requires python3 3.11 or newer, because tomllib landed in
+# 3.11. Preflight used to check only that python3 EXISTED, so on an older
+# python3 the installer copied the config, copied the skills, and then
+# failed its own verification with a ModuleNotFoundError. It exited 6
+# having already written a half-finished install, with no state file.
+#
+# The refusal has to happen in preflight, before anything is written, and
+# the dry run has to predict it.
+#
+# The stub reports itself as python 3.10 and has no tomllib, but is
+# otherwise the real python3.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== preflight refuses a python3 older than 3.11 ==="
+
+mkdir -p "$SANDBOX/oldpy/bin" "$SANDBOX/oldpy/home" "$SANDBOX/oldpy/state"
+cat > "$SANDBOX/oldpy/bin/python3" <<'STUB'
+#!/usr/bin/env bash
+# A python3 that claims to be 3.10: no tomllib.
+for a in "$@"; do
+    case "$a" in
+        *'sys.version_info[:2]'*)
+            echo "3.10"
+            exit 0
+            ;;
+        *tomllib*)
+            echo "ModuleNotFoundError: No module named 'tomllib'" >&2
+            exit 1
+            ;;
+    esac
+done
+exec /usr/bin/python3 "$@"
+STUB
+chmod +x "$SANDBOX/oldpy/bin/python3"
+
+set +e
+oldpy_out="$(PATH="$SANDBOX/oldpy/bin:$PATH" \
+    HOME="$SANDBOX/oldpy/home" XDG_STATE_HOME="$SANDBOX/oldpy/state" \
+    "$REPO/scripts/install" 2>&1)"
+oldpy_rc=$?
+set -e
+
+# Exit 1 is the preflight-failed code. It has to be 1, not 6: a 6 would
+# mean the install got as far as verification, which is exactly the bug.
+assert_eq "install refuses an old python3 in preflight" "1" "$oldpy_rc"
+assert_contains "the refusal names the python3 version" \
+    "3.10" "$oldpy_out"
+assert_contains "the refusal names the tomllib requirement" \
+    "tomllib" "$oldpy_out"
+
+# The refusal has to be up front. A refusal that happened after phase 2
+# would have left the config behind.
+if [[ ! -e "$SANDBOX/oldpy/home/.jcode/config.toml" ]]; then
+    ok "an old python3 is refused before the config is copied"
+else
+    bad "an old python3 is refused before the config is copied" \
+        "the config was written"
+fi
+if [[ ! -d "$SANDBOX/oldpy/home/.jcode" ]]; then
+    ok "an old python3 is refused before ~/.jcode is created"
+else
+    bad "an old python3 is refused before ~/.jcode is created" \
+        "the .jcode directory was created"
+fi
+
+# The dry run has to predict the same refusal, with the same message.
+set +e
+oldpy_dry_out="$(PATH="$SANDBOX/oldpy/bin:$PATH" \
+    HOME="$SANDBOX/oldpy/home" XDG_STATE_HOME="$SANDBOX/oldpy/state" \
+    "$REPO/scripts/install" --dry-run 2>&1)"
+oldpy_dry_rc=$?
+set -e
+assert_eq "install --dry-run refuses an old python3 too" "1" "$oldpy_dry_rc"
+assert_contains "the dry run reports the same python3 refusal" \
+    "tomllib" "$oldpy_dry_out"
+
+# ---------------------------------------------------------------------------
+# 28. everything the README lists as "not managed here" survives
+#
+# The README's "Not managed here" section names four categories: the
+# jcode binary, MCP servers, ~/AGENTS.md, and everything else under
+# ~/.jcode including runtime state and goal history. The uninstaller
+# removes config.toml and this repo's own skills, so the risk is that it
+# reaches one of these too.
+#
+# Only the binary was checked. The rest were prose. This plants one
+# artifact per category and asserts each survives BOTH the install and
+# the --full uninstall.
+#
+# The paths are the real ones jcode uses on v0.99.1:
+#   ~/.jcode/sessions/      session transcripts
+#   ~/.jcode/goals/global/  goal history
+#   ~/.jcode/servers.json   the running-server registry
+#   ~/.jcode/mcp.json       the MCP server config
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the files this repo does not manage survive ==="
+
+mkdir -p "$SANDBOX/unmanaged/home/.jcode/sessions/abc123" \
+         "$SANDBOX/unmanaged/home/.jcode/goals/global" \
+         "$SANDBOX/unmanaged/home/.local/bin"
+mkdir -p "$SANDBOX/unmanaged/state"
+
+printf 'session transcript\n' > "$SANDBOX/unmanaged/home/.jcode/sessions/abc123/turns.jsonl"
+printf 'goal history\n' > "$SANDBOX/unmanaged/home/.jcode/goals/global/goal-1.json"
+printf '{"meadow":{"pid":1}}\n' > "$SANDBOX/unmanaged/home/.jcode/servers.json"
+printf '{"mcpServers":{}}\n' > "$SANDBOX/unmanaged/home/.jcode/mcp.json"
+printf 'my global instructions\n' > "$SANDBOX/unmanaged/home/AGENTS.md"
+printf '#!/bin/sh\necho jcode\n' > "$SANDBOX/unmanaged/home/.local/bin/jcode"
+chmod +x "$SANDBOX/unmanaged/home/.local/bin/jcode"
+printf 'settings\n' > "$SANDBOX/unmanaged/home/.jcode/settings.json"
+# A skill this repo does not own.
+mkdir -p "$SANDBOX/unmanaged/home/.jcode/skills/foreign-skill"
+printf -- '---\nname: foreign-skill\n---\nnot ours\n' \
+    > "$SANDBOX/unmanaged/home/.jcode/skills/foreign-skill/SKILL.md"
+
+# The paths that have to survive, relative to the sandbox HOME.
+unmanaged_paths=(
+    ".jcode/sessions/abc123/turns.jsonl"
+    ".jcode/goals/global/goal-1.json"
+    ".jcode/servers.json"
+    ".jcode/mcp.json"
+    ".jcode/settings.json"
+    ".jcode/skills/foreign-skill/SKILL.md"
+    "AGENTS.md"
+    ".local/bin/jcode"
+)
+
+# The fingerprint of the unmanaged files BEFORE anything runs.
+#
+# The CONTENT matters, not just the existence. An install that overwrote
+# ~/.jcode/mcp.json with the repo's config.toml would leave the file
+# there, and an existence-only check would call that a pass. The
+# fingerprint hashes the content, so a file that is still present but has
+# different bytes is a failure.
+#
+# The baseline has to be taken BEFORE the install runs. A baseline taken
+# after would already contain the damage, and the check would compare the
+# damage against itself and pass.
+unmanaged_fingerprint() {
+    local p out=""
+    for p in "${unmanaged_paths[@]}"; do
+        if [[ -e "$SANDBOX/unmanaged/home/$p" ]]; then
+            out+="$p=$(sha256sum < "$SANDBOX/unmanaged/home/$p" | cut -d' ' -f1)
+"
+        else
+            out+="$p=REMOVED
+"
+        fi
+    done
+    printf '%s' "$out"
+}
+
+unmanaged_before="$(unmanaged_fingerprint)"
+
+# The install must not disturb any of them.
+set +e
+HOME="$SANDBOX/unmanaged/home" XDG_STATE_HOME="$SANDBOX/unmanaged/state" \
+    "$REPO/scripts/install" >/dev/null 2>&1
+unmanaged_install_rc=$?
+set -e
+assert_eq "install succeeds with unmanaged files present" "0" "$unmanaged_install_rc"
+
+for p in "${unmanaged_paths[@]}"; do
+    if [[ -e "$SANDBOX/unmanaged/home/$p" ]]; then
+        ok "install leaves $p alone"
+    else
+        bad "install leaves $p alone" "it was removed"
+    fi
+done
+assert_eq "install leaves every unmanaged file byte-identical" \
+    "$unmanaged_before" "$(unmanaged_fingerprint)"
+
+# And the --full uninstall has to leave them alone too. This is the one
+# that matters: --full is the mode that removes things.
+set +e
+HOME="$SANDBOX/unmanaged/home" XDG_STATE_HOME="$SANDBOX/unmanaged/state" \
+    "$REPO/scripts/uninstall" --full --yes >/dev/null 2>&1
+unmanaged_uninstall_rc=$?
+set -e
+assert_eq "uninstall --full succeeds with unmanaged files present" \
+    "0" "$unmanaged_uninstall_rc"
+
+for p in "${unmanaged_paths[@]}"; do
+    if [[ -e "$SANDBOX/unmanaged/home/$p" ]]; then
+        ok "uninstall --full leaves $p alone"
+    else
+        bad "uninstall --full leaves $p alone" "it was removed"
+    fi
+done
+assert_eq "uninstall --full leaves every unmanaged file byte-identical" \
+    "$unmanaged_before" "$(unmanaged_fingerprint)"
+
+# The uninstall has to have actually done its job, or the checks above
+# would pass on a run that removed nothing at all.
+if [[ ! -e "$SANDBOX/unmanaged/home/.jcode/config.toml" ]]; then
+    ok "uninstall --full removed the config it owns"
+else
+    bad "uninstall --full removed the config it owns" "the config is still there"
+fi
+if [[ ! -e "$SANDBOX/unmanaged/home/.jcode/skills/swarm-engineering" ]]; then
+    ok "uninstall --full removed the skill it owns"
+else
+    bad "uninstall --full removed the skill it owns" "the skill is still there"
 fi
 
 # ---------------------------------------------------------------------------

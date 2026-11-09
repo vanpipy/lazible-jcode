@@ -10,15 +10,15 @@
 # This repo is CONFIG ONLY. It never builds, patches or installs jcode.
 #
 # What gets installed:
-#   1. preflight  : deps (bash / python3), writable paths, no symlinked config
+#   1. preflight  : deps (bash / python3 3.11+), writable paths, no symlinked config
 #   2. config     : config/config.toml              -> ~/.jcode/config.toml
 #   3. skills     : config/skills/*/SKILL.md        -> ~/.jcode/skills/*/
-#   4. verify     : 5 checks
+#   4. verify     : 6 checks
 #   5. state      : ~/.local/state/lazible-jcode/state.json
 #
 # Not managed here:
 #   - the jcode binary (install it separately)
-#   - MCP servers (~/.jcode/servers.json, ~/.jcode/mcp.json)
+#   - MCP servers (~/.jcode/mcp.json)
 #   - ~/AGENTS.md (yours to edit)
 #   - prompt-overlay.md and swarm-prompt.md. config/ holds a copy for review,
 #     install only checks it against live and never overwrites live.
@@ -93,6 +93,35 @@ phase_preflight() {
     command -v bash    >/dev/null || missing+=("bash")
     command -v python3 >/dev/null || missing+=("python3")
     [[ ${#missing[@]} -eq 0 ]] || { err "missing deps: ${missing[*]}"; exit 1; }
+
+    # python3 must be new enough for tomllib, which landed in 3.11.
+    #
+    # The version has to be checked HERE, in preflight, and not left to
+    # phase 4. tomllib is used twice: to parse the installed config, and
+    # (by the state writer) to read the repo's own config. On an older
+    # python3 the import fails, so without this check the installer would
+    # copy the config, copy the skills, and only then fail its own
+    # verification, leaving a half-finished install behind with no state
+    # file. A dependency that cannot work has to be caught before
+    # anything is written.
+    #
+    # The check is on the VERSION, not on the import, so that the error
+    # names the real problem. "import tomllib" would also fail on a
+    # python3 that is 3.11+ but was built without the module, and the
+    # message would be a confusing ModuleNotFoundError either way.
+    local py_version py_ok=0
+    py_version="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" \
+        || py_version=""
+    if [[ "$py_version" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+        if (( BASH_REMATCH[1] > 3 || (BASH_REMATCH[1] == 3 && BASH_REMATCH[2] >= 11) )); then
+            py_ok=1
+        fi
+    fi
+    if [[ $py_ok -eq 0 ]]; then
+        err "python3 ${py_version:-<unknown>} is too old; tomllib needs 3.11 or newer"
+        err "the installed config is parsed with tomllib, so an older python3 cannot install it"
+        exit 1
+    fi
 
     [[ -f "$REPO/config/config.toml" ]] || {
         err "missing $REPO/config/config.toml"; exit 1; }
