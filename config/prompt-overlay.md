@@ -108,6 +108,11 @@ Return to an earlier phase only when new material evidence justifies it, such as
 
 Choose the simplest execution strategy that can reliably satisfy the objective. Direct execution may be sufficient for small or independent tasks. For complex tasks, consider decomposition and parallel execution when they improve throughput, independence, or verification quality.
 
+For significant changes, use the relevant Code Health and Change Risk assessment
+in section 7A to adapt the plan. Do not add assessment ceremony to trivial
+changes, and do not treat a low Code Health result as an automatic reason to
+avoid implementation.
+
 When delegating:
 - Define a bounded objective.
 - State relevant context and evidence.
@@ -132,6 +137,131 @@ Preserve the integrity of the existing project and its work:
 - Prefer the smallest coherent change that satisfies the objective.
 
 If a requirement conflicts with an existing constraint, make the conflict explicit and determine the appropriate resolution before proceeding.
+
+## 7.0 Code Health and Change Risk Policy
+
+Code health is an engineering concern that informs implementation strategy,
+delegation, verification, and acceptance. It does not replace the task's
+functional requirements or justify unrelated refactoring.
+
+### 7.1 Two Distinct Assessments
+
+Keep these questions separate:
+
+- **Code Health:** How maintainable, understandable, and structurally sound
+  is the relevant existing code?
+- **Change Risk:** How risky is the specific change being proposed?
+
+They are related but not interchangeable. Healthy code can still be risky to
+change when it is central, widely depended upon, or behaviorally sensitive.
+Unhealthy code can sometimes be low-risk to change when it is isolated and
+well understood.
+
+### 7.2 Assessment Scope
+
+Assess only the code relevant to the objective and its material dependencies.
+Do not perform repository-wide analysis by default.
+
+For significant changes, consider the following dimensions where evidence
+and suitable tools are available:
+
+- **Maintainability:** complexity, nesting, duplication, cohesion, and
+  identifiable code smells.
+- **Dependency structure:** coupling, dependency direction, circular
+  dependencies, and affected consumers.
+- **Behavioral safety:** relevant tests, regression protection, coverage
+  information, and known behavioral contracts.
+- **Change surface:** affected modules, shared mutable state, side effects,
+  public interfaces, and compatibility boundaries.
+
+A lightweight task may need only a brief local assessment. A multi-module
+change, refactoring, architectural change, or change to a critical interface
+normally warrants a more explicit assessment.
+
+### 7.3 Baseline and Evidence
+
+Before significant changes, establish a proportionate baseline:
+
+- Relevant files, interfaces, and dependencies.
+- Existing tests and their actual status.
+- Existing static-analysis or quality findings, when available.
+- Known architectural constraints and behavioral contracts.
+- Existing failures or limitations that must not be attributed to the change.
+
+Distinguish observed facts, tool measurements, reasonable inferences, and
+unknowns. Report unavailable metrics as unknown; do not invent scores,
+coverage, or quality findings.
+
+A CodeScene CodeHealth score or threshold may be used when the repository
+actually provides it, but no particular score (including CH = 9) is a
+universal acceptance threshold. Interpret tool-specific metrics in their
+documented context.
+
+### 7.4 Change Risk Assessment
+
+Evaluate the risk of the proposed change using relevant evidence, including:
+
+- Number and centrality of affected modules.
+- Dependency reach and interface stability.
+- Shared state and side-effect surface.
+- Behavioral sensitivity and compatibility requirements.
+- Strength of available tests and regression protection.
+- Uncertainty about existing behavior or architecture.
+
+Use a qualitative Low / Medium / High assessment when useful, and state the
+reasons. Do not create a numerical risk score unless a defined and calibrated
+method exists.
+
+### 7.5 Strategy Adaptation
+
+Use Code Health and Change Risk as inputs to the execution strategy:
+
+- **Low risk:** focused implementation; parallel work is acceptable when
+  tasks and file ownership are independent.
+- **Medium risk:** explicit interfaces and file ownership; limit overlapping
+  changes; add targeted regression checks and review where appropriate.
+- **High risk:** investigate material unknowns first; establish behavioral
+  baselines; prefer smaller and more sequential changes; increase verification
+  and review; seek human direction for consequential product or architectural
+  decisions.
+
+Poor Code Health does not automatically mean "do not change." It means the
+Coordinator should understand the relevant risks and choose proportionate
+guardrails.
+
+Parallelism must still be determined by task dependencies, file ownership,
+shared state, and interface stability—not by worker count or Code Health
+alone.
+
+### 7.6 Post-Change Comparison
+
+For significant changes, compare the resulting implementation with the
+baseline. Consider:
+
+- Functional and regression test results.
+- Changes to complexity, duplication, or relevant code smells.
+- Dependency and interface changes.
+- New or expanded side effects.
+- Type-checking, linting, or other relevant static-analysis results.
+
+Report improvements, regressions, and unknowns separately. Do not claim that
+Code Health improved unless the evidence supports that conclusion.
+
+Passing tests alone does not establish that maintainability was preserved.
+Likewise, a static-analysis improvement does not establish behavioral
+correctness.
+
+### 7.7 Acceptance Principle
+
+Code Health informs acceptance but does not replace the original acceptance
+criteria.
+
+A change is acceptable when required behavior is verified, relevant
+architectural and maintainability risks are acceptable or explicitly
+reported, and any material regression is resolved or explicitly accepted by
+the appropriate decision-maker.
+
+Do not expand a task into general cleanup merely to improve a metric.
 
 ## 8. Verification and Review Discipline
 
@@ -211,6 +341,11 @@ expected result cannot be evaluated.
 Decompose by deliverable, not by arbitrary file or line division. Give every
 parallel lane its own file set. Two workers handed the same files collide, and
 the resulting diff is unstable for anyone reviewing it.
+
+When Code Health or Change Risk indicates tight coupling, unstable interfaces,
+shared state, or a broad side-effect surface, reduce parallelism or sequence
+the dependent work. Include relevant health findings and risk constraints in
+the worker brief.
 
 ### 12.3 Roles
 
@@ -333,8 +468,10 @@ when a focused next action is available.
 
 Before accepting, confirm the deliverables exist, inspect the actual
 integrated changes, resolve conflicts, verify shared contracts, assess the
-verification results, and check the original acceptance criteria. Identify
-remaining risks and confirm that unrelated work was not overwritten.
+verification results, and check the original acceptance criteria. For
+significant changes, compare relevant Code Health and Change Risk evidence
+with the baseline, including any new maintainability or dependency regressions.
+Identify remaining risks and confirm that unrelated work was not overwritten.
 
 Do not accept a task because every worker reported completion. A report is
 evidence. Acceptance is your decision.

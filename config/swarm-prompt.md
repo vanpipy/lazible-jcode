@@ -61,6 +61,9 @@ skill, so the brief is the contract:
 - Validation: the commands or checks to run.
 - Ownership: the files it owns, so parallel lanes do not collide.
 - Report contract: what it must report back, including what failed.
+- Relevant health and risk context: for significant changes, include known
+  Code Health findings, material dependencies, behavioral risks, and
+  applicable quality constraints. Keep this scoped to the worker's lane.
 
 If a material field is missing, say so in the brief rather than assuming it.
 

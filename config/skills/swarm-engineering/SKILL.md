@@ -89,13 +89,128 @@ Respect existing project structure, interfaces, conventions, and user changes.
 
 Avoid unrelated modifications. Do not overwrite or revert changes outside the assignment.
 
+## 2.7 Code Health and Change Risk Assessment
+
+This procedure provides reusable engineering methods for assessing the
+maintainability of relevant code and the risk of a proposed change. It
+supports the Coordinator's policy in `prompt-overlay.md`; it does not replace
+the assignment's requirements or authorize unrelated refactoring.
+
+### 2.7.1 Keep the Assessments Separate
+
+- **Code Health** describes the maintainability and structural condition of
+  the relevant existing code.
+- **Change Risk** describes the risk introduced by the specific proposed
+  change.
+
+Do not infer one directly from the other. A healthy, central interface may
+be high-risk to modify. An unhealthy but isolated module may be relatively
+low-risk for a narrow change.
+
+### 2.7.2 Scope the Assessment
+
+Assess the target files and only those callers, consumers, tests, and
+dependencies that could materially affect the assigned objective.
+
+Consider these dimensions when relevant:
+
+| Dimension | Questions and evidence |
+| --- | --- |
+| Maintainability | Is the code understandable and cohesive? Are complexity, nesting, duplication, or code smells material to this change? |
+| Dependency structure | Which modules depend on the target? Are dependency direction, coupling, or circular dependencies relevant? |
+| Behavioral safety | What tests and behavioral contracts protect the affected behavior? What coverage or regression gaps are known? |
+| Change surface | Which interfaces, shared state, side effects, and downstream consumers may be affected? |
+
+Do not inspect the entire repository merely to complete this checklist. Mark
+irrelevant dimensions as not applicable and unavailable evidence as unknown.
+
+### 2.7.3 Collect Evidence
+
+Prefer evidence available in the repository and its established toolchain:
+
+- Actual source code, interfaces, and dependency relationships.
+- Existing tests and reproducible test results.
+- Coverage reports, when available and relevant.
+- Static analysis, linting, type checking, and complexity tools.
+- Git diff and relevant repository history.
+- Documented contracts and established project conventions.
+
+For each material finding, identify its source. Distinguish measured results,
+observed facts, inferences, and assumptions. Do not fabricate metrics or
+combine unrelated measurements into an uncalibrated score.
+
+A CodeScene CodeHealth score may be reported if the project actually uses
+CodeScene. Its thresholds are tool- and context-specific; do not treat CH = 9
+as a universal rule.
+
+### 2.7.4 Assess Change Risk
+
+Consider the specific change's:
+
+- Affected module count and dependency reach.
+- Public interface or compatibility impact.
+- Shared mutable state and side-effect surface.
+- Behavioral sensitivity and failure consequences.
+- Test and regression protection.
+- Unresolved uncertainty about existing behavior.
+
+Use Low, Medium, or High only when that classification helps the decision.
+State the evidence and reasons. Do not invent a numerical risk formula.
+
+### 2.7.5 Adapt the Work
+
+The assessment may inform:
+
+- Whether work should be direct, delegated, parallel, or sequential.
+- Worker boundaries and file ownership.
+- Whether an investigation or behavioral baseline is needed first.
+- The required test depth and review method.
+- Whether a human decision is needed before implementation.
+
+High risk does not automatically prohibit a change. It calls for proportionate
+guardrails. Do not create a separate assessment worker unless the assessment
+itself is a bounded deliverable that materially unblocks the task.
+
+### 2.7.6 Compare Before and After
+
+For significant changes, compare relevant evidence with the baseline:
+
+- Tests and observed behavior.
+- Complexity, duplication, and code-smell findings.
+- Dependencies, interfaces, and affected consumers.
+- Shared state and side-effect surface.
+- Relevant type-checking, linting, or static-analysis results.
+
+Report improvements, regressions, and unknowns separately. A successful test
+run does not prove maintainability improved; a cleaner static-analysis report
+does not prove behavior was preserved.
+
+### 2.7.7 Role Responsibilities
+
+- **Coordinator:** Owns repository- and task-level assessment, decides how
+  findings affect delegation and execution, and makes the final integrated
+  comparison.
+- **Developer:** Understands local health constraints, minimizes unnecessary
+  change surface, avoids introducing unjustified complexity or coupling, and
+  reports relevant structural changes.
+- **Tester:** Establishes behavioral baselines and verifies required behavior
+  and regressions. Test coverage is evidence of test presence, not proof that
+  all behavior is correct.
+- **Reviewer:** Inspects the actual change for material maintainability,
+  dependency, interface, and side-effect regressions within the assigned
+  scope.
+
+Workers report evidence from their own scope. The Coordinator consolidates
+those reports; workers do not independently claim a repository-wide health
+score.
+
 ## 3. Developer Role
 
 ### 3.1 Mission
 
 Implement the assigned behavior or change correctly and with the smallest coherent modification.
 
-The Developer owns implementation quality within the assigned scope.
+The Developer owns implementation quality within the assigned scope. The Developer should preserve relevant Code Health constraints, avoid unnecessary complexity or coupling, and report material structural changes or regressions.
 
 ### 3.2 Workflow
 
@@ -167,7 +282,7 @@ Provide concrete file or symbol references where useful.
 
 Establish whether the assigned behavior satisfies its observable requirements.
 
-The Tester owns test design and verification within the assigned scope.
+The Tester owns test design and verification within the assigned scope. The Tester contributes behavioral-safety evidence, including relevant baseline, regression, and coverage limitations, rather than assigning a repository-wide Code Health score.
 
 The Tester should independently assess behavior rather than merely confirm the Developer's description.
 
@@ -292,7 +407,7 @@ The Coordinator decides whether findings should be addressed, deferred, or expli
 
 Focus on the actual diff and relevant surrounding code.
 
-Review for requirement violations, incorrect behavior, logic errors, interface or contract violations, compatibility issues, regressions, error-handling problems, security or safety concerns, and significant design defects affecting correctness or maintainability.
+Review for requirement violations, incorrect behavior, logic errors, interface or contract violations, compatibility issues, regressions, error-handling problems, security or safety concerns, and significant design defects affecting correctness or maintainability. Where relevant to the assignment, inspect whether the change introduces unjustified complexity, coupling, duplication, dependency problems, or a broader side-effect surface.
 
 Do not expand into unrelated repository-wide review.
 
