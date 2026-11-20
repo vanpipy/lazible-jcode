@@ -1185,7 +1185,10 @@ do
     rest="${pair#*|}"
     n="${rest%%|*}"
     title="${rest#*|}"
-    if grep -qE "^#{2,6} ${n} ${title}$" "$f"; then
+    # The carriage return a CRLF checkout leaves at the end of a heading is
+    # stripped before the match, so the anchored pattern stays exact and
+    # the check holds on the host that runs it, not only on an LF checkout.
+    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n} ${title}$"; then
         ok "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")"
     else
         bad "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")" \
@@ -1206,6 +1209,73 @@ if grep -qF "Bound your own read phase" "$skill"; then
     ok "the Skill really carries the coordinator read-phase bullet"
 else
     bad "the Skill really carries the coordinator read-phase bullet" \
+        "the Skill does not carry it"
+fi
+
+# ---------------------------------------------------------------------------
+# 8c. the verification-phase claims
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README's verification-phase claims hold ==="
+
+# The README claims the rule and quotes the numbers. The prompt files carry
+# the rule; this checks that the README says the same thing, so the two
+# cannot drift apart silently.
+
+check_claim "the README states the verification-phase section" \
+    "## Bounding the verification phase"
+
+check_claim_wrapped "the README says the verification phase ends at the first of four conditions" \
+    "The verification phase ends at the first of four conditions"
+
+check_claim_wrapped "the README gives the verification phase a target set" \
+    "The verification phase has a target set too, and it is the acceptance criteria"
+
+check_claim_wrapped "the README says re-reading the file is not verification" \
+    "Re-reading the file you just wrote is not verification"
+
+check_claim_wrapped "the README states the median post-write tail" \
+    "14 tool calls after its last mutation"
+
+check_claim_wrapped "the README states the worst post-write tail" \
+    "774 calls after the last file write"
+
+check_claim_wrapped "the README keeps the model-guidance caveat" \
+    "These are model-guidance rules, not runtime safeguards"
+
+# The README names the sections the rule lives in. A renumbering has to break
+# the pointer, so the heading is checked by number and by title, the same way
+# section 8b does it.
+for pair in \
+    "$overlay|2.2.5|Bounding the Verification Phase" \
+    "$skill|2.3.5|Bounding the Verification Phase"
+do
+    f="${pair%%|*}"
+    rest="${pair#*|}"
+    n="${rest%%|*}"
+    title="${rest#*|}"
+    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n} ${title}$"; then
+        ok "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")"
+    else
+        bad "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")" \
+            "expected a heading '$n $title' in that file"
+    fi
+done
+
+# The README claims all three prompt files carry the rule. All three have to
+# actually carry it.
+if grep -qF "The coordinator's own tail is bounded too" "$swarm_prompt"; then
+    ok "the swarm prompt really carries the coordinator verification tail"
+else
+    bad "the swarm prompt really carries the coordinator verification tail" \
+        "the swarm prompt does not carry it"
+fi
+
+if grep -qF "Bound your own verification phase" "$skill"; then
+    ok "the Skill really carries the coordinator verification bullet"
+else
+    bad "the Skill really carries the coordinator verification bullet" \
         "the Skill does not carry it"
 fi
 

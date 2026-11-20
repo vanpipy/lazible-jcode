@@ -49,6 +49,9 @@
 #       uninstall --full, byte-identical
 #   30. the read-phase safeguard is present in all three prompt files, and
 #       the three of them agree on the numbers they quote
+#   31. the verification-phase safeguard is present in all three prompt
+#       files, the role exit criteria point at it, and the three of them
+#       quote the same post-write tail
 #
 # The numbered section banners in this file use the same numbering.
 #
@@ -2050,6 +2053,98 @@ for f in "$OVERLAY" "$SWARMPROMPT" "$SKILLMD"; do
             "the file says: $call_budgets"
     fi
 done
+
+# ---------------------------------------------------------------------------
+# 31. the verification-phase safeguard is in all three prompt files
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the verification-phase safeguard is carried by all three prompt files ==="
+
+# Section 30 covers the read phase. The tail after the write is the other half
+# of the same defect: the policy named it, but gave it no ending rule, so a
+# run could keep reading after its change was delivered. The corpus's worst
+# row is a session that made 774 tool calls after its last file write, with
+# the change it was asked for still unimplemented.
+
+assert_contains_wrapped "the overlay bounds the verification phase" \
+    "Bounding the Verification Phase" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay gives the verification phase a target set" \
+    "The verification phase has a target set too, and it is the acceptance criteria" \
+    "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay names the four ending conditions" \
+    "The verification phase ends at the first of these four conditions" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay names the first ending condition" \
+    "Criteria checked" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay names the second ending condition" \
+    "A check that cannot fail" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay names the third ending condition" \
+    "A question that could change the result" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay names the fourth ending condition" \
+    "The budget reached" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay forbids re-reading the file it just wrote" \
+    "Re-reading the file you just wrote is not verification" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay says the report is the last call" \
+    "The report is the last call, not the next one" "$(cat "$OVERLAY")"
+
+# The swarm prompt carries the coordinator's own tail, and it says the lane's
+# completion criteria are the lane's verification target set.
+assert_contains_wrapped "the swarm prompt bounds the coordinator's own tail" \
+    "The coordinator's own tail is bounded too" "$(cat "$SWARMPROMPT")"
+
+assert_contains_wrapped "the swarm prompt makes the criteria the lane's verification target set" \
+    "The criteria are also the lane's verification target set" "$(cat "$SWARMPROMPT")"
+
+# The Skill carries the same rule for a worker that loads it.
+assert_contains_wrapped "the skill bounds the verification phase" \
+    "Bounding the Verification Phase" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill gives the verification phase a target set" \
+    "The verification phase has a target set: the acceptance criteria, one check each" \
+    "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill forbids re-reading the file it just wrote" \
+    "Re-reading the file you just wrote is not verification" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill's coordinator practice bounds its own tail" \
+    "Bound your own verification phase" "$(cat "$SKILLMD")"
+
+# The role sections and the phase-progression section have to point at the
+# rule. A worker that reads only its own role section never learns it.
+assert_contains_wrapped "the skill's phase progression points at the verification rule" \
+    "Section 2.3.5 does the same for the phase after the write" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill's developer exit criteria cover the validation phase" \
+    "The validation phase after the implementation has the same shape" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill's tester exit criteria cover a check that cannot fail" \
+    "A check that passes whatever happens is not evidence" "$(cat "$SKILLMD")"
+
+# The three files quote the same tail figures. Section 30 asserts they agree
+# on the corpus they cite; this asserts the post-write tail specifically,
+# because it is the figure the new rule is built on.
+for f in "$OVERLAY" "$SWARMPROMPT" "$SKILLMD"; do
+    assert_contains_wrapped "the verification-phase evidence in $(basename "$f") cites the worst post-write tail" \
+        "774 tool calls" "$(cat "$f")"
+    assert_contains_wrapped "the verification-phase evidence in $(basename "$f") cites the median post-write tail" \
+        "14 tool calls" "$(cat "$f")"
+done
+
+# The sections have to survive a renumbering, because the README and the
+# Skill point at them by number.
+assert_contains "the overlay holds the verification-phase section" \
+    "### 2.2.5 Bounding the Verification Phase" "$(cat "$OVERLAY")"
+
+assert_contains "the skill holds the verification-phase section" \
+    "#### 2.3.5 Bounding the Verification Phase" "$(cat "$SKILLMD")"
 
 # ---------------------------------------------------------------------------
 

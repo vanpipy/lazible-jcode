@@ -345,6 +345,44 @@ hard-stop a read. What they do is make the intended transition explicit and
 give the agent a number to check itself against. A tool-call cap in the
 runtime would be a different mechanism and is not claimed here.
 
+## Bounding the verification phase
+
+The read phase got a target set, a budget, and a rule about what follows a
+sufficiency declaration. The tail after the last write got a name and nothing
+else, and the tail is where the worst row of the corpus sits: 774 calls after
+the last file write, with the target change unimplemented. A name is not a
+stopping condition, so the defect the fix was written to cure was still
+reachable after the fix.
+
+The verification phase ends at the first of four conditions.
+
+| Condition | What it means |
+| --- | --- |
+| Criteria checked | Every acceptance criterion has been checked, and the evidence recorded. |
+| A check that cannot fail | A check that passes whatever happens is not evidence. Repair it, run it once, move on. |
+| A question that could change the result | The remaining question is worth a call only if its answer would change what is delivered. |
+| The budget reached | The budget is spent. Report what was verified, and mark the rest unverified. |
+
+The verification phase has a target set too, and it is the acceptance criteria:
+one check per criterion, the same list the read phase was bounded by, read as
+checks rather than as questions. Re-reading the file you just wrote is not
+verification, because a check that verifies a change is the check that
+exercises it. And the report is the last call, not the next one.
+
+In the same corpus, the median session made 14 tool calls after its last
+mutation. The rule above is what keeps the median short and the tail honest: a
+report that names the criterion it did not check is more useful than one that
+claims everything was checked.
+
+| File | What it holds |
+| --- | --- |
+| `config/prompt-overlay.md` | Section 2.2.5 bounds the verification phase. |
+| `config/swarm-prompt.md` | The coordinator's own tail, and the lane's completion criteria as its verification target set. |
+| `config/skills/swarm-engineering/SKILL.md` | Section 2.3.5 carries the same rule for a worker, with the developer exit criteria, the tester exit criteria and a coordinator bullet in section 11 pointing at it. |
+
+The same limit applies as before: these are model-guidance rules, not runtime
+safeguards, and the prompts cannot hard-stop a read.
+
 ## Native review surfaces
 
 `[autoreview]` and `[autojudge]` are set to `enabled = true` in
@@ -666,6 +704,17 @@ that the 60-call budget is the only one they quote. The legacy swarm
 safeguard is asserted still to be present, because the two are separate
 mechanisms and this one does not replace it.
 
+Section 31 does the same for the verification phase. It asserts that all three
+prompt files carry that rule, that the developer exit criteria, the tester
+exit criteria and the coordinator's own bullet point at it, and that the three
+of them quote the same post-write tail.
+
+It also checks the read-phase safeguard. Section 30 asserts that all three
+prompt files carry the rule, that they quote the same measured numbers, and
+that the 60-call budget is the only one they quote. The legacy swarm
+safeguard is asserted still to be present, because the two are separate
+mechanisms and this one does not replace it.
+
 The assertions against the prompt files match across line breaks rather than
 line by line. A Markdown file is hard-wrapped prose, so a sentence's words
 routinely straddle a line break, and a check that matched the current
@@ -686,6 +735,17 @@ and against the current tree, and the config's record of the removed
 `[hooks]` block is checked to be a record and not a live block. The
 `scripts/test` header is compared against that file's own section banners,
 so the list of checks cannot quietly stop describing the file.
+
+It also checks the read-phase section of this README. The claims it makes
+are quoted back and asserted, the section numbers it points at are checked
+against the actual headings in the prompt files, and the headings are checked
+by number *and* title, because a section can keep its number and change
+what it holds.
+
+It checks the verification-phase section of this README the same way: its
+claims are quoted back and asserted, the section numbers it points at are
+checked against the actual headings in the prompt files, and the headings are
+checked by number *and* title.
 
 It also checks the read-phase section of this README. The claims it makes
 are quoted back and asserted, the section numbers it points at are checked

@@ -52,6 +52,9 @@ that arrives long after it was useful.
 - **Give exact completion criteria.** Say what a finished lane looks like:
   which targets are covered, which fields the report carries, what the worker
   does with the remainder if it runs out of budget (report it as unverified).
+  The criteria are also the lane's verification target set: once they are
+  checked, the lane reports. A lane that keeps reading after its criteria are
+  checked has overrun its brief.
 - **Say what is out of scope.** A worker that knows the boundary stops at it.
   A worker that does not will search the whole repository to be sure.
 
@@ -72,6 +75,17 @@ full is not read in full again. The soft default is 60 tool calls before the
 first edit; a coordinator that needs more says why. When the coordinator
 declares that it has the shape or the design, its next call is the
 implementation, the validation, the plan, or the report.
+
+**The coordinator's own tail is bounded too.** After the last write, the
+remaining calls check the acceptance criteria and then report. The same corpus
+that produced 774 tool calls after a last file write also produced a median of
+14 tool calls after the last mutation, and a long read tail after the change is
+the same defect as a read tail before it. The verification phase has a target
+set: the acceptance criteria, one check each, and it ends at the first of:
+the criteria are checked, a check cannot fail, the remaining question would
+change what is delivered (which is implementation work, so make the change and
+check the criterion it affects), or the budget is spent. Then the report
+follows.
 
 Structure guidance for spawned swarm agents:
 

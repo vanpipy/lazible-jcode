@@ -148,6 +148,47 @@ Once the work is delivered, the remaining calls should validate it and report
 it. A long tail of reads after the last write is the clearest signal of an
 investigation phase that never ended.
 
+### 2.2.5 Bounding the Verification Phase
+
+The read phase has a target set and a budget. The tail after the last write had
+neither: it was named, and then it was left to the agent's judgement. The corpus
+shows what that costs. In the same 334 sessions, the median session made 14
+tool calls after its last mutation, and the worst made 774 tool calls after the
+last file write, with the target change still unimplemented.
+
+**The verification phase has a target set too, and it is the acceptance
+criteria.** The same list the read phase was bounded by, read as checks rather
+than as questions. One check per criterion, with the evidence that it passed or
+failed. The read phase ends when the list is answered; the verification phase
+ends when the list is checked.
+
+**The verification phase ends at the first of these four conditions.**
+
+- **Criteria checked.** Every acceptance criterion has been checked and the
+  evidence recorded. The report follows, and nothing else is read.
+- **A check that cannot fail.** A check that passes whatever happens is not
+  verification, it is theatre. Repair the check, run it once, and then stop
+  re-reading the code to convince yourself that the repair was right; that
+  re-read is the read phase again.
+- **A question that could change the result.** If the answer would change what
+  is delivered, this is implementation work, not verification: make the change,
+  then verify the criterion it affects. If it cannot change what is delivered,
+  it is not a reason to keep verifying.
+- **The budget reached.** Report what was verified, mark the rest unverified,
+  and stop. A report that names the criterion it did not check is more useful
+  than one that claims everything was checked.
+
+**Re-reading the file you just wrote is not verification.** The check that
+verifies a change is the check that exercises it. Reading the file again
+confirms that the edit is there; it does not confirm that the edit is correct.
+In the corpus, 43% of all read-tool calls were redundant full re-reads of a
+file the session had already read, and 44% of sessions contained at least one.
+
+**The report is the last call, not the next one.** When the conditions above
+are met, the next call is the report. A verification phase that ends in another
+read is the same defect as a sufficiency declaration that is followed by
+another read, moved to the other side of the write.
+
 ### 2.3 Progressive Execution
 Once sufficient evidence supports the next action, transition to that action. Do not keep expanding investigation after the relevant decision has become clear. Prefer focused implementation, testing, or review over another broad information-gathering pass.
 

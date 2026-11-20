@@ -167,6 +167,29 @@ contained at least one.
 Read a range when you need a range. Read the whole file once, then use the
 parts of it you already have.
 
+#### 2.3.5 Bounding the Verification Phase
+
+The read phase ends when the target set is answered (2.3.1) and the declaration
+binds the next call (2.3.3). The phase after the write needs the same kind of
+boundary, because the corpus shows the tail is where the runs go wrong. In the
+same 334 sessions, the median session made 14 tool calls after its last
+mutation, and the worst made 774 tool calls after the last file write, with the
+target change still unimplemented.
+
+The verification phase has a target set: the acceptance criteria, one check
+each. It ends at the first of:
+
+- **Criteria checked.** Every acceptance criterion has been checked and the
+  evidence recorded. Report.
+- **A check that cannot fail.** Repair it, run it once, and move on.
+- **A question that would change the result.** That is implementation work.
+  Make the change and verify the criterion it affects.
+- **The budget reached.** Report what was verified, mark the rest unverified,
+  and stop.
+
+Re-reading the file you just wrote is not verification. The check that verifies
+a change is the check that exercises it.
+
 ### 2.4 Phase Progression
 
 Use a proportionate engineering lifecycle:
@@ -183,6 +206,10 @@ criteria and keeps reading is not being thorough, it is failing to report.
 
 Section 2.3.3 makes the transition concrete. Declaring sufficiency and then
 reading again is the specific way this phase gets violated.
+
+Section 2.3.5 does the same for the phase after the write: a verification phase
+that ends in another read is the same defect moved to the other side of the
+write.
 
 ### 2.5 Honest Validation
 
@@ -362,6 +389,13 @@ Stop investigating and proceed when:
 
 If a material unknown remains, investigate that specific question rather than expanding the entire exploration.
 
+The validation phase after the implementation has the same shape. Stop
+validating and report when every acceptance criterion has been checked, when a
+check cannot fail, when the remaining question would change the delivered
+result, or when the budget is spent. A question that would change the result
+is implementation work, so make the change and then check the criterion it
+affects. See section 2.3.5.
+
 ### 3.4 Developer Boundaries
 
 The Developer should not:
@@ -468,7 +502,7 @@ Verification is complete when:
 - Material coverage gaps are reported.
 - Evidence is sufficient for the Coordinator to evaluate acceptance.
 
-Do not continue adding redundant tests after required behavior has been adequately verified.
+Do not continue adding redundant tests after required behavior has been adequately verified. A check that passes whatever happens is not evidence: repair it, run it once, and move on to the next criterion. See section 2.3.5.
 
 ### 4.6 Tester Boundaries
 
@@ -715,6 +749,7 @@ Practice that makes the policy above work. It does not change the policy.
 - **Never poll with sleeps or wait loops.** Use `swarm await_members`, which waits in the background and notifies you when a worker finishes. Do other work, or wait for the completion notice.
 - **Keep one ledger row per round.** The `todo` list is the ledger: the lanes spawned, what each owns, the verdict, and where the evidence came from. Write it once, in order.
 - **Bound your own read phase.** A brief bounds a worker. Nothing bounds the coordinator's direct reading, and that is where the same failure appears: 78% of the sufficiency declarations in a 334-session corpus were in root, primary sessions, and one session ran 774 tool calls after its last file write. Before your own first edit, state the finite set of things you need to know and read only those. A named section, category, or file is the scope, not a licence to read the whole specification. A file already read in full is not read in full again. The soft default is 60 tool calls before the first edit, and a coordinator that needs more says why. When you declare that you have the shape or the design, your next call is the implementation, the validation, the plan, or the report. See section 2.3.3 and section 2.3.4.
+- **Bound your own verification phase.** The tail after your last write is the same failure on the other side of the write: a coordinator that keeps reading after its acceptance criteria are checked is not being thorough. The verification phase has a target set too — the acceptance criteria, one check each — and it ends when they are checked, when a check cannot fail, when the remaining question would change the delivered result, or when the budget is spent. The report follows. See section 2.3.5.
 
 ### 11.1 Stopping a Lane That Overran Its Brief
 
