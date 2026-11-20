@@ -33,8 +33,45 @@ Gather sufficient evidence to make a sound, testable decision. Sufficient eviden
 
 Before continuing an investigation, determine whether remaining unknowns could materially change the proposed solution, correctness or compatibility, security or safety, regression risk, verification strategy, or acceptance. If not, proceed with the next actionable phase.
 
+**Sufficiency has to be decidable, not a judgement call.** "I have enough evidence" is not a usable stopping condition when the same words apply at tool call 20 and at tool call 300. Use the explicit thresholds in section 2.2.1 instead, and record which threshold ended the investigation.
+
+### 2.2.1 Evidence Thresholds
+
+An investigation ends when **one** of these is true. They are checked in order, and the first match wins.
+
+1. **Target exhausted.** Every candidate named in the assignment has been examined and reported on, with a verdict. A candidate that turned out to be already implemented is a completed check, not a gap.
+2. **Verdict established.** The conclusion for every target in scope is supported by the evidence the assignment asked for, and a further check would only restate it in different words. This is the common case for a verification lane.
+3. **Budget reached.** The assignment's tool-call budget is spent. The worker reports what it has, marks the rest as unverified, and stops. See section 2.2.2.
+4. **Blocked.** The next question cannot be answered with the available access, and answering it is not the worker's call to make. The worker reports the blocker instead of widening the search.
+
+A **new** question does not reopen a closed investigation unless it is one of these:
+
+- it could change a verdict already reported,
+- it is a contradiction between two pieces of evidence already collected,
+- it is a required acceptance criterion that has not been checked at all.
+
+"That would be nice to confirm" is not one of them.
+
+**Broadening the target set after the verdict is established is a reportable failure, not diligence.** When a brief says "find N candidates" and the worker has N verified candidates plus some unverified leads, the correct output is the N verified candidates and a short list of unverified leads marked as such. Continuing to search for a better candidate is scope expansion.
+
+### 2.2.2 Tool-Call Budgets
+
+An investigation that is not explicitly bounded will expand, because every unanswered question reads as one more thread worth pulling. A bounded investigation names its budget in the assignment.
+
+**Default budget: 60 tool calls.** A lane that has not stated a budget uses this one.
+
+Raising the budget is a coordinator decision, made before the lane starts and recorded in the todo row. A worker cannot raise its own budget mid-flight. When the budget is reached, the worker reports what it has and stops.
+
+Budgets bound *investigation*, not work. A lane that implements code and runs tests is not an investigation lane, and its budget applies only to the investigation phase. Do not apply a tool-call budget to a lane whose deliverable is a code change.
+
+**A budget is a soft stop, not a failure.** A lane that reaches its budget with the target exhausted has done its job. The report says what was completed, what was not, and what a larger budget would have bought. It does not pad the report to look thorough.
+
+Do not set a budget below what a legitimate lane needs. In a corpus of 168 coordinator-spawned lanes, completed investigation lanes ran 2 to 202 tool calls, with a median of 70 and a 90th percentile near 146. The default of 60 fits a focused single-target lane, whose observed runs cluster between 24 and 60 calls. A wide multi-target lane needs a larger, stated number, and a coordinator who expects one sets it before dispatch rather than after the lane has already overrun. A budget that is wrong from the start produces truncated reports, not discipline.
+
 ### 2.3 Progressive Execution
 Once sufficient evidence supports the next action, transition to that action. Do not keep expanding investigation after the relevant decision has become clear. Prefer focused implementation, testing, or review over another broad information-gathering pass.
+
+Progression is a one-way move within a phase. The transition out of investigation is the deliverable of that phase, and taking it is not optional: a lane that has met its exit criteria and keeps reading is not being thorough, it is failing to report.
 
 ### 2.4 Cost-Aware Context Gathering
 Additional context is valuable only when its expected contribution to correctness, safety, or decision quality justifies its cost.
@@ -427,9 +464,16 @@ Every brief must therefore be self-contained and name:
 - **Ownership** — the files it owns, so parallel lanes do not collide.
 - **Dependencies** — what must land first.
 - **Report contract** — what it must report back.
+- **Target list** — the finite set of candidates, files, or requirements to check, with its count.
+- **Evidence budget** — the tool-call count that bounds the investigation phase.
+- **Stop condition** — what the lane does when the target list is done or the budget is spent.
 
 If a material field is missing, say so in the brief rather than assuming it.
 Do not assume the worker has read the skill or inherited your context.
+
+The last three fields are what keep a lane finite. A brief without them
+produces an open-ended lane, and the coordinator discovers that only when the
+lane fails to return.
 
 ### 12.6 Investigation Management
 
@@ -443,6 +487,12 @@ correctness, compatibility, safety, regression risk, test strategy, or
 acceptance. A worker reports the question, the evidence and where it lives,
 the findings, the assumptions with their confidence, the material unresolved
 questions, the recommended next action, and whether its exit criteria are met.
+
+The exit criteria are the ones in section 2.2.1, and the worker names the one
+that ended the investigation. A lane that ends on "budget reached" is a
+completed lane with a reported gap. A lane that ends on "verdict
+established" is a completed lane. A lane that ends on neither, and is still
+running, is a lane the coordinator has to act on.
 
 ### 12.7 Parallelism, Waiting, and Recovery
 
@@ -464,7 +514,33 @@ deliverable, and continue from the last valid state. Do not restart completed
 work without a reason, and do not let an investigation loop block the workflow
 when a focused next action is available.
 
-### 12.8 Integration and Final Acceptance
+### 12.8 Enforcing a Lane's Bound
+
+A brief is a request. A worker that has already met its completion criteria
+and keeps searching will not stop because the brief asked it to, so the
+coordinator enforces the bound. The escalation order is fixed.
+
+1. **Check the lane.** `swarm list` shows each member's status, its last
+   activity age, and whether it is stalled. A `running` member with a fresh
+   activity age is working. A member whose activity age keeps growing while
+   its target list is already covered is expanding scope.
+2. **Message the lane.** Ask it to report what it has and mark the rest
+   unverified, and say it must not open new targets. A DM is cheap and often
+   enough on its own.
+3. **Do not repeat the DM.** A worker that ignored a request to wrap up has
+   shown it will not honour a soft instruction. Repeating it buys nothing.
+4. **Stop the lane.** `swarm stop` terminates the worker. The coordinator owns
+   its own spawned workers, so this works without `force`. `force` is for a
+   session this coordinator did not spawn, and it refuses otherwise by
+   design. `swarm stop` persists the session as closed and the transcript on
+   disk keeps what the worker had already written, so stopping is the last
+   step rather than the first.
+5. **Record the loss.** A stopped lane is a partial result. Write into the
+   todo row which targets were completed, which were left unverified, and
+   that the remainder is not covered. A stopped lane is never reported as a
+   finished one.
+
+### 12.9 Integration and Final Acceptance
 
 Before accepting, confirm the deliverables exist, inspect the actual
 integrated changes, resolve conflicts, verify shared contracts, assess the
@@ -476,7 +552,7 @@ Identify remaining risks and confirm that unrelated work was not overwritten.
 Do not accept a task because every worker reported completion. A report is
 evidence. Acceptance is your decision.
 
-### 12.9 Completion Criteria
+### 12.10 Completion Criteria
 
 Swarm work is complete when the objective is addressed, the required
 deliverables exist, dependencies and integration are resolved, verification has

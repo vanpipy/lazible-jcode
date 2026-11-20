@@ -65,6 +65,61 @@ Continue only when an unresolved question could materially affect correctness, c
 
 Do not inspect unrelated modules simply because they may provide additional context.
 
+#### 2.3.1 Evidence Thresholds
+
+"Sufficiency" has to be decidable. The same words, "I have enough evidence",
+apply at tool call 20 and at tool call 300, so they do not decide anything.
+Use these thresholds instead, and name the one that ended the investigation
+in the report.
+
+An investigation ends when the first of these is true:
+
+1. **Target exhausted.** Every candidate named in the assignment has been
+   examined and reported on, with a verdict. A candidate that turned out to
+   be already implemented is a completed check, not a gap.
+2. **Verdict established.** Every target in scope has the verdict the
+   assignment asked for, backed by the evidence it asked for. A further check
+   would only restate the same conclusion.
+3. **Budget reached.** The tool-call budget from the assignment is spent.
+   Report what is done, mark the rest unverified, and stop.
+4. **Blocked.** The next question cannot be answered with the available
+   access, and answering it is not the worker's call. Report the blocker
+   instead of widening the search.
+
+A new question reopens a closed investigation only when it could change a
+verdict already reported, contradicts evidence already collected, or covers
+an acceptance criterion that has not been checked at all.
+
+**Broadening the target set after the verdict is established is a failure,
+not diligence.** When the assignment asks for N candidates and the worker
+has N verified candidates plus some unverified leads, the report is the N
+verified candidates and a short list of unverified leads. Continuing to hunt
+for a better candidate is scope expansion.
+
+#### 2.3.2 Tool-Call Budgets
+
+The assignment carries an evidence budget, a tool-call count that bounds the
+investigation phase. The default is 60 tool calls.
+
+- The worker cannot raise its own budget. When the budget is spent, it
+  reports what it has and stops.
+- Budgets bound investigation, not work. A lane that implements code and
+  runs tests is not an investigation lane, and the budget applies only to
+  the investigation phase.
+- A budget is a soft stop, not a failure. Reaching the budget with the
+  target exhausted is a completed lane. The report says what was completed,
+  what was not, and what a larger budget would have bought.
+- The report is not padded to look thorough. An honest short report beats a
+  long one that hides what was skipped.
+
+Do not set a budget below what a legitimate lane needs. In a corpus of 168
+coordinator-spawned lanes, completed investigation lanes ran 2 to 202 tool
+calls, with a median of 70 and a 90th percentile near 146. A budget of 60
+suits a focused single-target lane, whose observed runs cluster between 24
+and 60 calls. A wide multi-target lane needs a larger stated number.
+A budget that is wrong from the start produces truncated reports, not
+discipline.
+
 ### 2.4 Phase Progression
 
 Use a proportionate engineering lifecycle:
@@ -74,6 +129,10 @@ Understand → Investigate → Design → Execute → Validate → Report
 Not every task requires a separate document or explicit phase.
 
 Move forward once sufficient evidence supports the next action. Return to an earlier phase only when new evidence justifies it.
+
+Progression is a one-way move within a phase. The transition out of
+investigation is the deliverable of that phase. A lane that has met its exit
+criteria and keeps reading is not being thorough, it is failing to report.
 
 ### 2.5 Honest Validation
 
@@ -605,6 +664,43 @@ Practice that makes the policy above work. It does not change the policy.
 - **Accept a worker's executed evidence as the evidence for that claim.** Re-run a check yourself only when the files changed after that worker's run, or when two reports disagree — and then run the independent verification once, at acceptance.
 - **Never poll with sleeps or wait loops.** Use `swarm await_members`, which waits in the background and notifies you when a worker finishes. Do other work, or wait for the completion notice.
 - **Keep one ledger row per round.** The `todo` list is the ledger: the lanes spawned, what each owns, the verdict, and where the evidence came from. Write it once, in order.
+
+### 11.1 Stopping a Lane That Overran Its Brief
+
+A brief is a request. A worker that has already met its completion criteria
+and keeps searching will not stop because the brief asked it to, so the
+coordinator enforces the bound. The escalation order is fixed: message first,
+stop second.
+
+1. **Check the lane before acting.** `swarm list` shows each member's status,
+   its last activity age, and whether it is stalled. A member that is
+   `running` with a fresh activity age is working. A member whose activity
+   age keeps growing while its target list is already covered is expanding
+   scope. Compare against the lane's budget before intervening.
+2. **Message the lane.** Ask it to report what it has and mark the rest
+   unverified. Name the requirement it still owes, and say it must not open
+   new targets. A DM is cheap and usually enough.
+3. **Do not repeat the DM.** A worker that ignored a request to wrap up has
+   shown that it will not honour a soft instruction. Repeating it costs a
+   round trip and buys nothing.
+4. **Stop the lane.** `swarm stop` terminates the worker. The coordinator
+   owns its own spawned workers, so this works without `force`. Use `force`
+   only for a session this coordinator did not spawn; it refuses otherwise
+   by design.
+5. **Record the loss.** A stopped lane is a partial result. Write into the
+   todo row which targets were completed, which were left unverified, and
+   that the remainder is not covered. The coordinator's own report has to
+   say the same thing. A stopped lane is never reported as a finished one.
+
+`swarm stop` persists the session as closed and the transcript on disk keeps
+what the worker had already written, so a stopped lane is not a total loss.
+The unwritten remainder is still lost, which is why stopping is the last
+step and not the first.
+
+`swarm summary` reports the recent tool calls of a lane. It is advertised in
+the tool schema, but it fails while the lane is busy, and it needs a
+`target_session`. Use `swarm list` for the monitoring signal and the worker's
+own report for the result.
 
 ## 12. Requirement Matching
 

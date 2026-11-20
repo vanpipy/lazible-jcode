@@ -38,6 +38,26 @@ What to spawn workers for:
   answers a bounded question that unblocks a decision, and the brief says
   which question that is.
 
+Bound every lane you spawn. An unbounded brief produces an unbounded lane:
+the worker keeps pulling threads, and the coordinator ends up with a report
+that arrives long after it was useful.
+
+- **Name a finite target list.** For a verification or audit lane, list the
+  candidates, files, or requirements to check, and give the count. "Check
+  whether the save path is covered" is unbounded. "Check these 7 save-path
+  functions and report a verdict for each" is a lane.
+- **State an evidence budget.** Give an explicit tool-call budget for
+  investigation lanes. The default is 60. A lane without a stated budget uses
+  the default.
+- **Give exact completion criteria.** Say what a finished lane looks like:
+  which targets are covered, which fields the report carries, what the worker
+  does with the remainder if it runs out of budget (report it as unverified).
+- **Say what is out of scope.** A worker that knows the boundary stops at it.
+  A worker that does not will search the whole repository to be sure.
+
+These bounds belong in the todo the lane owns, in the same `details` block as
+the requirement, so the worker reads them with the requirement.
+
 Structure guidance for spawned swarm agents:
 
 - Always pass `label` when spawning (e.g. `label: "auth refactor"`) so the swarm
@@ -66,6 +86,34 @@ skill, so the brief is the contract:
   applicable quality constraints. Keep this scoped to the worker's lane.
 
 If a material field is missing, say so in the brief rather than assuming it.
+
+Enforcing the bound. A brief is a request. A worker that has already met its
+completion criteria and keeps searching will not stop because the brief asked
+it to, so the coordinator enforces it.
+
+- **Watch the lane, do not just wait for it.** `swarm list` shows each
+  member's status, its last activity age, and whether it is stalled. A member
+  that is `running` with a growing activity age is working. A member whose
+  activity age keeps growing while its target list is already covered is
+  expanding scope.
+- **Ask for the partial result first.** `swarm message` to the lane with the
+  exact words "report now with what you have, mark the rest unverified". A
+  DM is cheap and often enough on its own.
+- **A DM is not a stop.** A worker that ignores a request to wrap up has
+  demonstrated that it will not honour a soft instruction. Do not repeat the
+  DM.
+- **Use `swarm stop` on the lane when it has overrun its brief.** The
+  coordinator owns its own spawned workers, so `stop` works without `force`.
+  `stop` terminates the worker and persists the session as closed, and the
+  transcript on disk keeps what the worker had already produced. Stopping
+  loses the unwritten remainder, so it is the last step, not the first.
+- **Use `force` only for a session this coordinator did not spawn.** It
+  refuses otherwise by design.
+
+When you stop a lane, record in the todo row what was lost: the lane's
+completed targets, the targets it left unverified, and the fact that the
+remainder is not covered. A stopped lane is a partial result, and the
+coordinator's own report has to say so.
 
 Requirements belong to a todo lane, not to chat text. Write the todo before
 dispatching, put the requirement, its observable check, and its source in the

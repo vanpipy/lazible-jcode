@@ -212,6 +212,76 @@ The Skill is loaded only when an agent asks for it, which is why it can be
 long. It is also the file most likely to be read by a worker that was handed a
 brief, so a brief should say which section of it governs the task.
 
+## Bounded swarm investigation
+
+The three prompt files carry one shared safeguard: a swarm lane must be
+finite, and the coordinator must enforce that.
+
+The failure this prevents is specific. A worker given a broad brief does not
+repeat the same command. It keeps *refining* and *broadening* the candidate
+space, adding a target after each answer, and the lane never ends on its own.
+In a corpus of 168 coordinator-spawned lanes, 27 were investigation lanes.
+Their completed runs spanned 2 to 202 tool calls, with a median of 70, and
+several ran far past the point where their target list was already covered.
+
+A raw tool-call cap does not fix this, because the cap cannot distinguish a
+worker that is still productively searching from one that has already
+finished. The safeguard is therefore split in two.
+
+**The worker side** decides when its own investigation is over, using four
+named thresholds rather than a judgement call. The first match wins:
+
+| Threshold | Meaning |
+| --- | --- |
+| Target exhausted | Every candidate in the assignment has a verdict. A candidate that turned out to be implemented is a completed check, not a gap. |
+| Verdict established | Every target in scope has the verdict and the evidence the assignment asked for. |
+| Budget reached | The tool-call budget is spent. Report what is done, mark the rest unverified, stop. |
+| Blocked | The next question needs access the worker does not have. Report the blocker, do not widen the search. |
+
+A new question reopens a closed investigation only when it could change a
+verdict already reported, contradicts evidence already collected, or covers
+an acceptance criterion never checked. "It would be nice to confirm" is not
+one of them.
+
+The default budget is 60 tool calls, which fits a focused single-target lane.
+It bounds the *investigation* phase only. A lane that implements code and
+runs tests is not an investigation lane, and capping it would truncate real
+work. The coordinator sets a larger number before dispatch when it expects a
+wide lane.
+
+**The coordinator side** enforces the bound, because a brief is a request and
+a worker that has already met its criteria will not stop on request alone.
+The escalation order is fixed:
+
+1. Check the lane with `swarm list`, which shows status, last activity age,
+   and stall state.
+2. Message the lane, asking for what it has with the rest marked unverified.
+3. Do not repeat the message. A worker that ignored one request to wrap up
+   has shown it will not honour a soft instruction.
+4. `swarm stop` the lane. The coordinator owns its own spawned workers, so
+   this works without `force`. `force` is for sessions this coordinator did
+   not spawn, and it refuses otherwise by design.
+5. Record the loss in the todo row: which targets were completed, which were
+   left unverified, and that the remainder is not covered.
+
+`swarm stop` persists the session as closed, and the transcript on disk keeps
+what the worker had already written, so a stopped lane is a partial result
+rather than a total loss. The unwritten remainder is still lost, which is why
+stopping is the last step and not the first.
+
+The three files that carry this:
+
+| File | What it holds |
+| --- | --- |
+| `config/prompt-overlay.md` | Section 2.2.1 and 2.2.2 hold the thresholds and the budget. Section 12.8 holds the escalation order. |
+| `config/swarm-prompt.md` | The brief fields that keep a lane finite, and the same escalation order. |
+| `config/skills/swarm-engineering/SKILL.md` | Section 2.3.1 and 2.3.2 hold the thresholds and the budget. Section 11.1 holds the escalation order. |
+
+The overlay and the swarm prompt are always-on in every session, including
+spawned workers, so the worker side reaches a worker that never loads the
+Skill. The Skill carries the same rules in more detail for a worker that does
+load it.
+
 ## Native review surfaces
 
 `[autoreview]` and `[autojudge]` are set to `enabled = true` in
