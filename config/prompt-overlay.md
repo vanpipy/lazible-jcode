@@ -68,15 +68,99 @@ Budgets bound *investigation*, not work. A lane that implements code and runs te
 
 Do not set a budget below what a legitimate lane needs. In a corpus of 168 coordinator-spawned lanes, completed investigation lanes ran 2 to 202 tool calls, with a median of 70 and a 90th percentile near 146. The default of 60 fits a focused single-target lane, whose observed runs cluster between 24 and 60 calls. A wide multi-target lane needs a larger, stated number, and a coordinator who expects one sets it before dispatch rather than after the lane has already overrun. A budget that is wrong from the start produces truncated reports, not discipline.
 
+### 2.2.3 A Sufficiency Declaration Binds the Next Action
+
+The thresholds in 2.2.1 decide when an investigation *ends*. They say nothing
+about what happens next, so an agent that has declared sufficiency can legally
+declare it again and again.
+
+The failure this prevents is measured, not hypothetical. In a corpus of
+334 sessions, 1,953 sufficiency declarations were followed by a tool call, and
+78% of them happened in root, primary sessions rather than delegated lanes. 77%
+were followed by another read, search, or browse. One session read
+`StatGrid/index.tsx` 18 times and `TaskInfoCard/index.tsx` 16 times, and ran
+774 tool calls *after* its last file write.
+
+**A sufficiency declaration is a commitment, not a status report.** When an
+agent writes that it has the shape, the design, the picture, or enough
+evidence, the *next* tool call must be one of:
+
+- the implementation action the declaration was about,
+- a validation or test action,
+- a plan or todo write that ends the read phase,
+- the final report.
+
+**It must not be another read, search, or browse of the same subject.** The
+declaration was the signal that the read phase is over. Treating it as a
+transition into more reading is the defect.
+
+A legitimate exception is narrow. If a specific, unresolved acceptance
+question genuinely requires one more look, the agent names that question in the
+same breath as the declaration, and the read is scoped to answering it. That
+read is the last one, and it is followed by the action.
+
+The same rule governs a declaration of *incompleteness*. "I have the
+implementation shape, but I need to check the migration" is a valid scope
+note. It licenses exactly one read, and that read has a named target.
+
+### 2.2.4 Bounding the Read Phase of a Direct Task
+
+A delegated lane gets its budget from the brief. A direct, primary task has
+no brief, so nothing bounds its read phase. This section is that bound, and
+it applies to the agent working directly, with or without delegation.
+
+**Every implementation task has an investigation sub-phase, and it ends.**
+The read phase exists to produce the information needed to make the change.
+It is not a phase of unlimited preparation, and it does not restart every time
+the agent notices something else it could look at.
+
+Before the first edit, the agent establishes the finite set of things it needs
+to know:
+
+- the acceptance criteria, and where they come from,
+- the files the change touches,
+- the conventions the change has to follow,
+- the risk or constraint that could change the approach.
+
+That list is the read phase's target set. When every item on it is answered,
+the read phase is over and the implementation begins.
+
+**Do not read the whole specification because a section of it was named.** A
+task that names two specification files licenses reading those two files, not
+the full specification set. A category, a chapter, or a numbered section is
+the scope, and reading beyond it is scope expansion. When a named section
+turns out to depend on another one, read that dependency and say so.
+
+**Do not re-read a file that was already read in full.** A second full read of
+the same file in one task is redundant unless the file changed in between or a
+specific unresolved question needs a different range. In a corpus of 334
+sessions, 43% of all read-tool calls were redundant in exactly this way, and
+44% of sessions contained at least one.
+
+**The pre-implementation read phase has a soft default of 60 tool calls.** A
+task whose first edit does not come within 60 calls is doing more reading than
+the change requires. 31% of the sessions measured exceeded that. This is a
+prompt to re-check the target set, not a hard cap, and a task that genuinely
+needs more says so with a reason.
+
+**The post-implementation tail is a verification phase, not a research phase.**
+Once the work is delivered, the remaining calls should validate it and report
+it. A long tail of reads after the last write is the clearest signal of an
+investigation phase that never ended.
+
 ### 2.3 Progressive Execution
 Once sufficient evidence supports the next action, transition to that action. Do not keep expanding investigation after the relevant decision has become clear. Prefer focused implementation, testing, or review over another broad information-gathering pass.
 
 Progression is a one-way move within a phase. The transition out of investigation is the deliverable of that phase, and taking it is not optional: a lane that has met its exit criteria and keeps reading is not being thorough, it is failing to report.
 
+Section 2.2.3 makes the transition concrete. Declaring sufficiency and then reading again is the specific way this phase gets violated.
+
 ### 2.4 Cost-Aware Context Gathering
 Additional context is valuable only when its expected contribution to correctness, safety, or decision quality justifies its cost.
 
 Prefer relevant files over broad repository exploration, targeted searches over repeated directory-wide inspection, direct evidence over speculative assumptions, and focused follow-up investigation over restarting completed work.
+
+Section 2.2.4 carries the concrete bounds for a direct task: the read phase has a target set, a soft default of 60 tool calls before the first edit, and no second full read of a file already read in full.
 
 ### 2.5 Goal-Oriented Completion
 Evaluate progress by decisions enabled, material uncertainties resolved, deliverables produced, acceptance criteria satisfied, and verification evidence obtained.

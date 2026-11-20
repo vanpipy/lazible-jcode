@@ -282,6 +282,69 @@ spawned workers, so the worker side reaches a worker that never loads the
 Skill. The Skill carries the same rules in more detail for a worker that does
 load it.
 
+## Bounding the read phase of a direct task
+
+The safeguard above bounds a *delegated* lane, because a brief carries the
+bound. A direct task has no brief, so nothing bounded its read phase. That is
+where the same failure appeared, and it was the larger half of it.
+
+The evidence, from a corpus of 334 sessions with at least 20 messages, 191 of
+them root sessions and 143 swarm workers:
+
+| Measurement | Value |
+| --- | --- |
+| Sufficiency declarations ("I have the design. Let me ...") followed by a tool call | 1,953 |
+| Of those, in root, primary sessions rather than delegated lanes | 78% |
+| Of those, followed by another read, search, or browse | 77% |
+| Read-tool calls that were redundant, meaning the file was already read in full earlier in the same session | 43% of 7,269 |
+| Sessions containing at least one redundant read | 44% |
+| Tool calls before the first mutation, median | 39 |
+| Sessions whose first mutation came after more than 60 calls | 31% |
+| Tool calls *after* the last mutation, median | 14 |
+| Worst observed tail after the last mutation | 774 calls, with the target change unimplemented |
+
+That last row is the clearest signal. A session that reads for 774 calls after
+its last file write is not verifying anything. Its read phase never ended. The
+session in question did make a handful of file writes, but none of them were
+the change it was asked for, so the tail was not verification of anything.
+
+The three prompt files now close this in two parts.
+
+**A sufficiency declaration binds the next action.** Declaring that the shape,
+the design, or the picture is in hand is a commitment, not a status report. The
+next tool call is the implementation, the validation, the plan, or the report.
+It is not another read of the same subject. The one exception is narrow: a
+specific unresolved acceptance question, named in the same breath as the
+declaration, licenses one scoped read, and that read is the last one.
+
+**A direct task has a target set and a soft budget.** Before its first edit, the
+agent establishes the finite set of things it needs to know: the acceptance
+criteria and their source, the files the change touches, the conventions it has
+to follow, and the risk that could change the approach. When that list is
+answered, the read phase is over. Three concrete limits follow from it:
+
+- A named section, category, or file is the scope. Reading the whole
+  specification because a section of it was named is scope expansion.
+- A file already read in full is not read in full again.
+- The soft default is 60 tool calls before the first edit. 31% of the sessions
+  measured exceeded that. It is a prompt to re-check the target set, not a
+  hard cap, and a task that genuinely needs more says why.
+
+The tail after the last mutation is named as well. It is a verification phase,
+not a research phase.
+
+| File | What it holds |
+| --- | --- |
+| `config/prompt-overlay.md` | Section 2.2.3 binds a sufficiency declaration to the next action. Section 2.2.4 bounds the read phase of a direct task. |
+| `config/swarm-prompt.md` | The coordinator's own read phase, in the routing context where a coordinator reads it. |
+| `config/skills/swarm-engineering/SKILL.md` | Section 2.3.3 and 2.3.4 carry the same rules for a worker, plus a coordinator bullet in section 11. |
+
+These are model-guidance rules, not runtime safeguards. Jcode's tool schemas
+cannot tell an agent it read a file it already read, and the prompts cannot
+hard-stop a read. What they do is make the intended transition explicit and
+give the agent a number to check itself against. A tool-call cap in the
+runtime would be a different mechanism and is not claimed here.
+
 ## Native review surfaces
 
 `[autoreview]` and `[autojudge]` are set to `enabled = true` in
@@ -591,11 +654,24 @@ of this repo with `~/.jcode` symlinked into it, and the suite asserts that
 the copy comes out byte-identical, that the scripts exit non-zero, and that
 a refused uninstall removes nothing at all.
 
-It also covers the two ways the live config can be wrong. A live `config.toml`
+It also checks the two ways the live config can be wrong. A live `config.toml`
 that is a symlink is refused by name, and the suite asserts the file it
 points at comes out byte-identical. A live config whose content has drifted
 from `config/config.toml` is reported by `--check` as a failure, and a real
 install puts the repo's copy back.
+
+It also checks the read-phase safeguard. Section 30 asserts that all three
+prompt files carry the rule, that they quote the same measured numbers, and
+that the 60-call budget is the only one they quote. The legacy swarm
+safeguard is asserted still to be present, because the two are separate
+mechanisms and this one does not replace it.
+
+The assertions against the prompt files match across line breaks rather than
+line by line. A Markdown file is hard-wrapped prose, so a sentence's words
+routinely straddle a line break, and a check that matched the current
+wrapping would be a test of the wrapping rather than of the claim. Matching
+the sentence means re-wrapping a paragraph does not break the suite, while a
+reworded claim still does.
 
 `scripts/doc-check` checks the other direction. It reads this README and
 turns its claims into assertions: that the phase list matches the installer's
@@ -610,6 +686,12 @@ and against the current tree, and the config's record of the removed
 `[hooks]` block is checked to be a record and not a live block. The
 `scripts/test` header is compared against that file's own section banners,
 so the list of checks cannot quietly stop describing the file.
+
+It also checks the read-phase section of this README. The claims it makes
+are quoted back and asserted, the section numbers it points at are checked
+against the actual headings in the prompt files, and the headings are checked
+by number *and* title, because a section can keep its number and change
+what it holds.
 
 That matters because a README can drift from the code while every other test
 still passes. A claim in prose has no test behind it unless something checks

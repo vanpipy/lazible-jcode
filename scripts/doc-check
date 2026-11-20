@@ -57,6 +57,28 @@ check_claim() {
     fi
 }
 
+# check_claim_wrapped <label> <readme-pattern>
+#
+# The same check, but the pattern is matched against the README with its
+# whitespace collapsed to single spaces.
+#
+# A README is hard-wrapped prose, so a sentence's words routinely straddle a
+# line break. A pattern that happens to match the current wrapping is a test
+# of the wrapping, not of the claim. Collapsing whitespace makes the pattern
+# match the sentence instead of the line, so re-wrapping a paragraph does not
+# break the check and a reworded claim still does.
+check_claim_wrapped() {
+    local label="$1" pattern="$2"
+    local haystack needle
+    haystack="$(tr '\n' ' ' < "$README" | tr -s '[:space:]' ' ')"
+    needle="$(printf '%s' "$pattern" | tr -s '[:space:]' ' ')"
+    if [[ "$haystack" == *"$needle"* ]]; then
+        ok "$label"
+    else
+        bad "$label" "the README no longer states: $pattern"
+    fi
+}
+
 # tree_fingerprint is in testlib.sh.
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lazible-doc-check.XXXXXX")"
@@ -1097,6 +1119,95 @@ check_claim "the README scopes the mutation claim to what it can check" \
     "the two kinds of claim that no script in this repo could ever break"
 check_claim "the README says the provider measurements are not checked by doc-check" \
     "reproduced by hand against that log, not by \`doc-check\`"
+
+# ---------------------------------------------------------------------------
+# 8b. the read-phase safeguard claims
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README's read-phase claims hold ==="
+
+# The README's evidence table quotes measured numbers. The prompt files quote
+# the same numbers, and the test suite asserts they agree. What doc-check
+# adds is the README side: that the README still states the claims the rest
+# of the repo is built on, so a reworded README cannot quietly drop the
+# evidence for the safeguard.
+
+check_claim "the README states the read-phase section" \
+    "## Bounding the read phase of a direct task"
+check_claim_wrapped "the README says a sufficiency declaration binds the next action" \
+    "A sufficiency declaration binds the next action"
+check_claim_wrapped "the README names the four things the target set covers" \
+    "the acceptance criteria and their source, the files the change touches"
+check_claim_wrapped "the README says a named section is the scope" \
+    "A named section, category, or file is the scope"
+check_claim_wrapped "the README says a file read in full is not read in full again" \
+    "A file already read in full is not read in full again"
+check_claim_wrapped "the README states the soft budget for the read phase" \
+    "The soft default is 60 tool calls before the first edit"
+check_claim_wrapped "the README says the soft budget is not a hard cap" \
+    "It is a prompt to re-check the target set, not a hard cap"
+check_claim_wrapped "the README names the post-implementation tail" \
+    "It is a verification phase, not a research phase"
+check_claim_wrapped "the README distinguishes model guidance from a runtime safeguard" \
+    "These are model-guidance rules, not runtime safeguards"
+check_claim_wrapped "the README says the prompts cannot hard-stop a read" \
+    "the prompts cannot hard-stop a read"
+check_claim_wrapped "the README says a runtime tool-call cap is a different mechanism" \
+    "A tool-call cap in the runtime would be a different mechanism"
+check_claim_wrapped "the README states the corpus size the evidence came from" \
+    "from a corpus of 334 sessions"
+check_claim "the README states the root-session share of sufficiency declarations" \
+    "78%"
+check_claim "the README states the redundant-read share" \
+    "43% of 7,269"
+check_claim_wrapped "the README states the worst observed post-write tail" \
+    "774 calls, with the target change unimplemented"
+
+# The README points at the section numbers in the prompt files. If a section is
+# renumbered or renamed, the README's pointer goes stale, so the heading it
+# names has to still exist in the file it names.
+#
+# Both halves of the pointer are checked. The number alone is not enough: a
+# section can keep its number and change its title, which leaves the README
+# pointing at a section that no longer holds what it says it holds.
+overlay="$REPO/config/prompt-overlay.md"
+skill="$REPO/config/skills/swarm-engineering/SKILL.md"
+swarm_prompt="$REPO/config/swarm-prompt.md"
+
+for pair in \
+    "$overlay|2.2.3|A Sufficiency Declaration Binds the Next Action" \
+    "$overlay|2.2.4|Bounding the Read Phase of a Direct Task" \
+    "$skill|2.3.3|A Sufficiency Declaration Binds the Next Action" \
+    "$skill|2.3.4|No Second Full Read of the Same File"
+do
+    f="${pair%%|*}"
+    rest="${pair#*|}"
+    n="${rest%%|*}"
+    title="${rest#*|}"
+    if grep -qE "^#{2,6} ${n} ${title}$" "$f"; then
+        ok "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")"
+    else
+        bad "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")" \
+            "expected a heading '$n $title' in that file"
+    fi
+done
+
+# The README claims the overlay, the swarm prompt and the Skill all carry the
+# safeguard. All three have to actually carry it.
+if grep -qF "The coordinator's own read phase is bounded too" "$swarm_prompt"; then
+    ok "the swarm prompt really carries the coordinator read-phase rule"
+else
+    bad "the swarm prompt really carries the coordinator read-phase rule" \
+        "the swarm prompt does not carry it"
+fi
+
+if grep -qF "Bound your own read phase" "$skill"; then
+    ok "the Skill really carries the coordinator read-phase bullet"
+else
+    bad "the Skill really carries the coordinator read-phase bullet" \
+        "the Skill does not carry it"
+fi
 
 # ---------------------------------------------------------------------------
 # 9. the historical cleanup claims

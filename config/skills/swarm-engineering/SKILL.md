@@ -120,6 +120,53 @@ and 60 calls. A wide multi-target lane needs a larger stated number.
 A budget that is wrong from the start produces truncated reports, not
 discipline.
 
+#### 2.3.3 A Sufficiency Declaration Binds the Next Action
+
+The thresholds above decide when an investigation *ends*. They say nothing
+about what happens next, so a worker that has declared sufficiency can legally
+declare it again and again. This is the most common way the bound is broken
+from the inside.
+
+The failure is measured, not hypothetical. In a corpus of 334 sessions, 1,953
+sufficiency declarations were followed by a tool call, and 78% of them happened
+in root, primary sessions rather than delegated lanes. 77% were followed by
+another read, search, or browse. One session read `StatGrid/index.tsx` 18 times
+and `TaskInfoCard/index.tsx` 16 times, and ran 774 tool calls *after* its last
+file write.
+
+**A sufficiency declaration is a commitment, not a status report.** When a
+worker writes that it has the shape, the design, the picture, or enough
+evidence, the *next* tool call must be one of:
+
+- the implementation action the declaration was about,
+- a validation or test action,
+- a plan or todo write that ends the read phase,
+- the final report.
+
+**It must not be another read, search, or browse of the same subject.** The
+declaration was the signal that the read phase is over. Treating it as a
+transition into more reading is the defect.
+
+A legitimate exception is narrow. If a specific, unresolved acceptance
+question genuinely requires one more look, the worker names that question in
+the same breath as the declaration, and the read is scoped to answering it.
+That read is the last one, and it is followed by the action.
+
+The same rule governs a declaration of *incompleteness*. "I have the
+implementation shape, but I need to check the migration" is a valid scope
+note. It licenses exactly one read, and that read has a named target.
+
+#### 2.3.4 No Second Full Read of the Same File
+
+A file read in full is read. A second full read of the same file inside one
+task is redundant unless the file changed in between, or a specific unresolved
+question needs a different range of it. In a corpus of 334 sessions, 43% of
+all read-tool calls were redundant in exactly this way, and 44% of sessions
+contained at least one.
+
+Read a range when you need a range. Read the whole file once, then use the
+parts of it you already have.
+
 ### 2.4 Phase Progression
 
 Use a proportionate engineering lifecycle:
@@ -133,6 +180,9 @@ Move forward once sufficient evidence supports the next action. Return to an ear
 Progression is a one-way move within a phase. The transition out of
 investigation is the deliverable of that phase. A lane that has met its exit
 criteria and keeps reading is not being thorough, it is failing to report.
+
+Section 2.3.3 makes the transition concrete. Declaring sufficiency and then
+reading again is the specific way this phase gets violated.
 
 ### 2.5 Honest Validation
 
@@ -664,6 +714,7 @@ Practice that makes the policy above work. It does not change the policy.
 - **Accept a worker's executed evidence as the evidence for that claim.** Re-run a check yourself only when the files changed after that worker's run, or when two reports disagree — and then run the independent verification once, at acceptance.
 - **Never poll with sleeps or wait loops.** Use `swarm await_members`, which waits in the background and notifies you when a worker finishes. Do other work, or wait for the completion notice.
 - **Keep one ledger row per round.** The `todo` list is the ledger: the lanes spawned, what each owns, the verdict, and where the evidence came from. Write it once, in order.
+- **Bound your own read phase.** A brief bounds a worker. Nothing bounds the coordinator's direct reading, and that is where the same failure appears: 78% of the sufficiency declarations in a 334-session corpus were in root, primary sessions, and one session ran 774 tool calls after its last file write. Before your own first edit, state the finite set of things you need to know and read only those. A named section, category, or file is the scope, not a licence to read the whole specification. A file already read in full is not read in full again. The soft default is 60 tool calls before the first edit, and a coordinator that needs more says why. When you declare that you have the shape or the design, your next call is the implementation, the validation, the plan, or the report. See section 2.3.3 and section 2.3.4.
 
 ### 11.1 Stopping a Lane That Overran Its Brief
 

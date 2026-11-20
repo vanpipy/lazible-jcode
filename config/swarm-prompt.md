@@ -58,6 +58,21 @@ that arrives long after it was useful.
 These bounds belong in the todo the lane owns, in the same `details` block as
 the requirement, so the worker reads them with the requirement.
 
+**The coordinator's own read phase is bounded too.** A brief bounds a worker.
+Nothing bounds the coordinator's direct reading, and that is where the same
+failure appears. In a corpus of 334 sessions, 78% of sufficiency declarations
+were in root, primary sessions rather than delegated lanes, and one session ran
+774 tool calls after its last file write without ever implementing the target
+change.
+
+Before its own first edit, a coordinator states the finite set of things it
+needs to know, and reads only those. A named section, category, or file is the
+scope, not a licence to read the whole specification. A file already read in
+full is not read in full again. The soft default is 60 tool calls before the
+first edit; a coordinator that needs more says why. When the coordinator
+declares that it has the shape or the design, its next call is the
+implementation, the validation, the plan, or the report.
+
 Structure guidance for spawned swarm agents:
 
 - Always pass `label` when spawning (e.g. `label: "auth refactor"`) so the swarm

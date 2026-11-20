@@ -17,6 +17,36 @@
 # which shellcheck cannot see. They are deliberately not exported.
 # shellcheck disable=SC2034
 
+# assert_contains_wrapped <label> <needle> <haystack>
+#
+# The same check as assert_contains, but both sides have their whitespace
+# collapsed to single spaces first.
+#
+# A hard-wrapped Markdown file routinely straddles a sentence's words across a
+# line break, so a literal needle matches the wrapping rather than the
+# sentence. Collapsing whitespace makes the needle match the sentence, so
+# re-wrapping a paragraph does not break the check while a reworded claim
+# still does.
+#
+# The haystack is truncated in the failure output. The files this checks are
+# whole Markdown documents, and printing one in full buries the needle it
+# failed to find.
+assert_contains_wrapped() {
+    local label="$1" needle="$2" haystack="$3"
+    local n h shown
+    n="$(printf '%s' "$needle" | tr -s '[:space:]' ' ')"
+    h="$(printf '%s' "$haystack" | tr '\n' ' ' | tr -s '[:space:]' ' ')"
+    if [[ "$h" == *"$n"* ]]; then
+        ok "$label"
+    else
+        shown="${h:0:200}"
+        if (( ${#h} > 200 )); then
+            shown="$shown ... (${#h} chars total)"
+        fi
+        bad "$label" "expected to contain: $needle" "actual: $shown"
+    fi
+}
+
 # The fingerprint of a tree: every path with its type and content.
 #
 # Content is hashed, not just the size, so a change that keeps the same

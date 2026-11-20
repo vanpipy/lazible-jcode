@@ -47,6 +47,8 @@
 #   28. preflight refuses a python3 older than 3.11, before writing anything
 #   29. every file the README lists as not managed survives install and
 #       uninstall --full, byte-identical
+#   30. the read-phase safeguard is present in all three prompt files, and
+#       the three of them agree on the numbers they quote
 #
 # The numbered section banners in this file use the same numbering.
 #
@@ -1929,6 +1931,125 @@ if [[ ! -e "$SANDBOX/unmanaged/home/.jcode/skills/swarm-engineering" ]]; then
 else
     bad "uninstall --full removed the skill it owns" "the skill is still there"
 fi
+
+# ---------------------------------------------------------------------------
+# 30. the read-phase safeguard is in all three prompt files
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the read-phase safeguard is carried by all three prompt files ==="
+
+OVERLAY="$REPO/config/prompt-overlay.md"
+SWARMPROMPT="$REPO/config/swarm-prompt.md"
+SKILLMD="$REPO/config/skills/swarm-engineering/SKILL.md"
+
+# The safeguard is three claims, and each of them has to be in the overlay,
+# because the overlay is the tier that is always-on in every session,
+# including a root, primary session that never loads the Skill.
+#
+# A safeguard that only reached the Skill would not have reached the session
+# that exhibited the problem.
+
+assert_contains_wrapped "the overlay binds a sufficiency declaration to the next action" \
+    "A Sufficiency Declaration Binds the Next Action" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay names the next action as implementation or validation" \
+    "the implementation action the declaration was about" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay forbids a read right after a sufficiency declaration" \
+    "It must not be another read, search, or browse of the same subject" \
+    "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay bounds the read phase of a direct task" \
+    "Bounding the Read Phase of a Direct Task" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay gives the read phase a target set" \
+    "That list is the read phase's target set" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay forbids a second full read of the same file" \
+    "Do not re-read a file that was already read in full" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay states a soft budget for the read phase" \
+    "soft default of 60 tool calls" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay names the post-implementation tail as verification" \
+    "The post-implementation tail is a verification phase" "$(cat "$OVERLAY")"
+
+# The swarm prompt is the other always-on tier. A root, primary session that
+# never loads the Skill still reads this, because it is the swarm tool's
+# description.
+assert_contains_wrapped "the swarm prompt bounds the coordinator's own read phase" \
+    "The coordinator's own read phase is bounded too" "$(cat "$SWARMPROMPT")"
+
+# The Skill carries the same rules in more detail for a worker that loads it.
+assert_contains_wrapped "the skill binds a sufficiency declaration to the next action" \
+    "A Sufficiency Declaration Binds the Next Action" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill forbids a second full read of the same file" \
+    "No Second Full Read of the Same File" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill bounds the coordinator's own read phase" \
+    "Bound your own read phase" "$(cat "$SKILLMD")"
+
+# The three files quote the same numbers. If one of them is edited alone, the
+# numbers drift and the three tiers start telling the agent different stories.
+#
+# The figures are the ones the README's evidence table carries, and they are
+# measured, not invented. They are asserted here so that a future edit that
+# changes one of them without changing the others fails the suite.
+for f in "$OVERLAY" "$SWARMPROMPT" "$SKILLMD"; do
+    assert_contains_wrapped "the read-phase evidence in $(basename "$f") cites 334 sessions" \
+        "334 sessions" "$(cat "$f")"
+    assert_contains_wrapped "the read-phase evidence in $(basename "$f") cites 774 post-write calls" \
+        "774 tool calls" "$(cat "$f")"
+    assert_contains_wrapped "the read-phase evidence in $(basename "$f") cites the 60-call soft budget" \
+        "60 tool calls" "$(cat "$f")"
+done
+
+# The overlay and the Skill must not drift apart on the headline share of
+# sufficiency declarations that happened in root sessions. Both state it.
+assert_contains_wrapped "the overlay cites the root-session share of sufficiency declarations" \
+    "78%" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill cites the root-session share of sufficiency declarations" \
+    "78%" "$(cat "$SKILLMD")"
+
+# The legacy swarm safeguard must survive. It is a separate mechanism and
+# this change does not replace it.
+assert_contains "the overlay still holds the swarm investigation thresholds" \
+    "### 2.2.1 Evidence Thresholds" "$(cat "$OVERLAY")"
+
+assert_contains "the overlay still holds the swarm investigation budget" \
+    "### 2.2.2 Tool-Call Budgets" "$(cat "$OVERLAY")"
+
+assert_contains "the overlay still holds the lane escalation order" \
+    "### 12.8 Enforcing a Lane's Bound" "$(cat "$OVERLAY")"
+
+# The read-phase budget is one number, and it is stated in several places in
+# the same file. A cross-reference that quotes a different number would send
+# an agent a budget the rule does not use, so the file is scanned for every
+# figure attached to "tool calls" and every one of them has to be the same.
+#
+# The swarm-lane corpus figures are deliberately not checked here. They are
+# from a different corpus and a different mechanism, and the file states them
+# in prose rather than in the read-phase form.
+for f in "$OVERLAY" "$SWARMPROMPT" "$SKILLMD"; do
+    call_budgets="$(grep -o '[0-9][0-9]* tool calls' "$f" | sort -u | tr '\n' ' ')"
+    # The swarm prompt and the Skill carry the swarm-lane figures too, so only
+    # the figures that the read-phase rule introduces are required here.
+    if [[ "$call_budgets" == *"60 tool calls"* ]]; then
+        ok "the read-phase budget in $(basename "$f") is 60 tool calls"
+    else
+        bad "the read-phase budget in $(basename "$f") is 60 tool calls" \
+            "the file says: $call_budgets"
+    fi
+    if [[ "$call_budgets" != *"30 tool calls"* ]]; then
+        ok "the read-phase budget in $(basename "$f") has no stray 30-call figure"
+    else
+        bad "the read-phase budget in $(basename "$f") has no stray 30-call figure" \
+            "the file says: $call_budgets"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 
