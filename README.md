@@ -86,10 +86,11 @@ system-prompt layer that can be edited on its own, and the two files have
 different reload behaviour, described below.
 
 Those byte counts describe one revision and will drift. The current sizes are
-not the measured ones above, because the tiers have grown since: the bounded
+not the measured ones above, because the tiers have changed since: the bounded
 investigation, read-phase and verification-phase safeguards were added after
-the measurement. Check the live sizes against the files themselves, `wc -c`,
-before trusting any figure in this file.
+the measurement, and a later compression pass brought all three tiers back
+under their ceilings. Check the live sizes against the files themselves,
+`wc -c`, before trusting any figure in this file.
 
 The swarm prompt's size is the one that matters for cost, because it is sent on
 every request in every session. It is held under a ceiling, and the ceiling is
@@ -689,7 +690,7 @@ A refusal to touch the repo is checked before anything is removed, so
 `scripts/prompt-verify` is the gate for a prompt-tier compression. It runs
 every check that has to pass before a compressed tier is accepted: the
 protected-content contract, the three size ceilings, the heading structure,
-and the rule inventory. `scripts/rule-drop` is the part of that gate that
+and the rule check. `scripts/rule-drop` is the part of that gate that
 catches a lost policy, and it is worth knowing what it does and does not
 prove.
 
@@ -705,9 +706,26 @@ rules still reported as kept.
 paragraph before splitting it into rules, on both sides of the comparison, so
 a rule that spans two lines is one claim rather than two fragments. It then
 matches each baseline rule against the rewrite's rules, not against all of its
-sentences. Measured against the same deletions, it misses 21 to 43 percent
-rather than 90 to 99 percent, and it reports no false positives and no thin
-rules on a file compared against itself.
+sentences.
+
+`scripts/measure-rule-tools` produces that comparison against a known
+answer, so the figures below can be checked rather than believed. It deletes
+one baseline rule at a time and asks each tool whether it still reports the
+rule as kept. Measured at HEAD on 2026-11-21:
+
+| Tier | `rule-inventory` misses | `rule-drop` misses |
+| --- | --- | --- |
+| `config/swarm-prompt.md` | 22 of 30 (73%) | 4 of 29 (14%) |
+| `config/prompt-overlay.md` | 71 of 73 (97%) | 14 of 103 (14%) |
+| `config/skills/swarm-engineering/SKILL.md` | 93 of 94 (99%) | 21 of 93 (23%) |
+
+`rule-drop` reported no false positives on any tier: after a deletion, it
+never reported a surviving rule as gone. `rule-inventory` reported 5 false
+positives on the swarm prompt.
+
+The two tools collect different rule sets, so each is measured on the rules
+it collects. `rule-inventory` collects a rule per sentence and per bullet
+line. `rule-drop` collects a rule per bullet and per sentence of a paragraph.
 
 It is still a measure, not a proof. A rule whose claim was reworded into
 different words can score below the threshold, and a rule whose claim was
@@ -720,11 +738,14 @@ Both are worth running by hand:
 ```bash
 ./scripts/rule-drop config/swarm-prompt.md --before HEAD
 ./scripts/rule-inventory config/swarm-prompt.md --before HEAD
+./scripts/measure-rule-tools config/swarm-prompt.md HEAD
 ```
 
 `rule-inventory` is the triage aid, and reports the rules with no counterpart
 along with the ones whose rarest word did not survive. `rule-drop` is the
-gate, and reports the rules that fell below the content-word threshold.
+gate, and reports the rules that fell below the content-word threshold. The
+gate is run by `prompt-verify`, which fails when `rule-drop` reports a
+dropped rule at all.
 
 `scripts/test` runs the real `scripts/install` and `scripts/uninstall`, not a
 copy of their logic. Every check drives the actual script with `HOME` pointed
