@@ -42,21 +42,52 @@ Bound every lane you spawn. An unbounded brief produces an unbounded lane:
 the worker keeps pulling threads, and the coordinator ends up with a report
 that arrives long after it was useful.
 
-- **Name a finite target list.** For a verification or audit lane, list the
-  candidates, files, or requirements to check, and give the count. "Check
-  whether the save path is covered" is unbounded. "Check these 7 save-path
-  functions and report a verdict for each" is a lane.
-- **State an evidence budget.** Give an explicit tool-call budget for
-  investigation lanes. The default is 60. A lane without a stated budget uses
-  the default.
-- **Give exact completion criteria.** Say what a finished lane looks like:
-  which targets are covered, which fields the report carries, what the worker
-  does with the remainder if it runs out of budget (report it as unverified).
-  The criteria are also the lane's verification target set: once they are
-  checked, the lane reports. A lane that keeps reading after its criteria are
-  checked has overrun its brief.
-- **Say what is out of scope.** A worker that knows the boundary stops at it.
-  A worker that does not will search the whole repository to be sure.
+Structure guidance for spawned swarm agents:
+
+- Always pass `label` when spawning (e.g. `label: "auth refactor"`) so the swarm
+  UI shows what each agent is for. The explicit `spawn` action rejects missing or
+  blank labels. A spawned worker owns that lane in your todo list; the todo
+  list is the lane and syncs only that worker. Pass `phase` when the lane
+  belongs to a specific phase of the plan.
+- Only the root session may spawn agents. Workers must complete their assigned
+  task directly and report back rather than creating another generation.
+
+Lane mechanics. The named todo lane is the source of truth: its tasks are
+prepopulated into the worker and updates sync only to that lane. `prompt` adds
+context, not duplicate tasks. A missing lane is created from `prompt` or
+`label`, so a spawn never silently loses its task.
+
+What every brief must carry. A worker sees its brief and the tool descriptions.
+It does not see your context, and it is not guaranteed to have loaded any
+skill, so the brief is the contract:
+
+- **Label.** The lane name. It keys the todo list and the swarm UI.
+- **Role and objective.** The role, and the specific outcome to achieve.
+- **Scope and out of scope.** The files or surfaces it may touch, and those it
+  must not. A worker that knows the boundary stops at it. A worker that does
+  not will search the whole repository to be sure.
+- **Context and known evidence.** The facts it may rely on, so it does not
+  re-derive them.
+- **Acceptance criteria.** The observable conditions that prove the work is
+  done. The criteria are also the lane's verification target set: once they
+  are checked, the lane reports. A lane that keeps reading after its criteria
+  are checked has overrun its brief.
+- **Validation.** The commands or checks to run.
+- **Ownership.** The files it owns, so parallel lanes do not collide.
+- **Dependencies.** What must land first.
+- **Report contract.** What it must report back, including what failed.
+- **Relevant health and risk context.** For significant changes, include known
+  Code Health findings, material dependencies, behavioral risks, and
+  applicable quality constraints. Keep this scoped to the worker's lane.
+- **Target list.** The finite set of candidates, files, or requirements to
+  check, with its count. "Check whether the save path is covered" is unbounded.
+  "Check these 7 save-path functions and report a verdict for each" is a lane.
+- **Evidence budget.** The tool-call count that bounds the investigation
+  phase. The default is 60. A lane without a stated budget uses the default.
+- **Stop condition.** What the lane does when the target list is done or the
+  budget is spent: report what it has and mark the rest unverified.
+
+If a material field is missing, say so in the brief rather than assuming it.
 
 These bounds belong in the todo the lane owns, in the same `details` block as
 the requirement, so the worker reads them with the requirement.
@@ -79,42 +110,12 @@ implementation, the validation, the plan, or the report.
 **The coordinator's own tail is bounded too.** After the last write, the
 remaining calls check the acceptance criteria and then report. The same corpus
 that produced 774 tool calls after a last file write also produced a median of
-14 tool calls after the last mutation, and a long read tail after the change is
-the same defect as a read tail before it. The verification phase has a target
+14 tool calls after the last mutation. The verification phase has a target
 set: the acceptance criteria, one check each, and it ends at the first of:
 the criteria are checked, a check cannot fail, the remaining question would
 change what is delivered (which is implementation work, so make the change and
 check the criterion it affects), or the budget is spent. Then the report
 follows.
-
-Structure guidance for spawned swarm agents:
-
-- Always pass `label` when spawning (e.g. `label: "auth refactor"`) so the swarm
-  UI shows what each agent is for. The explicit `spawn` action rejects missing or
-  blank labels. A spawned worker owns that lane in your todo list; the todo
-  list is the lane and syncs only that worker. Pass `phase` when the lane
-  belongs to a specific phase of the plan.
-- Only the root session may spawn agents. Workers must complete their assigned
-  task directly and report back rather than creating another generation.
-
-What every brief must carry. A worker sees its brief and the tool descriptions.
-It does not see your context, and it is not guaranteed to have loaded any
-skill, so the brief is the contract:
-
-- Role, and the objective to achieve.
-- Scope and out of scope: the files or surfaces it may touch, and those it
-  must not.
-- Context and known evidence: the facts it may rely on, so it does not
-  re-derive them.
-- Acceptance criteria: the observable conditions that prove the work is done.
-- Validation: the commands or checks to run.
-- Ownership: the files it owns, so parallel lanes do not collide.
-- Report contract: what it must report back, including what failed.
-- Relevant health and risk context: for significant changes, include known
-  Code Health findings, material dependencies, behavioral risks, and
-  applicable quality constraints. Keep this scoped to the worker's lane.
-
-If a material field is missing, say so in the brief rather than assuming it.
 
 Enforcing the bound. A brief is a request. A worker that has already met its
 completion criteria and keeps searching will not stop because the brief asked

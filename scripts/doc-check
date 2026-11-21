@@ -1280,6 +1280,209 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 8d. the tier-structure claims
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README's tier-structure claims hold ==="
+
+# The README claims the tiers keep a structure that is enforced, not merely
+# described. doc-check checks the README side of that: that the claims are
+# still stated, that the sections they name still exist at the level the
+# README says, and that the size ceiling the README names is the ceiling the
+# test suite actually enforces.
+#
+# The two suites split the work. scripts/test enforces the properties against
+# the files. doc-check checks that the README still describes them, because a
+# README that dropped the claim would leave the enforcement unexplained and
+# a reader would have no reason to know the ceiling exists.
+
+# These are prose claims, so they are matched with the whitespace collapsed.
+# The README is hard-wrapped, and a pattern that matches only the current
+# wrapping would be a test of the wrapping rather than of the claim.
+check_claim_wrapped "the README states the three prompt tiers" \
+    "## The three prompt tiers"
+
+check_claim_wrapped "the README says the swarm prompt is the expensive one" \
+    "swarm-prompt.md\` is the expensive one"
+
+check_claim_wrapped "the README says the swarm prompt is sent on every request" \
+    "sent on every request in every session"
+
+check_claim_wrapped "the README says the swarm prompt has a ceiling" \
+    "It is held under a ceiling"
+
+check_claim_wrapped "the README says the ceiling is asserted by the test suite" \
+    "asserted by the test suite rather than left to review"
+
+check_claim_wrapped "the README says the byte counts describe one revision" \
+    "Those byte counts describe one revision and will drift"
+
+check_claim_wrapped "the README dates the measured byte counts" \
+    "commit \`58a2699\`, 2026-11-08"
+
+check_claim_wrapped "the README states the structure section of the test suite" \
+    "Section 32 of \`scripts/test\`"
+
+check_claim_wrapped "the README states the heading-depth rule" \
+    "every numbered heading sits at the depth its number implies"
+
+check_claim_wrapped "the README states the section-reference rule" \
+    "the section references between the files still resolve to headings that exist"
+
+# The ceiling the README names has to be the ceiling the test suite enforces.
+# A README that says 12,000 and a suite that enforces 8,000 would both be
+# self-consistent and still disagree, and only a reader of both would notice.
+#
+# The value is read out of scripts/test rather than repeated here, so the two
+# cannot drift apart silently.
+ceiling="$(sed -n 's/^SWARM_PROMPT_MAX_BYTES=\([0-9][0-9]*\)$/\1/p' "$REPO/scripts/test" | head -1)"
+if [[ -n "$ceiling" ]]; then
+    ok "the test suite defines a swarm prompt size ceiling"
+else
+    bad "the test suite defines a swarm prompt size ceiling" \
+        "scripts/test has no SWARM_PROMPT_MAX_BYTES assignment"
+fi
+
+# The ceiling has to be a real number, and it has to be above the file it
+# caps. A ceiling of zero, or one below the current size, would be a check
+# that fails for a reason nobody intended.
+if [[ -n "$ceiling" && "$ceiling" -gt 0 ]]; then
+    ok "the swarm prompt size ceiling is a positive number"
+else
+    bad "the swarm prompt size ceiling is a positive number" \
+        "the ceiling is ${ceiling:-unset}"
+fi
+
+swarm_bytes="$(wc -c < "$swarm_prompt" | tr -d ' ')"
+if [[ -n "$ceiling" && "$swarm_bytes" -le "$ceiling" ]]; then
+    ok "the swarm prompt is within the ceiling the test suite enforces"
+else
+    bad "the swarm prompt is within the ceiling the test suite enforces" \
+        "the file is $swarm_bytes bytes, the ceiling is ${ceiling:-unset}"
+fi
+
+# The README's claim that the three tiers hold different things is a claim
+# about content, so the content is checked. The swarm prompt has to carry the
+# routing and the brief requirements, and it has to be a tool description
+# rather than a policy document.
+if grep -qF "What every brief must carry" "$swarm_prompt"; then
+    ok "the swarm prompt really carries the brief requirements"
+else
+    bad "the swarm prompt really carries the brief requirements" \
+        "the swarm prompt does not carry them"
+fi
+
+# And it must not have absorbed the coordinator policy, which is the whole
+# point of the split. The overlay is where that policy lives.
+if grep -qF "## 12. Swarm Orchestration" "$overlay"; then
+    ok "the overlay really carries the coordinator policy"
+else
+    bad "the overlay really carries the coordinator policy" \
+        "the overlay does not carry it"
+fi
+
+# The README names the sections the tiers hold. If one of them is renamed or
+# renumbered, the pointer goes stale, so the heading is checked by number and
+# by title, the same way sections 8b and 8c do it.
+for pair in \
+    "$overlay|2.2.4|Bounding the Read Phase of a Direct Task" \
+    "$overlay|7.0|Code Health and Change Risk Policy" \
+    "$skill|2.7|Code Health and Change Risk Assessment" \
+    "$skill|13|Requirement Handover"
+do
+    f="${pair%%|*}"
+    rest="${pair#*|}"
+    n="${rest%%|*}"
+    title="${rest#*|}"
+    # A top-level section carries a trailing period after its number, so
+    # "## 13. Requirement Handover". A subsection does not, so
+    # "### 2.7 Code Health and Change Risk Assessment". The period is
+    # therefore optional here.
+    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n}\.? ${title}$"; then
+        ok "section $n still exists in $(basename "$f")"
+    else
+        bad "section $n still exists in $(basename "$f")" \
+            "expected a heading '$n $title' in that file"
+    fi
+done
+
+# The heading levels the README implies have to be the levels the files
+# actually use. A demoted heading still holds the right text, so a text-only
+# check passes, and the outline the reader sees is wrong.
+if tr -d '\r' < "$overlay" | grep -qE "^#### 7\.1 Two Distinct Assessments$"; then
+    ok "the overlay's code-health assessments are nested one level deeper"
+else
+    bad "the overlay's code-health assessments are nested one level deeper" \
+        "expected '#### 7.1 Two Distinct Assessments'"
+fi
+
+if tr -d '\r' < "$skill" | grep -qE "^### 2\.7 Code Health and Change Risk Assessment$"; then
+    ok "the skill's code-health policy is nested one level deeper"
+else
+    bad "the skill's code-health policy is nested one level deeper" \
+        "expected '### 2.7 Code Health and Change Risk Assessment'"
+fi
+
+# The README's byte figures are a measurement, so they are re-measured here
+# rather than trusted. Each figure names a commit, and the commit's own tree
+# is the source of the number.
+#
+# The "before" figures come from the commit before the three-tier split, and
+# the "after" figures from the commit the README names. A number that no
+# longer matches its commit is a stale README, and the reader has no way to
+# tell without a checkout.
+#
+# This needs the git history, so it is only checked where there is a git repo
+# to check against, the same way the removal checks below are.
+if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    before="249ac70"
+    after="58a2699"
+
+    for spec in \
+        "config/swarm-prompt.md|17082|$before|the tool description before the split" \
+        "config/swarm-prompt.md|4084|$after|the tool description at the measured revision" \
+        "config/prompt-overlay.md|12143|$before|the overlay before the split" \
+        "config/prompt-overlay.md|20134|$after|the overlay at the measured revision"
+    do
+        f="${spec%%|*}"
+        rest="${spec#*|}"
+        want="${rest%%|*}"
+        rest="${rest#*|}"
+        rev="${rest%%|*}"
+        what="${rest#*|}"
+
+        actual="$(git -C "$REPO" show "$rev:$f" 2>/dev/null | wc -c | tr -d ' ')"
+        if [[ "$actual" == "$want" ]]; then
+            ok "$what is $want bytes at $rev"
+        else
+            bad "$what is $want bytes at $rev" \
+                "the file is $actual bytes at $rev"
+        fi
+    done
+
+    # The revision the README names has to be a commit that exists and has
+    # the date the README gives. A short hash that has been rewritten, or a
+    # date that no longer matches, makes the citation unusable.
+    if git -C "$REPO" rev-parse --verify --quiet "$after^{commit}" >/dev/null 2>&1; then
+        ok "the revision the README cites is a real commit"
+    else
+        bad "the revision the README cites is a real commit" \
+            "$after does not resolve to a commit"
+    fi
+
+    cited_date="$(git -C "$REPO" log -1 --format=%ad --date=short "$after" 2>/dev/null)"
+    if [[ "$cited_date" == "2026-11-08" ]]; then
+        ok "the revision the README cites still has the date it gives"
+    else
+        bad "the revision the README cites still has the date it gives" \
+            "the commit's date is ${cited_date:-unknown}, the README says 2026-11-08"
+    fi
+else
+    ok "the historical byte figures are checked against the history"
+fi
+
+# ---------------------------------------------------------------------------
 # 9. the historical cleanup claims
 # ---------------------------------------------------------------------------
 

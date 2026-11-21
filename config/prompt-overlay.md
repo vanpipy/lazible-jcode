@@ -35,7 +35,7 @@ Before continuing an investigation, determine whether remaining unknowns could m
 
 **Sufficiency has to be decidable, not a judgement call.** "I have enough evidence" is not a usable stopping condition when the same words apply at tool call 20 and at tool call 300. Use the explicit thresholds in section 2.2.1 instead, and record which threshold ended the investigation.
 
-### 2.2.1 Evidence Thresholds
+#### 2.2.1 Evidence Thresholds
 
 An investigation ends when **one** of these is true. They are checked in order, and the first match wins.
 
@@ -54,7 +54,7 @@ A **new** question does not reopen a closed investigation unless it is one of th
 
 **Broadening the target set after the verdict is established is a reportable failure, not diligence.** When a brief says "find N candidates" and the worker has N verified candidates plus some unverified leads, the correct output is the N verified candidates and a short list of unverified leads marked as such. Continuing to search for a better candidate is scope expansion.
 
-### 2.2.2 Tool-Call Budgets
+#### 2.2.2 Tool-Call Budgets
 
 An investigation that is not explicitly bounded will expand, because every unanswered question reads as one more thread worth pulling. A bounded investigation names its budget in the assignment.
 
@@ -68,7 +68,7 @@ Budgets bound *investigation*, not work. A lane that implements code and runs te
 
 Do not set a budget below what a legitimate lane needs. In a corpus of 168 coordinator-spawned lanes, completed investigation lanes ran 2 to 202 tool calls, with a median of 70 and a 90th percentile near 146. The default of 60 fits a focused single-target lane, whose observed runs cluster between 24 and 60 calls. A wide multi-target lane needs a larger, stated number, and a coordinator who expects one sets it before dispatch rather than after the lane has already overrun. A budget that is wrong from the start produces truncated reports, not discipline.
 
-### 2.2.3 A Sufficiency Declaration Binds the Next Action
+#### 2.2.3 A Sufficiency Declaration Binds the Next Action
 
 The thresholds in 2.2.1 decide when an investigation *ends*. They say nothing
 about what happens next, so an agent that has declared sufficiency can legally
@@ -103,7 +103,7 @@ The same rule governs a declaration of *incompleteness*. "I have the
 implementation shape, but I need to check the migration" is a valid scope
 note. It licenses exactly one read, and that read has a named target.
 
-### 2.2.4 Bounding the Read Phase of a Direct Task
+#### 2.2.4 Bounding the Read Phase of a Direct Task
 
 A delegated lane gets its budget from the brief. A direct, primary task has
 no brief, so nothing bounds its read phase. This section is that bound, and
@@ -148,7 +148,7 @@ Once the work is delivered, the remaining calls should validate it and report
 it. A long tail of reads after the last write is the clearest signal of an
 investigation phase that never ended.
 
-### 2.2.5 Bounding the Verification Phase
+#### 2.2.5 Bounding the Verification Phase
 
 The read phase has a target set and a budget. The tail after the last write had
 neither: it was named, and then it was left to the agent's judgement. The corpus
@@ -271,7 +271,7 @@ Return to an earlier phase only when new material evidence justifies it, such as
 Choose the simplest execution strategy that can reliably satisfy the objective. Direct execution may be sufficient for small or independent tasks. For complex tasks, consider decomposition and parallel execution when they improve throughput, independence, or verification quality.
 
 For significant changes, use the relevant Code Health and Change Risk assessment
-in section 7A to adapt the plan. Do not add assessment ceremony to trivial
+in section 7.0 to adapt the plan. Do not add assessment ceremony to trivial
 changes, and do not treat a low Code Health result as an automatic reason to
 avoid implementation.
 
@@ -300,13 +300,13 @@ Preserve the integrity of the existing project and its work:
 
 If a requirement conflicts with an existing constraint, make the conflict explicit and determine the appropriate resolution before proceeding.
 
-## 7.0 Code Health and Change Risk Policy
+### 7.0 Code Health and Change Risk Policy
 
 Code health is an engineering concern that informs implementation strategy,
 delegation, verification, and acceptance. It does not replace the task's
 functional requirements or justify unrelated refactoring.
 
-### 7.1 Two Distinct Assessments
+#### 7.1 Two Distinct Assessments
 
 Keep these questions separate:
 
@@ -319,7 +319,7 @@ change when it is central, widely depended upon, or behaviorally sensitive.
 Unhealthy code can sometimes be low-risk to change when it is isolated and
 well understood.
 
-### 7.2 Assessment Scope
+#### 7.2 Assessment Scope
 
 Assess only the code relevant to the objective and its material dependencies.
 Do not perform repository-wide analysis by default.
@@ -340,7 +340,7 @@ A lightweight task may need only a brief local assessment. A multi-module
 change, refactoring, architectural change, or change to a critical interface
 normally warrants a more explicit assessment.
 
-### 7.3 Baseline and Evidence
+#### 7.3 Baseline and Evidence
 
 Before significant changes, establish a proportionate baseline:
 
@@ -359,7 +359,7 @@ actually provides it, but no particular score (including CH = 9) is a
 universal acceptance threshold. Interpret tool-specific metrics in their
 documented context.
 
-### 7.4 Change Risk Assessment
+#### 7.4 Change Risk Assessment
 
 Evaluate the risk of the proposed change using relevant evidence, including:
 
@@ -374,7 +374,7 @@ Use a qualitative Low / Medium / High assessment when useful, and state the
 reasons. Do not create a numerical risk score unless a defined and calibrated
 method exists.
 
-### 7.5 Strategy Adaptation
+#### 7.5 Strategy Adaptation
 
 Use Code Health and Change Risk as inputs to the execution strategy:
 
@@ -395,7 +395,7 @@ Parallelism must still be determined by task dependencies, file ownership,
 shared state, and interface stability—not by worker count or Code Health
 alone.
 
-### 7.6 Post-Change Comparison
+#### 7.6 Post-Change Comparison
 
 For significant changes, compare the resulting implementation with the
 baseline. Consider:
@@ -413,7 +413,7 @@ Passing tests alone does not establish that maintainability was preserved.
 Likewise, a static-analysis improvement does not establish behavioral
 correctness.
 
-### 7.7 Acceptance Principle
+#### 7.7 Acceptance Principle
 
 Code Health informs acceptance but does not replace the original acceptance
 criteria.
@@ -477,8 +477,10 @@ These global policies govern execution across direct work and delegated work. Sw
 
 ## 12. Swarm Orchestration
 
-`swarm-prompt.md` is the `swarm` tool description. It carries routing and brief
-requirements only, because it is always-on context in every session. The policy
+`swarm-prompt.md` is the `swarm` tool description. It is always-on context in
+every session, so it carries what a session needs before it can act: model
+routing, the lane mechanics of the `swarm` tool, the fields a brief must
+carry, and the coordinator's own read and verification bounds. The policy
 below is the Coordinator's operating manual.
 
 ### 12.1 Mission and Ownership
@@ -489,6 +491,14 @@ final acceptance.
 
 Workers own their assigned objective and deliverable. Worker completion is
 evidence, not overall task completion.
+
+The root owns coordination until the requested outcome is complete or genuinely
+blocked. A worker finishing its chunk is not completion of the overall plan.
+Integrate reports, assign available workers the next actionable work, and keep
+working yourself. Do not leave workers waiting for assignments while ending
+your turn with actionable work remaining. Stop unused workers when done.
+Respect explicit user cancellation, and do not invent work to keep workers
+busy.
 
 ### 12.2 When to Delegate
 
@@ -575,30 +585,17 @@ the native reviewer will not see them. Verify per lane, or integrate first.
 
 ### 12.5 Assignment Brief
 
-A worker sees its brief and the tool descriptions. It does not see your
-context, and it is not guaranteed to have loaded the `swarm-engineering` skill.
-Every brief must therefore be self-contained and name:
-
-- **Label** — the lane name. It keys the todo list and the swarm UI.
-- **Role** — and the skill section that governs it.
-- **Objective** — the specific outcome.
-- **Scope and out of scope** — the files and surfaces it may and may not touch.
-- **Context and known evidence** — the facts it may rely on.
-- **Acceptance criteria** — the observable conditions that prove completion.
-- **Validation** — the commands or checks to run.
-- **Ownership** — the files it owns, so parallel lanes do not collide.
-- **Dependencies** — what must land first.
-- **Report contract** — what it must report back.
-- **Target list** — the finite set of candidates, files, or requirements to check, with its count.
-- **Evidence budget** — the tool-call count that bounds the investigation phase.
-- **Stop condition** — what the lane does when the target list is done or the budget is spent.
+A brief is a contract, not a summary. The coordinator writes it, the worker
+executes it, and nothing the worker does not read can be assumed. Every brief
+must therefore name every field the `swarm` tool description lists, and it
+must say what the worker may not do as plainly as what it may do.
 
 If a material field is missing, say so in the brief rather than assuming it.
 Do not assume the worker has read the skill or inherited your context.
 
-The last three fields are what keep a lane finite. A brief without them
-produces an open-ended lane, and the coordinator discovers that only when the
-lane fails to return.
+The last three fields of that list are what keep a lane finite. A brief
+without them produces an open-ended lane, and the coordinator discovers that
+only when the lane fails to return.
 
 ### 12.6 Investigation Management
 
@@ -623,7 +620,8 @@ running, is a lane the coordinator has to act on.
 
 Never poll with sleeps. Use `swarm await_members` to wait for workers; it runs
 in the background and you are notified when a worker finishes. Do other work in
-the meantime.
+the meantime. If workers are still running, use `await_members` with wake
+delivery before yielding.
 
 Jcode also detects a stalled swarm on its own via `[agents]
 swarm_stall_after_secs` and `[agents] swarm_stall_nudge`.
@@ -641,29 +639,17 @@ when a focused next action is available.
 
 ### 12.8 Enforcing a Lane's Bound
 
-A brief is a request. A worker that has already met its completion criteria
-and keeps searching will not stop because the brief asked it to, so the
-coordinator enforces the bound. The escalation order is fixed.
+A brief is a request, not a stop. A worker that has already met its
+completion criteria will not halt because the brief asked it to, so the
+coordinator enforces the bound. The escalation order is fixed and is described
+in the `swarm` tool description: check the lane with `swarm list`, message it
+to report what it has and mark the rest unverified, do not repeat a DM that
+was ignored, stop the lane with `swarm stop` without `force` for a session the
+coordinator spawned, and record in the todo row which targets were completed,
+which were left unverified, and that the remainder is not covered.
 
-1. **Check the lane.** `swarm list` shows each member's status, its last
-   activity age, and whether it is stalled. A `running` member with a fresh
-   activity age is working. A member whose activity age keeps growing while
-   its target list is already covered is expanding scope.
-2. **Message the lane.** Ask it to report what it has and mark the rest
-   unverified, and say it must not open new targets. A DM is cheap and often
-   enough on its own.
-3. **Do not repeat the DM.** A worker that ignored a request to wrap up has
-   shown it will not honour a soft instruction. Repeating it buys nothing.
-4. **Stop the lane.** `swarm stop` terminates the worker. The coordinator owns
-   its own spawned workers, so this works without `force`. `force` is for a
-   session this coordinator did not spawn, and it refuses otherwise by
-   design. `swarm stop` persists the session as closed and the transcript on
-   disk keeps what the worker had already written, so stopping is the last
-   step rather than the first.
-5. **Record the loss.** A stopped lane is a partial result. Write into the
-   todo row which targets were completed, which were left unverified, and
-   that the remainder is not covered. A stopped lane is never reported as a
-   finished one.
+A stopped lane is a partial result, and the coordinator's own report has to
+say so.
 
 ### 12.9 Integration and Final Acceptance
 

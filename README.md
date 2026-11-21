@@ -77,14 +77,31 @@ description, and it costs 1,704 tokens wherever it is carried, so the net
 saving of the combined change against the old baseline is smaller: the old
 baseline down to 17,867, a saving of 573 tokens per request.
 
-In bytes the move is larger than the net suggests: the tool description shrank
-from 17,082 to 4,084 bytes and the overlay grew from 12,143 to 20,138. The
-net gain is the small part. The rest of the value is structural: the overlay
-is a system-prompt layer that can be edited on its own, and the two files
-have different reload behaviour, described below.
+In bytes the move was larger than the net suggested. The tool description
+shrank from 17,082 bytes before the split to 4,084 bytes at the revision this
+table was measured (commit `58a2699`, 2026-11-08), and the overlay grew from
+12,143 bytes before the split to 20,134 at that same revision. The net gain
+is the small part. The rest of the value is structural: the overlay is a
+system-prompt layer that can be edited on its own, and the two files have
+different reload behaviour, described below.
 
-Check those byte counts against the files themselves, `wc -c`, before trusting
-them. They describe one revision of this repository and will drift.
+Those byte counts describe one revision and will drift. The current sizes are
+not the measured ones above, because the tiers have grown since: the bounded
+investigation, read-phase and verification-phase safeguards were added after
+the measurement. Check the live sizes against the files themselves, `wc -c`,
+before trusting any figure in this file.
+
+The swarm prompt's size is the one that matters for cost, because it is sent on
+every request in every session. It is held under a ceiling, and the ceiling is
+asserted by the test suite rather than left to review.
+
+The structure of the tiers is asserted the same way. Section 32 of
+`scripts/test` checks that the heading hierarchy of the overlay and the Skill
+is well formed, that every numbered heading sits at the depth its number
+implies, and that the section references between the files still resolve to
+headings that exist. Section 8d of `scripts/doc-check` checks that this
+document still describes those properties, so the two cannot drift apart
+silently.
 
 ### The provider's input count varies for the same request shape
 
@@ -708,12 +725,6 @@ Section 31 does the same for the verification phase. It asserts that all three
 prompt files carry that rule, that the developer exit criteria, the tester
 exit criteria and the coordinator's own bullet point at it, and that the three
 of them quote the same post-write tail.
-
-It also checks the read-phase safeguard. Section 30 asserts that all three
-prompt files carry the rule, that they quote the same measured numbers, and
-that the 60-call budget is the only one they quote. The legacy swarm
-safeguard is asserted still to be present, because the two are separate
-mechanisms and this one does not replace it.
 
 The assertions against the prompt files match across line breaks rather than
 line by line. A Markdown file is hard-wrapped prose, so a sentence's words

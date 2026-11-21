@@ -225,14 +225,14 @@ Respect existing project structure, interfaces, conventions, and user changes.
 
 Avoid unrelated modifications. Do not overwrite or revert changes outside the assignment.
 
-## 2.7 Code Health and Change Risk Assessment
+### 2.7 Code Health and Change Risk Assessment
 
 This procedure provides reusable engineering methods for assessing the
 maintainability of relevant code and the risk of a proposed change. It
 supports the Coordinator's policy in `prompt-overlay.md`; it does not replace
 the assignment's requirements or authorize unrelated refactoring.
 
-### 2.7.1 Keep the Assessments Separate
+#### 2.7.1 Keep the Assessments Separate
 
 - **Code Health** describes the maintainability and structural condition of
   the relevant existing code.
@@ -243,7 +243,7 @@ Do not infer one directly from the other. A healthy, central interface may
 be high-risk to modify. An unhealthy but isolated module may be relatively
 low-risk for a narrow change.
 
-### 2.7.2 Scope the Assessment
+#### 2.7.2 Scope the Assessment
 
 Assess the target files and only those callers, consumers, tests, and
 dependencies that could materially affect the assigned objective.
@@ -260,7 +260,7 @@ Consider these dimensions when relevant:
 Do not inspect the entire repository merely to complete this checklist. Mark
 irrelevant dimensions as not applicable and unavailable evidence as unknown.
 
-### 2.7.3 Collect Evidence
+#### 2.7.3 Collect Evidence
 
 Prefer evidence available in the repository and its established toolchain:
 
@@ -279,7 +279,7 @@ A CodeScene CodeHealth score may be reported if the project actually uses
 CodeScene. Its thresholds are tool- and context-specific; do not treat CH = 9
 as a universal rule.
 
-### 2.7.4 Assess Change Risk
+#### 2.7.4 Assess Change Risk
 
 Consider the specific change's:
 
@@ -293,7 +293,7 @@ Consider the specific change's:
 Use Low, Medium, or High only when that classification helps the decision.
 State the evidence and reasons. Do not invent a numerical risk formula.
 
-### 2.7.5 Adapt the Work
+#### 2.7.5 Adapt the Work
 
 The assessment may inform:
 
@@ -307,7 +307,7 @@ High risk does not automatically prohibit a change. It calls for proportionate
 guardrails. Do not create a separate assessment worker unless the assessment
 itself is a bounded deliverable that materially unblocks the task.
 
-### 2.7.6 Compare Before and After
+#### 2.7.6 Compare Before and After
 
 For significant changes, compare relevant evidence with the baseline:
 
@@ -321,7 +321,7 @@ Report improvements, regressions, and unknowns separately. A successful test
 run does not prove maintainability improved; a cleaner static-analysis report
 does not prove behavior was preserved.
 
-### 2.7.7 Role Responsibilities
+#### 2.7.7 Role Responsibilities
 
 - **Coordinator:** Owns repository- and task-level assessment, decides how
   findings affect delegation and execution, and makes the final integrated

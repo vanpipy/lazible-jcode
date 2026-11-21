@@ -47,6 +47,38 @@ assert_contains_wrapped() {
     fi
 }
 
+# assert_heading <label> <heading-text> <file>
+#
+# Asserts that the file contains a Markdown heading with exactly this text, at
+# exactly this hash level.
+#
+# A plain substring check cannot do this. "### 2.2.1 Evidence Thresholds" is a
+# substring of "#### 2.2.1 Evidence Thresholds", so a check written that way
+# passes for a heading that was demoted one level. That is not a theoretical
+# risk: the heading levels in these files were normalized once, and the old
+# assertions kept passing through the change because they were checking the
+# text, not the structure.
+#
+# So this matches the heading line exactly, hash count included. The hash
+# count is the point: it is what distinguishes "### 2.2.1" from "#### 2.2.1".
+assert_heading() {
+    local label="$1" heading="$2" file="$3"
+    local depth hashes
+    depth="$(printf '%s' "$heading" | sed -n 's/^\(#*\).*/\1/p')"
+    hashes="$(printf '%s' "$heading" | sed -n 's/^#* *//p')"
+    if [[ -z "$depth" || -z "$hashes" ]]; then
+        bad "$label" "the heading argument is not a heading: $heading"
+        return
+    fi
+    if grep -qE "^${depth} ${hashes}$" "$file"; then
+        ok "$label"
+    else
+        bad "$label" \
+            "expected a heading line exactly matching: $heading" \
+            "found: $(grep -nE '^#+ ' "$file" | grep -F "$hashes" | head -3 | tr '\n' ' ')"
+    fi
+}
+
 # The fingerprint of a tree: every path with its type and content.
 #
 # Content is hashed, not just the size, so a change that keeps the same

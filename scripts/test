@@ -52,6 +52,9 @@
 #   31. the verification-phase safeguard is present in all three prompt
 #       files, the role exit criteria point at it, and the three of them
 #       quote the same post-write tail
+#   32. the prompt tiers keep their structure: the swarm prompt is within
+#       its size ceiling, every numbered heading sits at the depth its
+#       number says, and every section reference resolves
 #
 # The numbered section banners in this file use the same numbering.
 #
@@ -2019,14 +2022,19 @@ assert_contains_wrapped "the skill cites the root-session share of sufficiency d
 
 # The legacy swarm safeguard must survive. It is a separate mechanism and
 # this change does not replace it.
-assert_contains "the overlay still holds the swarm investigation thresholds" \
-    "### 2.2.1 Evidence Thresholds" "$(cat "$OVERLAY")"
+#
+# These are heading assertions, so they use assert_heading and not
+# assert_contains. "### 2.2.1 Evidence Thresholds" is a substring of
+# "#### 2.2.1 Evidence Thresholds", so a substring check would pass for a
+# heading that had been demoted a level. The hash count is the claim.
+assert_heading "the overlay holds the swarm investigation thresholds" \
+    "#### 2.2.1 Evidence Thresholds" "$OVERLAY"
 
-assert_contains "the overlay still holds the swarm investigation budget" \
-    "### 2.2.2 Tool-Call Budgets" "$(cat "$OVERLAY")"
+assert_heading "the overlay holds the swarm investigation budget" \
+    "#### 2.2.2 Tool-Call Budgets" "$OVERLAY"
 
-assert_contains "the overlay still holds the lane escalation order" \
-    "### 12.8 Enforcing a Lane's Bound" "$(cat "$OVERLAY")"
+assert_heading "the overlay holds the lane escalation order" \
+    "### 12.8 Enforcing a Lane's Bound" "$OVERLAY"
 
 # The read-phase budget is one number, and it is stated in several places in
 # the same file. A cross-reference that quotes a different number would send
@@ -2140,11 +2148,256 @@ done
 
 # The sections have to survive a renumbering, because the README and the
 # Skill point at them by number.
-assert_contains "the overlay holds the verification-phase section" \
-    "### 2.2.5 Bounding the Verification Phase" "$(cat "$OVERLAY")"
+#
+# Heading assertions again, so the hash count is checked too. A demoted
+# heading would otherwise pass unnoticed.
+assert_heading "the overlay holds the verification-phase section" \
+    "#### 2.2.5 Bounding the Verification Phase" "$OVERLAY"
 
-assert_contains "the skill holds the verification-phase section" \
-    "#### 2.3.5 Bounding the Verification Phase" "$(cat "$SKILLMD")"
+assert_heading "the skill holds the verification-phase section" \
+    "#### 2.3.5 Bounding the Verification Phase" "$SKILLMD"
+
+# ---------------------------------------------------------------------------
+# 32. the prompt tiers keep their structure
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the prompt tiers keep their structure ==="
+
+# The swarm prompt is the one tier that is sent on every request in every
+# session, including spawned workers. It is the file whose size costs the
+# most, so it is the one that gets a ceiling rather than a review.
+#
+# The ceiling is deliberately generous. It is not there to say "keep it small"
+# in the abstract. It is there so that a large addition cannot land by
+# accident, and so that a reviewer can see the size change in the diff
+# without running wc first.
+#
+# The overlay and the Skill are not capped. They are loaded once per session
+# and on demand respectively, and capping them would trade a real safeguard
+# for a token saving that is not the bottleneck.
+SWARM_PROMPT_MAX_BYTES=12000
+
+swarm_bytes="$(wc -c < "$SWARMPROMPT" | tr -d ' ')"
+if [[ "$swarm_bytes" -le "$SWARM_PROMPT_MAX_BYTES" ]]; then
+    ok "the swarm prompt is within its size ceiling"
+else
+    bad "the swarm prompt is within its size ceiling" \
+        "the file is $swarm_bytes bytes, the ceiling is $SWARM_PROMPT_MAX_BYTES" \
+        "the swarm prompt is sent on every request in every session"
+fi
+
+# The ceiling has to be a real number. A ceiling of zero, or of a file that
+# does not exist, would fail every file, and a check that always fails is
+# not a check.
+if [[ "$SWARM_PROMPT_MAX_BYTES" -gt 0 ]]; then
+    ok "the swarm prompt size ceiling is a positive number"
+else
+    bad "the swarm prompt size ceiling is a positive number" \
+        "the ceiling is $SWARM_PROMPT_MAX_BYTES"
+fi
+
+# The heading hierarchy is the part of these files that no prose check can
+# reach. The sections are numbered, the files cross-reference each other by
+# number, and a demoted or promoted heading breaks both the outline and the
+# references that point at it.
+#
+# The rule is derived from the numbering rather than from a list of expected
+# headings, so a new section is checked the same way as an old one. A heading
+# sits one level below its nearest numbering ancestor:
+#
+#   - "2" is a "##", a top-level section.
+#   - "2.2" is a "###", one below "2".
+#   - "2.2.1" is a "####", one below "2.2".
+#
+# The numbering carries one wrinkle. A "7.0" heading groups the "7.1" through
+# "7.7" headings under it, the same way "2.2" groups "2.2.1" through
+# "2.2.5". So a two-part number looks for its "A.0" group first and falls
+# back to "A", and a deeper number looks for its own prefix first.
+#
+# A heading whose text is not a number is left alone. The Skill has "Step 1"
+# headings and a title, and those are not part of this numbering scheme.
+#
+# The swarm prompt has no headings at all. It is a flat tool description, and
+# that is deliberate, so the hierarchy check does not apply to it. A file with
+# no numbered headings would satisfy the rule vacuously, so it is reported
+# as having nothing to check rather than as having passed.
+for f in "$OVERLAY" "$SWARMPROMPT" "$SKILLMD"; do
+    base="$(basename "$f")"
+    unset levels
+    declare -A levels=()
+    order=()
+    while IFS= read -r line; do
+        hashes="${line%% *}"
+        rest="${line#"$hashes"}"
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+        number="${rest%% *}"
+        number="${number%.}"
+        case "$number" in
+            # Not a numbered heading. "Step 1" and the file titles are not
+            # part of the scheme.
+            ""|*[!0-9.]*) continue ;;
+        esac
+        levels["$number"]="${#hashes}"
+        order+=("$number")
+    done < <(grep -E '^#+ ' "$f")
+
+    hierarchy_problems=""
+    checked=0
+    for number in ${order[@]+"${order[@]}"}; do
+        checked=$(( checked + 1 ))
+        actual="${levels[$number]}"
+        if [[ "$number" != *.* ]]; then
+            if [[ "$actual" -ne 2 ]]; then
+                hierarchy_problems="$hierarchy_problems $number wants 2 hashes, has $actual;"
+            fi
+            continue
+        fi
+        parent="${number%.*}"
+        last="${number##*.}"
+        if [[ "$parent" == *.* ]]; then
+            # A three-part number hangs off its own prefix.
+            cands=("$parent")
+            [[ "$last" != "0" ]] && cands+=("$parent.0")
+        else
+            # A two-part number hangs off its "A.0" group if there is one.
+            cands=()
+            [[ "$last" != "0" ]] && cands+=("$parent.0")
+            cands+=("$parent")
+        fi
+        shorter="$parent"
+        while [[ "$shorter" == *.* ]]; do
+            shorter="${shorter%.*}"
+            cands+=("$shorter")
+        done
+        expected=""
+        for c in "${cands[@]}"; do
+            if [[ -n "${levels[$c]+x}" ]]; then
+                expected=$(( levels[$c] + 1 ))
+                break
+            fi
+        done
+        if [[ -z "$expected" ]]; then
+            hierarchy_problems="$hierarchy_problems $number has no numbering ancestor;"
+        elif [[ "$actual" -ne "$expected" ]]; then
+            hierarchy_problems="$hierarchy_problems $number wants $expected hashes, has $actual;"
+        fi
+    done
+
+    if [[ "$checked" -eq 0 ]]; then
+        ok "the heading hierarchy in $base has no numbered headings to check"
+    elif [[ -z "$hierarchy_problems" ]]; then
+        ok "the heading hierarchy in $base matches the depth of its numbers"
+    else
+        bad "the heading hierarchy in $base matches the depth of its numbers" \
+            "$hierarchy_problems"
+    fi
+done
+
+# The specific headings that were normalized. These are asserted one by one
+# because the hierarchy rule above only checks the depth, not the text, and
+# a file could satisfy the depth rule with the wrong headings in it.
+assert_heading "the overlay nests its evidence thresholds one level deeper" \
+    "#### 2.2.1 Evidence Thresholds" "$OVERLAY"
+
+assert_heading "the overlay nests its tool-call budgets one level deeper" \
+    "#### 2.2.2 Tool-Call Budgets" "$OVERLAY"
+
+assert_heading "the overlay nests its sufficiency declaration one level deeper" \
+    "#### 2.2.3 A Sufficiency Declaration Binds the Next Action" "$OVERLAY"
+
+assert_heading "the overlay nests its read-phase bound one level deeper" \
+    "#### 2.2.4 Bounding the Read Phase of a Direct Task" "$OVERLAY"
+
+assert_heading "the overlay nests its verification-phase bound one level deeper" \
+    "#### 2.2.5 Bounding the Verification Phase" "$OVERLAY"
+
+assert_heading "the overlay nests its code-health policy under section 7" \
+    "### 7.0 Code Health and Change Risk Policy" "$OVERLAY"
+
+assert_heading "the overlay nests its code-health assessments one level deeper" \
+    "#### 7.1 Two Distinct Assessments" "$OVERLAY"
+
+assert_heading "the overlay nests its acceptance principle one level deeper" \
+    "#### 7.7 Acceptance Principle" "$OVERLAY"
+
+assert_heading "the skill nests its code-health policy one level deeper" \
+    "### 2.7 Code Health and Change Risk Assessment" "$SKILLMD"
+
+assert_heading "the skill nests its code-health assessments one level deeper" \
+    "#### 2.7.1 Keep the Assessments Separate" "$SKILLMD"
+
+assert_heading "the skill nests its role responsibilities one level deeper" \
+    "#### 2.7.7 Role Responsibilities" "$SKILLMD"
+
+# The cross-references have to resolve. A reference to a section that does
+# not exist is a broken pointer, and it is invisible to every other check
+# here because the prose around it still reads correctly.
+#
+# "section 7A" is the case that this catches. The overlay's code-health
+# policy was numbered 7.0, and the reference to it was written as 7A, a
+# number that no heading in the file has ever used. A reader following that
+# reference finds nothing.
+assert_not_contains "the overlay does not reference a section 7A" \
+    "section 7A" "$(cat "$OVERLAY")"
+
+# Every "section N" reference in the overlay has to name a heading that is
+# actually in the overlay.
+#
+# The reference text is matched case-insensitively on the leading "S", because
+# the files write both "section 2.2.3" and "Section 2.2.3" at the start of a
+# sentence.
+overlay_headings="$(grep -E '^#+ ' "$OVERLAY" | sed 's/^#*[[:space:]]*//' | awk '{print $1}' | sed 's/\.$//' | sort -u)"
+missing_refs=""
+while IFS= read -r ref; do
+    number="${ref#*[Ss]ection }"
+    number="${number%.}"
+    case "$number" in
+        # A reference to a numbered heading in the Skill, not the overlay.
+        2.3.*) continue ;;
+    esac
+    if ! printf '%s\n' "$overlay_headings" | grep -qxF "$number"; then
+        missing_refs="$missing_refs $number"
+    fi
+done < <(grep -oE '[Ss]ection [0-9]+(\.[0-9]+)*' "$OVERLAY" | sort -u)
+
+if [[ -z "$missing_refs" ]]; then
+    ok "every section reference in the overlay resolves to a heading in it"
+else
+    bad "every section reference in the overlay resolves to a heading in it" \
+        "unresolved:$missing_refs"
+fi
+
+# The Skill points at its own sections, and at section 13 for the handover
+# contract. Those references have to resolve inside the Skill.
+skill_headings="$(grep -E '^#+ ' "$SKILLMD" | sed 's/^#*[[:space:]]*//' | awk '{print $1}' | sed 's/\.$//' | sort -u)"
+missing_skill_refs=""
+while IFS= read -r ref; do
+    number="${ref#*[Ss]ection }"
+    number="${number%.}"
+    case "$number" in
+        # A reference to the overlay's numbering, not the Skill's.
+        2.2.*) continue ;;
+    esac
+    if ! printf '%s\n' "$skill_headings" | grep -qxF "$number"; then
+        missing_skill_refs="$missing_skill_refs $number"
+    fi
+done < <(grep -oE '[Ss]ection [0-9]+(\.[0-9]+)*' "$SKILLMD" | sort -u)
+
+if [[ -z "$missing_skill_refs" ]]; then
+    ok "every section reference in the skill resolves to a heading in it"
+else
+    bad "every section reference in the skill resolves to a heading in it" \
+        "unresolved:$missing_skill_refs"
+fi
+
+# The Skill's own "See section 13" pointer is a named requirement, so it is
+# asserted directly rather than only through the resolver above.
+assert_contains "the skill keeps its section 13 handover reference" \
+    "See section 13." "$(cat "$SKILLMD")"
+
+assert_heading "the skill's section 13 is the handover contract" \
+    "## 13. Requirement Handover" "$SKILLMD"
 
 # ---------------------------------------------------------------------------
 
