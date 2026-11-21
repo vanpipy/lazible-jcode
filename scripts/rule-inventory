@@ -139,6 +139,46 @@ def build_corpus(norms: set[str]) -> dict[str, int]:
     return corpus
 
 
+# The words that carry no claim. A rule's identity is in its content words,
+# and these are the ones that are left when the meaning is removed.
+STOP = {
+    "a", "an", "the", "and", "or", "but", "if", "then", "so", "than",
+    "that", "this", "these", "those", "it", "its", "is", "are", "was",
+    "were", "be", "been", "being", "to", "of", "in", "on", "at", "by",
+    "for", "with", "as", "from", "not", "no", "do", "does", "did",
+    "you", "your", "when", "while", "there", "here", "one", "any", "all",
+    "each", "every", "only", "also", "same", "own", "up", "out", "into",
+    "over", "very", "just", "have", "has", "had", "may", "might", "must",
+    "s", "t", "what", "which", "who", "how", "why", "not", "no",
+}
+
+
+def content_words(norm: str) -> list[str]:
+    """The words of a rule that carry its claim."""
+    return [w for w in norm.split() if w not in STOP]
+
+
+def coverage(norm: str, after_terms: set[str]) -> float:
+    """How much of a rule's content survived the rewrite.
+
+    A rule that was dropped and replaced by something else keeps none of
+    its content words. A rule that was reworded keeps most of them, because
+    the claim's nouns and verbs survive and the connective around them
+    does not.
+
+    The measure is the share of the rule's content words that still appear
+    anywhere in the rewritten file. It is deliberately not a similarity
+    score between two sentences. A compression pass merges sentences and
+    splits them, so a claim's words can end up spread across two lines,
+    and a per-sentence comparison reports it as lost when it is there.
+    """
+    words = content_words(norm)
+    if not words:
+        return 1.0
+    survived = sum(1 for w in words if w in after_terms)
+    return survived / len(words)
+
+
 def distinctive_terms(rule: str, corpus: dict[str, int]) -> list[str]:
     """The terms of a rule that carry its meaning.
 
@@ -167,18 +207,20 @@ def match_kept(
     before_rows: list[tuple[str, str, str]],
     after_rows: list[tuple[str, str, str]],
     after_text: str,
-) -> tuple[list[str], list[tuple[str, str]], list[str]]:
+) -> tuple[list[str], list[tuple[str, str]], list[str], list[tuple[str, str, str]]]:
     """Pair the before and after rules that are the same rule.
 
-    Returns (kept, gone, added). A before rule is kept when the rewritten
-    file still carries its distinctive terms. A before rule whose terms are
-    absent is gone. An after rule that matched nothing is added.
+    Returns (kept, gone, at_risk, added).
 
-    The test is "does the rewritten file still use this rule's rare words",
-    not "is there one sentence that contains all of them". A compression
-    pass merges sentences and splits them, so the words that carry a claim
-    can end up spread across two sentences. Requiring one sentence to hold
-    all of them reports a rule as gone when it is still there.
+    A before rule is kept when its content words survived. A before rule
+    whose content words are gone is gone. An after rule that matched nothing
+    is added. At-risk is the middle ground: the rule kept most of its words
+    but lost the one that made it specific, so a reviewer has to look.
+
+    The test is coverage over the whole rewritten file, not a similarity
+    score between two sentences. A compression pass merges sentences and
+    splits them, so a claim's words can end up spread across two lines, and
+    a per-sentence comparison reports it as lost when it is there.
 
     The search runs over the whole rewritten file, not just its rules. A
     claim often survives as a plain sentence that no longer reads as an
@@ -186,14 +228,6 @@ def match_kept(
     not pad the report to look thorough" can become "It does not pad the
     report", which is a description, and the inventory would not have
     collected it as a rule at all.
-
-    The terms that carry a claim are the rare ones. "must" and "the" appear
-    in half the rules and identify nothing. "diff", "handover" and
-    "sufficiency" each appear in a handful, and they are the words that say
-    what the rule is about.
-
-    A rule needs most of its terms, not all of them, because a rewrite may
-    replace a term with a synonym that the corpus did not have.
     """
     before_norms = {n for _, n, _ in before_rows}
     corpus = build_corpus(before_norms)
@@ -202,29 +236,35 @@ def match_kept(
 
     kept: list[str] = []
     gone: list[tuple[str, str]] = []
+    at_risk: list[tuple[str, str, str]] = []
     for kind, norm, raw in before_rows:
-        terms = distinctive_terms(norm, corpus)
-        if not terms:
+        words = content_words(norm)
+        if not words:
             continue
-        present = [t for t in terms if t in after_terms]
-        # Most of the distinctive terms have to survive. For a rule with one
-        # distinctive term, that term has to survive.
-        needed = 1 if len(terms) == 1 else (len(terms) + 1) // 2
-        if len(present) >= needed:
-            kept.append(raw)
+        share = coverage(norm, after_terms)
+        if share < 0.5:
+            gone.append((raw, " ".join(words)))
+            continue
+        # The rule kept most of its words. The question is whether it kept
+        # the word that made it specific. A rule about "generating large
+        # numbers of redundant tests" that lost "generating" may still be
+        # about large numbers of redundant tests, or it may not.
+        rarest = sorted(words, key=lambda w: (corpus.get(w, 0), w))[0]
+        if rarest not in after_terms:
+            at_risk.append((raw, rarest, f"{share:.0%}"))
         else:
-            gone.append((raw, ", ".join(terms)))
+            kept.append(raw)
 
     claimed_after: set[str] = set()
     for kind, norm, raw in after_rows:
         for bnorm in before_norms:
-            terms = distinctive_terms(bnorm, corpus)
-            if terms and set(terms) & set(norm.split()):
+            words = content_words(bnorm)
+            if words and set(words) & set(norm.split()):
                 claimed_after.add(norm)
                 break
 
     added = [raw for _, norm, raw in after_rows if norm not in claimed_after]
-    return kept, gone, added
+    return kept, gone, at_risk, added
 
 
 def read_before(path: str, ref: str) -> str:
@@ -276,18 +316,23 @@ def main(argv: list[str]) -> int:
     # A rule that is gone. The before set is paired against the after set by
     # content overlap, so a reworded rule counts as kept, and only a rule
     # whose content really did not survive is reported as gone.
-    kept, gone, added = match_kept(before, after, after_text)
+    kept, gone, at_risk, added = match_kept(before, after, after_text)
 
     print(f"# {args.file}: {len(before)} rules before, {len(after)} after")
     print(
-        f"# {len(kept)} kept, {len(gone)} gone, {len(added)} added"
-        f" (distinctive-term matching)"
+        f"# {len(kept)} kept, {len(gone)} gone, {len(at_risk)} at risk,"
+        f" {len(added)} added (content-word coverage)"
     )
     print()
     print("## gone")
-    for raw, terms in gone:
+    for raw, words in gone:
         print(f"  - {raw}")
-        print(f"      (distinctive terms: {terms})")
+        print(f"      (content words: {words})")
+    print()
+    print("## at risk")
+    for raw, word, share in at_risk:
+        print(f"  - {raw}")
+        print(f"      ({share} of its content words survived, lost: {word})")
     print()
     print("## added")
     for raw in sorted(added):

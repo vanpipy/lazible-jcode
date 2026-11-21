@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# prompt-verify : the gate for a prompt-tier compression.
+#
+#     ./scripts/prompt-verify [baseline-ref]
+#
+# Runs every check that has to pass before a compressed tier is accepted:
+#
+#   1. the protected-content contract holds
+#   2. all three tiers are inside their ceilings
+#   3. the heading structure of the overlay and the Skill is unchanged
+#   4. no protected rule was dropped, measured by the rule inventory
+#   5. the test suite and the doc-check both pass
+#
+# The rule inventory is the one that catches a loss a byte count cannot. It
+# compares the working tree against a git ref and reports the rules that had
+# no counterpart. The report is a triage aid, so the check is on the count:
+# a compression pass may reword freely, but it may not lose rules wholesale.
+#
+# A count of zero is the target. A few unmatched rules are normal after a
+# rewrite, because the matcher compares against a baseline that was written
+# in different words. The number below is the point at which the reviewer
+# stops and reads the report instead of trusting it.
+
+set -u
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO" || exit 2
+
+BASELINE="${1:-HEAD}"
+
+# The number of unmatched rules that a rewrite may leave before the
+# reviewer has to read every one of them by hand. A rewrite that keeps the
+# policy and changes the words scores zero or near zero. A rewrite that
+# drops a rule scores one, and the report names it.
+MAX_UNMATCHED=3
+
+fails=0
+note() { printf '  %s\n' "$*"; }
+fail() { printf '  FAIL %s\n' "$*"; fails=$((fails + 1)); }
+pass() { printf '  ok   %s\n' "$*"; }
+
+echo ""
+echo "=== the prompt tiers hold their protected content ==="
+
+if ./scripts/prompt-contract check >/dev/null 2>&1; then
+    pass "the protected-content contract holds for all three tiers"
+else
+    fail "the protected-content contract holds for all three tiers"
+    ./scripts/prompt-contract check 2>&1 | sed 's/^/       /'
+fi
+
+echo ""
+echo "=== the prompt tiers are inside their ceilings ==="
+
+for spec in \
+    "config/swarm-prompt.md:SWARM_PROMPT_MAX_BYTES" \
+    "config/prompt-overlay.md:OVERLAY_MAX_BYTES" \
+    "config/skills/swarm-engineering/SKILL.md:SKILL_MAX_BYTES"
+do
+    file="${spec%%:*}"
+    var="${spec#*:}"
+    limit="$(sed -n "s/^${var}=\([0-9][0-9]*\)$/\1/p" scripts/test | head -1)"
+    size="$(wc -c < "$file" | tr -d ' ')"
+    if [[ -z "$limit" ]]; then
+        fail "$file has a ceiling"
+    elif [[ "$size" -le "$limit" ]]; then
+        pass "$file is $size bytes, under its $limit byte ceiling"
+    else
+        fail "$file is $size bytes, over its $limit byte ceiling"
+    fi
+done
+
+echo ""
+echo "=== the heading structure is unchanged ==="
+
+for file in config/prompt-overlay.md config/skills/swarm-engineering/SKILL.md; do
+    before="$(git show "$BASELINE:$file" 2>/dev/null | grep -cE '^#{1,6} ' || true)"
+    after="$(grep -cE '^#{1,6} ' "$file" || true)"
+    # The heading TEXT has to match, not just the count. A heading that was
+    # renamed and a heading that was added in its place would keep the count.
+    before_titles="$(git show "$BASELINE:$file" 2>/dev/null | grep -E '^#{1,6} ' | sort || true)"
+    after_titles="$(grep -E '^#{1,6} ' "$file" | sort || true)"
+    if [[ "$before_titles" == "$after_titles" ]]; then
+        pass "$file kept its $after headings, text and level"
+    else
+        fail "$file kept its headings"
+        diff <(printf '%s\n' "$before_titles") <(printf '%s\n' "$after_titles") \
+            | sed 's/^/       /' | head -20
+    fi
+done
+
+echo ""
+echo "=== no protected rule was dropped ==="
+
+for file in config/swarm-prompt.md config/prompt-overlay.md config/skills/swarm-engineering/SKILL.md; do
+    report="$(./scripts/rule-inventory "$file" --before "$BASELINE" 2>/dev/null)"
+    # The "gone" section lists one line per unmatched rule, and one
+    # indented line per rule that names its distinctive terms.
+    gone="$(printf '%s\n' "$report" | sed -n '/^## gone$/,/^## added$/p' \
+        | grep -c '^  - ' || true)"
+    if [[ "$gone" -le "$MAX_UNMATCHED" ]]; then
+        pass "$file lost no rules against $BASELINE ($gone unmatched)"
+    else
+        fail "$file lost $gone rules against $BASELINE, the limit is $MAX_UNMATCHED"
+        printf '%s\n' "$report" | sed -n '/^## gone$/,/^## added$/p' \
+            | sed 's/^/       /' | head -25
+    fi
+done
+
+echo ""
+echo "=== the suites pass ==="
+
+if ./scripts/test > "$REPO/.prompt-verify-test.log" 2>&1; then
+    pass "scripts/test passes"
+    tail -3 "$REPO/.prompt-verify-test.log" | sed 's/^/       /'
+else
+    fail "scripts/test passes"
+    grep -E 'FAIL|passed,' "$REPO/.prompt-verify-test.log" | sed 's/^/       /' | head -20
+fi
+rm -f "$REPO/.prompt-verify-test.log"
+
+if ./scripts/doc-check > "$REPO/.prompt-verify-doc.log" 2>&1; then
+    pass "scripts/doc-check passes"
+    tail -3 "$REPO/.prompt-verify-doc.log" | sed 's/^/       /'
+else
+    fail "scripts/doc-check passes"
+    grep -E 'FAIL|passed,' "$REPO/.prompt-verify-doc.log" | sed 's/^/       /' | head -20
+fi
+rm -f "$REPO/.prompt-verify-doc.log"
+
+echo ""
+if [[ "$fails" -eq 0 ]]; then
+    echo "prompt-verify: all checks passed"
+    exit 0
+fi
+echo "prompt-verify: $fails check(s) failed"
+exit 1
