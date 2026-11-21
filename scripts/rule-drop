@@ -66,7 +66,13 @@ SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 def units(text: str) -> list[str]:
-    """The text as unwrapped blocks: one per bullet or paragraph."""
+    """The text as unwrapped blocks: one per bullet or paragraph.
+
+    A bullet's continuation lines belong to the bullet. The file wraps prose,
+    so a bullet that runs to three physical lines is one claim, not three.
+    Joining the continuation lines into their bullet is what keeps a rewrite
+    that only rewraps a claim from looking like a dropped rule.
+    """
     blocks: list[str] = []
     for block in re.split(r"\n\s*\n", text):
         lines = [
@@ -77,12 +83,17 @@ def units(text: str) -> list[str]:
         if not lines:
             continue
         current: list[str] = []
+        bullet_open = False
         for line in lines:
             if BULLET.match(line):
                 if current:
                     blocks.append(" ".join(current))
                     current = []
-                blocks.append(line)
+                current = [line]
+                bullet_open = True
+            elif bullet_open:
+                # A continuation line of the bullet above it.
+                current.append(line)
             else:
                 current.append(line)
         if current:
