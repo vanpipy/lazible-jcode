@@ -103,6 +103,11 @@ CROSS_FILE_PREFIXES = {
     "swarm-prompt": (),
 }
 
+# The longest heading title in the three prompt files is a short noun phrase.
+# A heading that runs longer than this holds body text that was merged into
+# it, which is a defect the other checks cannot see.
+MAX_HEADING_WORDS = 12
+
 
 # ---------------------------------------------------------------------------
 # extraction
@@ -360,6 +365,41 @@ def check_references(name: str, text: str) -> list[str]:
     return failures
 
 
+def check_heading_shape(name: str, text: str) -> list[str]:
+    """A heading must be a heading, not a paragraph that starts with one.
+
+    A heading is "## 2.2 Title": a number, then a short title, then the end
+    of the line. A compression pass that merges the first sentence of the
+    section into the heading line produces "## 2.2 Title The first sentence
+    of the section.", which still reads as a heading to a skim, still passes
+    every substring check, and still passes the depth rule, because the
+    number and the hash count are untouched.
+
+    The number of words in the title is the cheap signal. Every heading in
+    these three files is a short noun phrase, and the longest one is well
+    under the limit. A heading that runs to a sentence has body text in it.
+    """
+    failures: list[str] = []
+    for line in text.splitlines():
+        m = re.match(r"^(#+)\s+(.+?)\s*$", line)
+        if not m:
+            continue
+        hashes, title = m.group(1), m.group(2)
+        words = title.split()
+        if len(words) > MAX_HEADING_WORDS:
+            failures.append(
+                f"heading has {len(words)} words, the limit is "
+                f"{MAX_HEADING_WORDS}: {title[:80]}"
+            )
+        # A heading that ends in a sentence mark is a sentence, not a title.
+        if title.endswith((".", ":", ";", ",")):
+            failures.append(f"heading ends in punctuation: {title[:80]}")
+        # A heading that is only a number has no title.
+        if not re.search(r"[A-Za-z]", title):
+            failures.append(f"heading has no title text: {title[:80]}")
+    return failures
+
+
 def run_check(
     rows: list[dict],
     check_refs: bool = True,
@@ -384,6 +424,9 @@ def run_check(
             checked += 1
             for failure in check_references(name, text):
                 failures.append(f"{name}: {failure}")
+        checked += 1
+        for failure in check_heading_shape(name, text):
+            failures.append(f"{name}: {failure}")
     return checked, failures
 
 
