@@ -1344,6 +1344,56 @@ else
         "scripts/test has no SWARM_PROMPT_MAX_BYTES assignment"
 fi
 
+# The overlay and the Skill have ceilings too, and the README's table names
+# all three. Each number is read out of scripts/test the same way, so a README
+# that names a different number than the suite enforces fails here.
+overlay_ceiling="$(sed -n 's/^OVERLAY_MAX_BYTES=\([0-9][0-9]*\)$/\1/p' "$REPO/scripts/test" | head -1)"
+skill_ceiling="$(sed -n 's/^SKILL_MAX_BYTES=\([0-9][0-9]*\)$/\1/p' "$REPO/scripts/test" | head -1)"
+
+if [[ -n "$overlay_ceiling" ]]; then
+    ok "the test suite defines an overlay size ceiling"
+else
+    bad "the test suite defines an overlay size ceiling" \
+        "scripts/test has no OVERLAY_MAX_BYTES assignment"
+fi
+
+if [[ -n "$skill_ceiling" ]]; then
+    ok "the test suite defines a skill size ceiling"
+else
+    bad "the test suite defines a skill size ceiling" \
+        "scripts/test has no SKILL_MAX_BYTES assignment"
+fi
+
+# The README's table of ceilings has to name the numbers the suite enforces.
+# A table that drifted from the suite would be self-consistent and wrong.
+#
+# The README writes the numbers with a thousands separator, so the comparison
+# strips the separator from the suite's value before the numeric test.
+for pair in \
+    "swarm prompt|$ceiling|6,000" \
+    "overlay|$overlay_ceiling|30,000" \
+    "skill|$skill_ceiling|34,000"
+do
+    what="${pair%%|*}"
+    rest="${pair#*|}"
+    suite_value="${rest%%|*}"
+    readme_value="${rest#*|}"
+    if [[ -z "$suite_value" ]]; then
+        continue
+    fi
+    plain="${suite_value//,/}"
+    # The README table cell has to exist and has to carry the same number.
+    # A cell that names a different ceiling fails here, and so does a cell
+    # that was deleted from the table.
+    if grep -qF "| $readme_value |" "$REPO/README.md" && \
+       [[ "$plain" == "${readme_value//,/}" ]]; then
+        ok "the README names the $what ceiling the suite enforces"
+    else
+        bad "the README names the $what ceiling the suite enforces" \
+            "the suite enforces $plain and the README table names $readme_value"
+    fi
+done
+
 # The ceiling has to be a real number, and it has to be above the file it
 # caps. A ceiling of zero, or one below the current size, would be a check
 # that fails for a reason nobody intended.
@@ -1360,6 +1410,38 @@ if [[ -n "$ceiling" && "$swarm_bytes" -le "$ceiling" ]]; then
 else
     bad "the swarm prompt is within the ceiling the test suite enforces" \
         "the file is $swarm_bytes bytes, the ceiling is ${ceiling:-unset}"
+fi
+
+# The overlay and the Skill have their own ceilings, and the same rule
+# applies to them: a positive number, and a file that fits under it.
+if [[ -n "$overlay_ceiling" && "$overlay_ceiling" -gt 0 ]]; then
+    ok "the overlay size ceiling is a positive number"
+else
+    bad "the overlay size ceiling is a positive number" \
+        "the ceiling is ${overlay_ceiling:-unset}"
+fi
+
+overlay_bytes="$(wc -c < "$overlay" | tr -d ' ')"
+if [[ -n "$overlay_ceiling" && "$overlay_bytes" -le "$overlay_ceiling" ]]; then
+    ok "the overlay is within the ceiling the test suite enforces"
+else
+    bad "the overlay is within the ceiling the test suite enforces" \
+        "the file is $overlay_bytes bytes, the ceiling is ${overlay_ceiling:-unset}"
+fi
+
+if [[ -n "$skill_ceiling" && "$skill_ceiling" -gt 0 ]]; then
+    ok "the skill size ceiling is a positive number"
+else
+    bad "the skill size ceiling is a positive number" \
+        "the ceiling is ${skill_ceiling:-unset}"
+fi
+
+skill_bytes="$(wc -c < "$skill" | tr -d ' ')"
+if [[ -n "$skill_ceiling" && "$skill_bytes" -le "$skill_ceiling" ]]; then
+    ok "the skill is within the ceiling the test suite enforces"
+else
+    bad "the skill is within the ceiling the test suite enforces" \
+        "the file is $skill_bytes bytes, the ceiling is ${skill_ceiling:-unset}"
 fi
 
 # The README's claim that the three tiers hold different things is a claim

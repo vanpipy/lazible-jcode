@@ -95,6 +95,21 @@ The swarm prompt's size is the one that matters for cost, because it is sent on
 every request in every session. It is held under a ceiling, and the ceiling is
 asserted by the test suite rather than left to review.
 
+All three tiers are held under a ceiling now, at the size each one can carry
+without losing policy:
+
+| Tier | Ceiling | Why its bytes cost |
+| --- | --- | --- |
+| `config/swarm-prompt.md` | 6,000 | sent on every request in every session |
+| `config/prompt-overlay.md` | 30,000 | loaded once per session |
+| `config/skills/swarm-engineering/SKILL.md` | 34,000 | loaded only when the Skill is activated |
+
+The three numbers live in `scripts/test` as `SWARM_PROMPT_MAX_BYTES`,
+`OVERLAY_MAX_BYTES` and `SKILL_MAX_BYTES`. `scripts/doc-check` reads them out
+of that file rather than repeating them, so this table and the suite cannot
+drift apart silently. The swarm prompt's ceiling is the strict one, because it
+is the only tier whose bytes are paid on every request.
+
 The structure of the tiers is asserted the same way. Section 32 of
 `scripts/test` checks that the heading hierarchy of the overlay and the Skill
 is well formed, that every numbered heading sits at the depth its number

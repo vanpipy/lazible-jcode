@@ -2169,15 +2169,20 @@ echo "=== the prompt tiers keep their structure ==="
 # session, including spawned workers. It is the file whose size costs the
 # most, so it is the one that gets a ceiling rather than a review.
 #
-# The ceiling is deliberately generous. It is not there to say "keep it small"
-# in the abstract. It is there so that a large addition cannot land by
-# accident, and so that a reviewer can see the size change in the diff
-# without running wc first.
+# The ceiling is the measured target, not a rounded-up allowance. The swarm
+# prompt is the tier whose bytes are paid on every request in every session,
+# including every spawned worker, so its size is a running cost rather than a
+# one-time cost. The target is 6,000 bytes and the ceiling is 6,000 bytes, so
+# the check fails the moment the file grows past the number the README and the
+# prompt-contract tool both report.
 #
-# The overlay and the Skill are not capped. They are loaded once per session
-# and on demand respectively, and capping them would trade a real safeguard
-# for a token saving that is not the bottleneck.
-SWARM_PROMPT_MAX_BYTES=12000
+# The overlay and the Skill have ceilings too, at their own targets. They are
+# loaded once per session and on demand respectively, so their bytes are not
+# paid on every request, but they are not free either, and a compression pass
+# that regressed one of them would not otherwise be caught.
+SWARM_PROMPT_MAX_BYTES=6000
+OVERLAY_MAX_BYTES=30000
+SKILL_MAX_BYTES=34000
 
 swarm_bytes="$(wc -c < "$SWARMPROMPT" | tr -d ' ')"
 if [[ "$swarm_bytes" -le "$SWARM_PROMPT_MAX_BYTES" ]]; then
@@ -2188,6 +2193,24 @@ else
         "the swarm prompt is sent on every request in every session"
 fi
 
+overlay_bytes="$(wc -c < "$OVERLAY" | tr -d ' ')"
+if [[ "$overlay_bytes" -le "$OVERLAY_MAX_BYTES" ]]; then
+    ok "the overlay is within its size ceiling"
+else
+    bad "the overlay is within its size ceiling" \
+        "the file is $overlay_bytes bytes, the ceiling is $OVERLAY_MAX_BYTES" \
+        "the overlay is loaded once per session"
+fi
+
+skill_bytes="$(wc -c < "$SKILLMD" | tr -d ' ')"
+if [[ "$skill_bytes" -le "$SKILL_MAX_BYTES" ]]; then
+    ok "the skill is within its size ceiling"
+else
+    bad "the skill is within its size ceiling" \
+        "the file is $skill_bytes bytes, the ceiling is $SKILL_MAX_BYTES" \
+        "the skill is loaded on demand"
+fi
+
 # The ceiling has to be a real number. A ceiling of zero, or of a file that
 # does not exist, would fail every file, and a check that always fails is
 # not a check.
@@ -2196,6 +2219,20 @@ if [[ "$SWARM_PROMPT_MAX_BYTES" -gt 0 ]]; then
 else
     bad "the swarm prompt size ceiling is a positive number" \
         "the ceiling is $SWARM_PROMPT_MAX_BYTES"
+fi
+
+if [[ "$OVERLAY_MAX_BYTES" -gt 0 ]]; then
+    ok "the overlay size ceiling is a positive number"
+else
+    bad "the overlay size ceiling is a positive number" \
+        "the ceiling is $OVERLAY_MAX_BYTES"
+fi
+
+if [[ "$SKILL_MAX_BYTES" -gt 0 ]]; then
+    ok "the skill size ceiling is a positive number"
+else
+    bad "the skill size ceiling is a positive number" \
+        "the ceiling is $SKILL_MAX_BYTES"
 fi
 
 # The heading hierarchy is the part of these files that no prose check can
