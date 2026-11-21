@@ -1,0 +1,406 @@
+{
+  "total": 66,
+  "by_file": {
+    "overlay": 36,
+    "skill": 22,
+    "swarm-prompt": 8
+  },
+  "rows": [
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay binds a sufficiency declaration to the next action",
+      "file": "overlay",
+      "string": "A Sufficiency Declaration Binds the Next Action"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay names the next action as implementation or validation",
+      "file": "overlay",
+      "string": "the implementation action the declaration was about"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay forbids a read right after a sufficiency declaration",
+      "file": "overlay",
+      "string": "It must not be another read, search, or browse of the same subject"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay bounds the read phase of a direct task",
+      "file": "overlay",
+      "string": "Bounding the Read Phase of a Direct Task"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay gives the read phase a target set",
+      "file": "overlay",
+      "string": "That list is the read phase's target set"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay forbids a second full read of the same file",
+      "file": "overlay",
+      "string": "Do not re-read a file that was already read in full"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay states a soft budget for the read phase",
+      "file": "overlay",
+      "string": "soft default of 60 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay names the post-implementation tail as verification",
+      "file": "overlay",
+      "string": "The post-implementation tail is a verification phase"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the swarm prompt bounds the coordinator's own read phase",
+      "file": "swarm-prompt",
+      "string": "The coordinator's own read phase is bounded too"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill binds a sufficiency declaration to the next action",
+      "file": "skill",
+      "string": "A Sufficiency Declaration Binds the Next Action"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill forbids a second full read of the same file",
+      "file": "skill",
+      "string": "No Second Full Read of the Same File"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill bounds the coordinator's own read phase",
+      "file": "skill",
+      "string": "Bound your own read phase"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites 334 sessions",
+      "file": "overlay",
+      "string": "334 sessions"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites 334 sessions",
+      "file": "swarm-prompt",
+      "string": "334 sessions"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites 334 sessions",
+      "file": "skill",
+      "string": "334 sessions"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites 774 post-write calls",
+      "file": "overlay",
+      "string": "774 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites 774 post-write calls",
+      "file": "swarm-prompt",
+      "string": "774 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites 774 post-write calls",
+      "file": "skill",
+      "string": "774 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites the 60-call soft budget",
+      "file": "overlay",
+      "string": "60 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites the 60-call soft budget",
+      "file": "swarm-prompt",
+      "string": "60 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the read-phase evidence in  cites the 60-call soft budget",
+      "file": "skill",
+      "string": "60 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay cites the root-session share of sufficiency declarations",
+      "file": "overlay",
+      "string": "78%"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill cites the root-session share of sufficiency declarations",
+      "file": "skill",
+      "string": "78%"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay holds the swarm investigation thresholds",
+      "file": "overlay",
+      "string": "#### 2.2.1 Evidence Thresholds"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay holds the swarm investigation budget",
+      "file": "overlay",
+      "string": "#### 2.2.2 Tool-Call Budgets"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay holds the lane escalation order",
+      "file": "overlay",
+      "string": "### 12.8 Enforcing a Lane's Bound"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay bounds the verification phase",
+      "file": "overlay",
+      "string": "Bounding the Verification Phase"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay gives the verification phase a target set",
+      "file": "overlay",
+      "string": "The verification phase has a target set too, and it is the acceptance criteria"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay names the four ending conditions",
+      "file": "overlay",
+      "string": "The verification phase ends at the first of these four conditions"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay names the first ending condition",
+      "file": "overlay",
+      "string": "Criteria checked"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay names the second ending condition",
+      "file": "overlay",
+      "string": "A check that cannot fail"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay names the third ending condition",
+      "file": "overlay",
+      "string": "A question that could change the result"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay names the fourth ending condition",
+      "file": "overlay",
+      "string": "The budget reached"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay forbids re-reading the file it just wrote",
+      "file": "overlay",
+      "string": "Re-reading the file you just wrote is not verification"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the overlay says the report is the last call",
+      "file": "overlay",
+      "string": "The report is the last call, not the next one"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the swarm prompt bounds the coordinator's own tail",
+      "file": "swarm-prompt",
+      "string": "The coordinator's own tail is bounded too"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the swarm prompt makes the criteria the lane's verification target set",
+      "file": "swarm-prompt",
+      "string": "The criteria are also the lane's verification target set"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill bounds the verification phase",
+      "file": "skill",
+      "string": "Bounding the Verification Phase"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill gives the verification phase a target set",
+      "file": "skill",
+      "string": "The verification phase has a target set: the acceptance criteria, one check each"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill forbids re-reading the file it just wrote",
+      "file": "skill",
+      "string": "Re-reading the file you just wrote is not verification"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill's coordinator practice bounds its own tail",
+      "file": "skill",
+      "string": "Bound your own verification phase"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill's phase progression points at the verification rule",
+      "file": "skill",
+      "string": "Section 2.3.5 does the same for the phase after the write"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill's developer exit criteria cover the validation phase",
+      "file": "skill",
+      "string": "The validation phase after the implementation has the same shape"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the skill's tester exit criteria cover a check that cannot fail",
+      "file": "skill",
+      "string": "A check that passes whatever happens is not evidence"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the verification-phase evidence in  cites the worst post-write tail",
+      "file": "overlay",
+      "string": "774 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the verification-phase evidence in  cites the worst post-write tail",
+      "file": "swarm-prompt",
+      "string": "774 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the verification-phase evidence in  cites the worst post-write tail",
+      "file": "skill",
+      "string": "774 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the verification-phase evidence in  cites the median post-write tail",
+      "file": "overlay",
+      "string": "14 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the verification-phase evidence in  cites the median post-write tail",
+      "file": "swarm-prompt",
+      "string": "14 tool calls"
+    },
+    {
+      "kind": "contains_wrapped",
+      "label": "the verification-phase evidence in  cites the median post-write tail",
+      "file": "skill",
+      "string": "14 tool calls"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay holds the verification-phase section",
+      "file": "overlay",
+      "string": "#### 2.2.5 Bounding the Verification Phase"
+    },
+    {
+      "kind": "heading",
+      "label": "the skill holds the verification-phase section",
+      "file": "skill",
+      "string": "#### 2.3.5 Bounding the Verification Phase"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay nests its evidence thresholds one level deeper",
+      "file": "overlay",
+      "string": "#### 2.2.1 Evidence Thresholds"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay nests its tool-call budgets one level deeper",
+      "file": "overlay",
+      "string": "#### 2.2.2 Tool-Call Budgets"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay nests its sufficiency declaration one level deeper",
+      "file": "overlay",
+      "string": "#### 2.2.3 A Sufficiency Declaration Binds the Next Action"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay nests its read-phase bound one level deeper",
+      "file": "overlay",
+      "string": "#### 2.2.4 Bounding the Read Phase of a Direct Task"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay nests its verification-phase bound one level deeper",
+      "file": "overlay",
+      "string": "#### 2.2.5 Bounding the Verification Phase"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay nests its code-health policy under section 7",
+      "file": "overlay",
+      "string": "### 7.0 Code Health and Change Risk Policy"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay nests its code-health assessments one level deeper",
+      "file": "overlay",
+      "string": "#### 7.1 Two Distinct Assessments"
+    },
+    {
+      "kind": "heading",
+      "label": "the overlay nests its acceptance principle one level deeper",
+      "file": "overlay",
+      "string": "#### 7.7 Acceptance Principle"
+    },
+    {
+      "kind": "heading",
+      "label": "the skill nests its code-health policy one level deeper",
+      "file": "skill",
+      "string": "### 2.7 Code Health and Change Risk Assessment"
+    },
+    {
+      "kind": "heading",
+      "label": "the skill nests its code-health assessments one level deeper",
+      "file": "skill",
+      "string": "#### 2.7.1 Keep the Assessments Separate"
+    },
+    {
+      "kind": "heading",
+      "label": "the skill nests its role responsibilities one level deeper",
+      "file": "skill",
+      "string": "#### 2.7.7 Role Responsibilities"
+    },
+    {
+      "kind": "not_contains",
+      "label": "the overlay does not reference a section 7A",
+      "file": "overlay",
+      "string": "section 7A"
+    },
+    {
+      "kind": "contains",
+      "label": "the skill keeps its section 13 handover reference",
+      "file": "skill",
+      "string": "See section 13."
+    },
+    {
+      "kind": "heading",
+      "label": "the skill's section 13 is the handover contract",
+      "file": "skill",
+      "string": "## 13. Requirement Handover"
+    }
+  ]
+}

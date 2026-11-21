@@ -1,0 +1,484 @@
+#!/usr/bin/env python3
+"""prompt-contract : the single source of truth for protected prompt content.
+
+The three prompt tiers carry policy that must not drift. This tool holds the
+contract for that policy in one place, and checks it against the files.
+
+    ./scripts/prompt-contract extract    # re-derive the contract from scripts/test
+    ./scripts/prompt-contract check      # verify the files still satisfy it
+    ./scripts/prompt-contract show       # print the contract
+
+Why a tool rather than more shell in scripts/test
+--------------------------------------------------
+
+scripts/test already asserts 51 individual strings against the three prompt
+files. Those assertions are the contract, but they are spread across two
+numbered sections, they are interleaved with prose, and they only exist in the
+form of shell calls. Two consequences follow.
+
+First, there is no single place to look when a prompt file is edited. A
+compression pass has to know every string that has to survive, and the only
+way to find out is to read all of scripts/test and reconstruct the list by
+hand, which is exactly the kind of reconstruction that misses one.
+
+Second, the assertions and the prose around them drift apart. A comment that
+explains why a string is protected lives in one place, the assertion lives in
+another, and the rule about what the string means lives in a third.
+
+So the contract lives here: a declarative list, checked by a script, with the
+reason next to each entry.
+
+The contract is not a second source of truth for the assertions
+---------------------------------------------------------------
+
+extract re-derives the contract from scripts/test by parsing it. It exists so
+that a new assertion added to scripts/test is not silently absent from the
+contract, and so that the two cannot disagree without the check failing.
+
+The direction of authority is deliberate:
+
+    scripts/test         owns the assertions. It is the suite that gates.
+    scripts/prompt-contract
+                         owns the contract data and the extraction, so the
+                         assertions can be checked as a set.
+
+extract writes scripts/prompt-contract.json. check reads that file and the
+three prompt files. If someone adds an assertion to scripts/test and does not
+re-run extract, the contract is stale, and `check --extracted` says so.
+
+What is protected, and why
+---------------------------
+
+kind = heading          The heading line, hash count included, must exist
+                        exactly. A substring check cannot distinguish
+                        "### 2.2.1" from "#### 2.2.1", so a demoted
+                        heading would pass a looser check. The heading depth
+                        is the numbering scheme's own rule, so it is checked
+                        here rather than trusted.
+
+kind = contains_wrapped  The string must appear in the file with whitespace
+                        collapsed to single spaces. This is the same
+                        comparison assert_contains_wrapped performs, so
+                        re-wrapping a paragraph does not break the contract
+                        while rewording a claim does.
+
+kind = contains         The string must appear verbatim. Used where the
+                        exact bytes matter, such as a cross-reference that
+                        names a section by number.
+
+kind = not_contains     The string must NOT appear. Used for the stale
+                        references that a rename would otherwise leave
+                        behind.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import re
+import sys
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+CONTRACT_PATH = REPO / "scripts" / "prompt-contract.json"
+
+PROMPT_FILES = {
+    "overlay": REPO / "config" / "prompt-overlay.md",
+    "swarm-prompt": REPO / "config" / "swarm-prompt.md",
+    "skill": REPO / "config" / "skills" / "swarm-engineering" / "SKILL.md",
+}
+
+# The variable names scripts/test uses for each file.
+VAR_TO_FILE = {
+    "$OVERLAY": "overlay",
+    "$SWARMPROMPT": "swarm-prompt",
+    "$SKILLMD": "skill",
+}
+
+# A section reference may legitimately point at the other tier's numbering.
+# The overlay's "2.2.x" and the Skill's "2.3.x" are parallel copies of the
+# same policy, each with its own numbering, and each file points at its own.
+CROSS_FILE_PREFIXES = {
+    "overlay": ("2.3",),
+    "skill": ("2.2",),
+    "swarm-prompt": (),
+}
+
+
+# ---------------------------------------------------------------------------
+# extraction
+# ---------------------------------------------------------------------------
+
+
+def match_paren(text: str, open_at: int) -> int:
+    """The index just past the ")" that closes the "(" at open_at.
+
+    Command substitutions nest and contain their own quoted strings, so the
+    scan tracks both.
+    """
+    depth = 0
+    i = open_at
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                if text[i] == "\\":
+                    i += 1
+                i += 1
+            i += 1
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def split_args(text: str) -> list[list[tuple[str, str]]]:
+    """Split a shell argument list into arguments of (kind, value) segments.
+
+    kind is "lit" for text inside double quotes and "raw" for unquoted text,
+    a command substitution, or an expansion inside double quotes.
+
+    The split matters because the assertions mix quoted needles with
+    substitutions in the haystack, and the needle is the part that is
+    compared literally.
+    """
+    args: list[list[tuple[str, str]]] = []
+    cur: list[tuple[str, str]] = []
+    i = 0
+    n = len(text)
+
+    def flush() -> None:
+        nonlocal cur
+        if cur:
+            args.append(cur)
+            cur = []
+
+    while i < n:
+        c = text[i]
+        if c in " \t\n":
+            flush()
+            i += 1
+            continue
+        if c == "\\":
+            j = i + 1
+            while j < n and text[j] in " \t":
+                j += 1
+            if j < n and text[j] == "\n":
+                # A line continuation is not an argument separator.
+                i = j + 1
+                continue
+            i += 1
+            if i < n:
+                cur.append(("raw", text[i]))
+                i += 1
+            continue
+        if c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                if text[i] == "$" and i + 1 < n and text[i + 1] == "(":
+                    end = match_paren(text, i + 1)
+                    cur.append(("raw", text[i:end]))
+                    i = end
+                    continue
+                if text[i] == "\\" and i + 1 < n:
+                    cur.append(("lit", text[i + 1]))
+                    i += 2
+                    continue
+                cur.append(("lit", text[i]))
+                i += 1
+            i += 1
+            continue
+        if c == "$" and i + 1 < n and text[i + 1] == "(":
+            end = match_paren(text, i + 1)
+            cur.append(("raw", text[i:end]))
+            i = end
+            continue
+        cur.append(("raw", c))
+        i += 1
+
+    flush()
+    return args
+
+
+def lit_value(arg: list[tuple[str, str]]) -> str:
+    """The literal part of an argument, with the expansions left out.
+
+    A needle is a quoted literal, so the expansions inside it are not part of
+    what the comparison looks for.
+    """
+    return "".join(v for k, v in arg if k == "lit")
+
+
+def arg_text(arg: list[tuple[str, str]]) -> str:
+    """The argument as it was written, for finding the variable it names."""
+    return "".join(v for _, v in arg)
+
+
+def extract() -> list[dict]:
+    """Derive the contract rows from scripts/test.
+
+    The assertion calls are parsed rather than pattern-matched, because the
+    target argument is sometimes a bare "$OVERLAY" and sometimes a
+    "$(cat "$OVERLAY")" command substitution. The nested quotes in the second
+    form mean a regex over the raw text mis-reads where the string literals
+    end.
+    """
+    src = (REPO / "scripts" / "test").read_text()
+    call_re = re.compile(r"assert_(contains_wrapped|contains|not_contains|heading)\s+")
+
+    rows: list[dict] = []
+    for m in call_re.finditer(src):
+        kind = m.group(1)
+        tail = src[m.end():]
+        # The arguments live on one logical line, continued with a trailing
+        # backslash. Scan forward to the end of that line.
+        end = 0
+        for seg in tail.split("\n"):
+            end += len(seg) + 1
+            if not seg.rstrip().endswith("\\"):
+                break
+        arg_text_src = tail[:end]
+        args = split_args(arg_text_src)
+        if len(args) < 3:
+            continue
+        label = lit_value(args[0])
+        body = lit_value(args[1]).rstrip()
+        haystack = arg_text(args[2])
+
+        names = re.findall(r"\$(OVERLAY|SWARMPROMPT|SKILLMD)", haystack)
+        if names:
+            rows.append(
+                {
+                    "kind": kind,
+                    "label": label,
+                    "file": VAR_TO_FILE["$" + names[-1]],
+                    "string": body,
+                }
+            )
+            continue
+
+        # A loop form: the assertion runs once per file over a shell
+        # variable, so the file names are in the loop header rather than in
+        # the assertion. The evidence figures are asserted this way, so a
+        # miss here would drop the corpus numbers from the contract entirely.
+        for file_name in enclosing_loop_files(src, m.start()):
+            rows.append(
+                {
+                    "kind": kind,
+                    "label": label,
+                    "file": file_name,
+                    "string": body,
+                }
+            )
+    return rows
+
+
+def enclosing_loop_files(src: str, pos: int) -> list[str]:
+    """The prompt files a loop immediately above pos iterates over.
+
+    The loop header is the nearest preceding "for f in ...; do" line that is
+    still open at pos, which is found by looking for a "done" between the
+    header and the assertion.
+    """
+    header_re = re.compile(r"^\s*for\s+(\w+)\s+in\s+(.+?);\s*do\s*$", re.M)
+    best: tuple[int, list[str]] | None = None
+    for m in header_re.finditer(src):
+        if m.start() >= pos:
+            continue
+        segment = src[m.end():pos]
+        # A "done" between the header and the assertion closes the loop.
+        if re.search(r"^\s*done\s*$", segment, re.M):
+            continue
+        variables = re.findall(r"\$(\w+)", m.group(2))
+        files = [VAR_TO_FILE["$" + v] for v in variables if "$" + v in VAR_TO_FILE]
+        if files and (best is None or m.start() > best[0]):
+            best = (m.start(), files)
+    if best is None:
+        return []
+    return best[1]
+
+
+# ---------------------------------------------------------------------------
+# checking
+# ---------------------------------------------------------------------------
+
+
+def collapse(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
+
+
+def heading_numbers(text: str) -> set[str]:
+    """The section numbers the file's own headings define."""
+    numbers: set[str] = set()
+    for line in text.splitlines():
+        m = re.match(r"^#+ (.+)$", line)
+        if not m:
+            continue
+        first = m.group(1).split()[0].rstrip(".")
+        if re.fullmatch(r"[0-9]+(\.[0-9]+)*", first):
+            numbers.add(first)
+    return numbers
+
+
+def check_row(row: dict, text: str) -> list[str]:
+    """The failures for one contract row against one file's text."""
+    kind = row["kind"]
+    s = row["string"]
+    failures: list[str] = []
+
+    if kind == "heading":
+        if not re.search("^" + re.escape(s) + "$", text, re.M):
+            failures.append(f"heading missing: {s}")
+    elif kind == "contains_wrapped":
+        if collapse(s) not in collapse(text):
+            failures.append(f"missing (wrapped): {s}")
+    elif kind == "contains":
+        if s not in text:
+            failures.append(f"missing: {s}")
+    elif kind == "not_contains":
+        if s in text:
+            failures.append(f"must NOT contain: {s}")
+    return failures
+
+
+def check_references(name: str, text: str) -> list[str]:
+    """Every section reference in the file must name a heading in it."""
+    failures: list[str] = []
+    headings = heading_numbers(text)
+    skip = CROSS_FILE_PREFIXES[name]
+    for ref in sorted(set(re.findall(r"[Ss]ection (\d+(?:\.\d+)*)", text))):
+        if any(ref.startswith(p) for p in skip):
+            continue
+        if ref not in headings:
+            failures.append(f"section reference does not resolve: {ref}")
+    return failures
+
+
+def run_check(
+    rows: list[dict],
+    check_refs: bool = True,
+    only: str | None = None,
+) -> tuple[int, list[str]]:
+    failures: list[str] = []
+    checked = 0
+    for name, path in PROMPT_FILES.items():
+        if only is not None and name != only:
+            continue
+        if not path.exists():
+            failures.append(f"{name}: file is missing: {path}")
+            continue
+        text = path.read_text()
+        for row in rows:
+            if row["file"] != name:
+                continue
+            checked += 1
+            for failure in check_row(row, text):
+                failures.append(f"{name}: {failure}")
+        if check_refs:
+            checked += 1
+            for failure in check_references(name, text):
+                failures.append(f"{name}: {failure}")
+    return checked, failures
+
+
+# ---------------------------------------------------------------------------
+# entry point
+# ---------------------------------------------------------------------------
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="prompt-contract",
+        description="The contract for protected content in the three prompt tiers.",
+    )
+    parser.add_argument(
+        "action",
+        choices=("extract", "check", "show"),
+        help=(
+            "extract: re-derive the contract from scripts/test and write it\n"
+            "check:   verify the prompt files still satisfy the contract\n"
+            "show:    print the contract"
+        ),
+    )
+    parser.add_argument(
+        "--no-refs",
+        action="store_true",
+        help="skip the section-reference resolution check",
+    )
+    parser.add_argument(
+        "--file",
+        choices=sorted(PROMPT_FILES),
+        help="check only this tier's file",
+    )
+    args = parser.parse_args(argv)
+
+    if args.action == "show":
+        if not CONTRACT_PATH.exists():
+            print("no contract file yet, run: scripts/prompt-contract extract", file=sys.stderr)
+            return 1
+        print(CONTRACT_PATH.read_text())
+        return 0
+
+    if args.action == "extract":
+        rows = extract()
+        by_file: dict[str, int] = {}
+        for row in rows:
+            by_file[row["file"]] = by_file.get(row["file"], 0) + 1
+        payload = {
+            "total": len(rows),
+            "by_file": dict(sorted(by_file.items())),
+            "rows": rows,
+        }
+        CONTRACT_PATH.write_text(json.dumps(payload, indent=2) + "\n")
+        print(f"extracted {len(rows)} assertions into {CONTRACT_PATH.relative_to(REPO)}")
+        for name, count in payload["by_file"].items():
+            print(f"  {name}: {count}")
+        return 0
+
+    # check
+    if not CONTRACT_PATH.exists():
+        print("no contract file yet, run: scripts/prompt-contract extract", file=sys.stderr)
+        return 1
+    payload = json.loads(CONTRACT_PATH.read_text())
+    rows = payload["rows"]
+    checked, failures = run_check(rows, check_refs=not args.no_refs, only=args.file)
+
+    # The contract must still describe what scripts/test asserts. If a new
+    # assertion was added to the suite and the contract was not regenerated,
+    # the contract is stale and the check is weaker than the suite.
+    current = extract()
+    current_keys = {(r["kind"], r["file"], r["string"]) for r in current}
+    contract_keys = {(r["kind"], r["file"], r["string"]) for r in rows}
+    stale = current_keys - contract_keys
+    dropped = contract_keys - current_keys
+    if args.file is not None:
+        stale = {k for k in stale if k[1] == args.file}
+        dropped = {k for k in dropped if k[1] == args.file}
+
+    print(f"checked {checked} protected strings and references")
+    if stale:
+        print(f"\n{len(stale)} contract entries are missing from scripts/test:")
+        for kind, file, s in sorted(stale):
+            print(f"  {file}: {kind}: {s}")
+    if dropped:
+        print(f"\n{len(dropped)} contract entries are no longer in scripts/test:")
+        for kind, file, s in sorted(dropped):
+            print(f"  {file}: {kind}: {s}")
+    if failures:
+        print(f"\n{len(failures)} FAILURES:")
+        for failure in failures:
+            print(f"  {failure}")
+    if failures or stale or dropped:
+        return 1
+    print("all protected content intact")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
