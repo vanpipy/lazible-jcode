@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""rule-inventory : extract the normative claims from a prompt tier.
+
+    ./rule-inventory.py <file> [--before <ref>]
+
+Prints one rule per line: the sentence, its kind, and its normalized text.
+The normalized text is what a before/after comparison matches on.
+
+The point is to answer a question that a byte count cannot: did the
+compression drop a rule, or did it only reword one? A rule is a sentence
+that carries an obligation. Imperative openings, modal verbs, and the
+deontic words the policy tiers use ("must", "never", "do not", "is not",
+"has to", "only when") mark one.
+
+Comparison mode reads the "before" text from a git ref and the "after" text
+from the working tree, then reports which rules are gone.
+
+    ./rule-inventory.py config/swarm-prompt.md --before HEAD
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+
+# The deontic markers that make a sentence an obligation rather than a
+# description. A description ("The overlay is a system-prompt layer") is
+# context. An obligation ("The overlay must be a system-prompt layer") is
+# policy, and a policy that disappears is what this tool is looking for.
+DEONTIC = re.compile(
+    r"\b(must|must not|mustn't|never|do not|don't|shall|should|should not|"
+    r"has to|have to|had to|need to|needs to|cannot|can't|may not|"
+    r"is not|are not|does not|do not|did not|only when|only if|"
+    r"is required|are required|is prohibited|forbids?|forbidden|"
+    r"rather than|instead of)\b",
+    re.IGNORECASE,
+)
+
+# An imperative opening: the sentence starts with a bare verb.
+IMPERATIVE = re.compile(
+    r"^(spawn|do|don't|avoid|use|pass|give|write|report|keep|stop|ask|"
+    r"review|run|check|confirm|name|list|watch|message|send|state|read|"
+    r"treat|record|integrate|assign|respect|return|include|hold|leave|"
+    r"prefer|bind|bound|never|always|start|begin|end|set|put|make|"
+    r"remember|note|verify|measure|measure|inspect|extract|assert)\b",
+    re.IGNORECASE,
+)
+
+# A heading is not a rule.
+HEADING = re.compile(r"^#{1,6}\s")
+
+
+def sentences(text: str) -> list[str]:
+    """Split into sentences, keeping bullets and list items whole."""
+    out: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("<!--") or line.startswith("-->"):
+            continue
+        if HEADING.match(raw_line):
+            continue
+        # A bullet is one claim even when it has several sentences.
+        if line.startswith(("- ", "* ", "1. ", "2. ", "3. ")):
+            line = re.sub(r"^([-*]|\d+\.)\s+", "", line)
+            out.append(line)
+            continue
+        for part in re.split(r"(?<=[.!?])\s+", line):
+            part = part.strip()
+            if part:
+                out.append(part)
+    return out
+
+
+def classify(sentence: str) -> str | None:
+    """The kind of rule this sentence is, or None if it is not a rule."""
+    if DEONTIC.search(sentence):
+        return "deontic"
+    if IMPERATIVE.match(sentence):
+        return "imperative"
+    return None
+
+
+def normalize(sentence: str) -> str:
+    """The sentence reduced to the words that carry its meaning.
+
+    Stop words, punctuation and the markdown emphasis are dropped, so a
+    rewording that kept the obligation matches, and one that dropped it
+    does not.
+    """
+    s = sentence.lower()
+    s = re.sub(r"[`*_\[\]]", " ", s)
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    stop = {
+        "a", "an", "the", "and", "or", "but", "if", "then", "so", "than",
+        "that", "this", "these", "those", "it", "its", "is", "are", "was",
+        "were", "be", "been", "being", "to", "of", "in", "on", "at", "by",
+        "for", "with", "as", "from", "not", "no", "do", "does", "did",
+        "you", "your", "it", "its", "when", "while", "there", "here",
+        "one", "any", "all", "each", "every", "only", "also", "same",
+        "own", "up", "out", "into", "over", "than", "very", "just",
+    }
+    words = [w for w in s.split() if w and w not in stop]
+    return " ".join(words)
+
+
+def similarity(a: str, b: str) -> float:
+    """How much of two normalized rules overlap.
+
+    The token sets are compared with a containment measure: the smaller set
+    is the rule being looked for, and the question is how much of it the
+    candidate rule covers. A reworded rule that kept its obligation scores
+    high. A rule that was dropped and replaced by a different one scores
+    low, because the tokens the original depended on are gone.
+    """
+    ta, tb = set(a.split()), set(b.split())
+    if not ta or not tb:
+        return 0.0
+    overlap = len(ta & tb)
+    return overlap / min(len(ta), len(tb))
+
+
+# A rule that survives a rewrite keeps most of its content words. The
+# threshold is high enough that a rewrite with the same obligation matches,
+# and low enough that a genuinely different rule does not.
+KEPT_THRESHOLD = 0.60
+
+
+def match_kept(
+    before_norms: set[str], after_norms: set[str]
+) -> tuple[set[str], set[str], set[str]]:
+    """Pair the before and after rules that are the same rule.
+
+    Returns (kept, gone, added). A before rule is kept when some after rule
+    covers enough of it. A before rule with no such match is gone. An after
+    rule that matched nothing is added.
+
+    The pairing is many-to-one, not one-to-one. One rewritten rule often
+    absorbs what used to be two rules, and a one-to-one pairing would then
+    report the absorbed one as gone. The cost is that a rule can be claimed
+    by two before rules, which is the right error here: this tool is a
+    triage aid that says "look at this", not a verdict.
+    """
+    claimed_after: set[str] = set()
+    kept: set[str] = set()
+    for b in before_norms:
+        best: tuple[float, str] | None = None
+        for a in after_norms:
+            score = similarity(b, a)
+            if score >= KEPT_THRESHOLD and (best is None or score > best[0]):
+                best = (score, a)
+        if best is not None:
+            kept.add(b)
+            claimed_after.add(best[1])
+
+    gone = before_norms - kept
+    added = after_norms - claimed_after
+    return kept, gone, added
+
+
+def read_before(path: str, ref: str) -> str:
+    out = subprocess.run(
+        ["git", "show", f"{ref}:{path}"],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        sys.stderr.write(f"cannot read {ref}:{path}\n")
+        sys.exit(2)
+    return out.stdout
+
+
+def inventory(text: str) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    for s in sentences(text):
+        kind = classify(s)
+        if kind is None:
+            continue
+        rows.append((kind, normalize(s), s))
+    return rows
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rule-inventory")
+    ap.add_argument("file")
+    ap.add_argument("--before", help="git ref to compare against")
+    ap.add_argument("--show", action="store_true", help="print every rule")
+    args = ap.parse_args(argv)
+
+    after_text = open(args.file, encoding="utf-8").read()
+    after = inventory(after_text)
+
+    if not args.before:
+        for kind, norm, raw in after:
+            if args.show:
+                print(f"[{kind}] {raw}")
+            else:
+                print(f"[{kind}] {norm}")
+        print(f"# {len(after)} rules in {args.file}", file=sys.stderr)
+        return 0
+
+    before_text = read_before(args.file, args.before)
+    before = inventory(before_text)
+    before_norms = {n for _, n, _ in before}
+    after_norms = {n for _, n, _ in after}
+
+    # A rule that is gone. The before set is paired against the after set by
+    # content overlap, so a reworded rule counts as kept, and only a rule
+    # whose content really did not survive is reported as gone.
+    kept, gone, added = match_kept(before_norms, after_norms)
+
+    print(f"# {args.file}: {len(before)} rules before, {len(after)} after")
+    print(
+        f"# {len(kept)} kept, {len(gone)} gone, {len(added)} added"
+        f" (overlap threshold {KEPT_THRESHOLD})"
+    )
+    print()
+    print("## gone")
+    for n in sorted(gone):
+        print(f"  - {n}")
+    print()
+    print("## added")
+    for n in sorted(added):
+        print(f"  + {n}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
