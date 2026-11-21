@@ -683,7 +683,48 @@ A refusal to touch the repo is checked before anything is removed, so
 ```bash
 ./scripts/test
 ./scripts/doc-check
+./scripts/prompt-verify [baseline-ref]
 ```
+
+`scripts/prompt-verify` is the gate for a prompt-tier compression. It runs
+every check that has to pass before a compressed tier is accepted: the
+protected-content contract, the three size ceilings, the heading structure,
+and the rule inventory. `scripts/rule-drop` is the part of that gate that
+catches a lost policy, and it is worth knowing what it does and does not
+prove.
+
+A byte count cannot see a dropped rule, and the first version of the rule
+check could not either. It scored each rule by content-word coverage over the
+whole rewritten file, so a rule whose words survived somewhere else in the
+file counted as kept. That measure was checked against a known answer on
+2026-11-21: deleting one rule at a time from each tier and re-scoring left
+44 of 49 swarm-prompt rules, 146 of 148 overlay rules and 180 of 183 Skill
+rules still reported as kept.
+
+`rule-drop` asks the stricter question. It joins the wrapped lines of a
+paragraph before splitting it into rules, on both sides of the comparison, so
+a rule that spans two lines is one claim rather than two fragments. It then
+matches each baseline rule against the rewrite's rules, not against all of its
+sentences. Measured against the same deletions, it misses 21 to 43 percent
+rather than 90 to 99 percent, and it reports no false positives and no thin
+rules on a file compared against itself.
+
+It is still a measure, not a proof. A rule whose claim was reworded into
+different words can score below the threshold, and a rule whose claim was
+dropped can survive the threshold because its words appear in an unrelated
+rule. So a passing `rule-drop` is necessary and not sufficient, and the
+protected-content contract is what holds the exact strings.
+
+Both are worth running by hand:
+
+```bash
+./scripts/rule-drop config/swarm-prompt.md --before HEAD
+./scripts/rule-inventory config/swarm-prompt.md --before HEAD
+```
+
+`rule-inventory` is the triage aid, and reports the rules with no counterpart
+along with the ones whose rarest word did not survive. `rule-drop` is the
+gate, and reports the rules that fell below the content-word threshold.
 
 `scripts/test` runs the real `scripts/install` and `scripts/uninstall`, not a
 copy of their logic. Every check drives the actual script with `HOME` pointed
