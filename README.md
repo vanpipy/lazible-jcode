@@ -685,6 +685,7 @@ A refusal to touch the repo is checked before anything is removed, so
 ./scripts/test
 ./scripts/doc-check
 ./scripts/prompt-verify [baseline-ref]
+./scripts/inject-defect
 ```
 
 `scripts/prompt-verify` is the gate for a prompt-tier compression. It runs
@@ -746,6 +747,57 @@ along with the ones whose rarest word did not survive. `rule-drop` is the
 gate, and reports the rules that fell below the content-word threshold. The
 gate is run by `prompt-verify`, which fails when `rule-drop` reports a
 dropped rule at all.
+
+### Repairing a thin rule
+
+A rule that scores thin is usually worded differently in the rewrite, not
+missing. The natural repair is to substitute a sentence that carries the
+missing content words, and the natural repair is also where the damage
+happens. A sentence that serves two rules can carry the words of one and
+drop the words of the other.
+
+The case is concrete. In the overlay, "Do not restart the entire lifecycle
+for a localized finding" scores 67 percent. The cheap repair drops the
+enumeration of evidence kinds and scores 100 on its own rule, 106 bytes
+cheaper than the safe repair. But that enumeration is itself a baseline rule
+at 96 percent, and the cheap repair drops it to 52 percent, which is a
+dropped rule. Only the 36-byte repair keeps the enumeration at 96 and lifts
+the lifecycle rule to 100.
+
+Reading does not catch that. Scoring every rule before and after the
+substitution does, because the enumeration rule's score moves.
+
+```bash
+./scripts/rule-repair config/prompt-overlay.md --before HEAD
+./scripts/rule-repair <candidate> --file config/skills/swarm-engineering/SKILL.md --before HEAD
+```
+
+`rule-repair` lists every rule scoring below 75 percent, with its content
+words, the missing words, and the best candidate sentence. With `--repair` it
+takes a JSON file of proposed substitutions and measures each one against the
+whole file. A repair is usable only if it lifts the target rule and leaves
+every other rule's score unchanged or higher. One that trades a rule for
+another is rejected with the rule it broke named.
+
+The best candidate it prints is the sentence that shares the most content
+words with the rule, not the sentence that expresses the claim. Use it to
+find where the words are, not to decide which sentence carries the claim.
+
+### Proving the gate fails
+
+A gate that passes tells you nothing until you know it fails when it should.
+`scripts/inject-defect` injects one defect at a time into the three tiers and
+checks that each is caught: a dropped protected string, a changed protected
+heading, a `section 7A` reference, a heading that gains trailing
+punctuation, a long line, and trailing whitespace. Every file is restored
+after each injection and again at the end.
+
+Two findings came out of running it. A line over the width the file uses is
+caught by `scripts/test` but not by the contract, because the contract holds
+strings and headings and says nothing about layout. And a heading with
+trailing prose produces two independent failures in one edit, a
+`not_contains` violation and a heading-shape violation, while the heading
+count does not move. A checker that counts headings misses it.
 
 `scripts/test` runs the real `scripts/install` and `scripts/uninstall`, not a
 copy of their logic. Every check drives the actual script with `HOME` pointed
