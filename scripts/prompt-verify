@@ -28,11 +28,17 @@ cd "$REPO" || exit 2
 
 BASELINE="${1:-HEAD}"
 
-# The number of unmatched rules that a rewrite may leave before the
-# reviewer has to read every one of them by hand. A rewrite that keeps the
-# policy and changes the words scores zero or near zero. A rewrite that
-# drops a rule scores one, and the report names it.
+# The number of rules a rewrite may leave unmatched before the reviewer has
+# to read every one of them by hand. A rewrite that keeps the policy and
+# changes the words scores zero or near zero. A rewrite that drops a rule
+# scores one, and the report names it.
 MAX_UNMATCHED=3
+
+# The number of rules a rewrite may leave at risk. A rule is at risk when it
+# kept most of its content words but lost the one that made it specific.
+# Those are the ones a reviewer has to read by hand, and a compression pass
+# that rewrites a lot of them has moved too far from the original wording.
+MAX_AT_RISK=10
 
 fails=0
 note() { printf '  %s\n' "$*"; }
@@ -95,15 +101,21 @@ echo "=== no protected rule was dropped ==="
 for file in config/swarm-prompt.md config/prompt-overlay.md config/skills/swarm-engineering/SKILL.md; do
     report="$(./scripts/rule-inventory "$file" --before "$BASELINE" 2>/dev/null)"
     # The "gone" section lists one line per unmatched rule, and one
-    # indented line per rule that names its distinctive terms.
-    gone="$(printf '%s\n' "$report" | sed -n '/^## gone$/,/^## added$/p' \
+    # indented line per rule that names its content words.
+    gone="$(printf '%s\n' "$report" | sed -n '/^## gone$/,/^## at risk$/p' \
         | grep -c '^  - ' || true)"
-    if [[ "$gone" -le "$MAX_UNMATCHED" ]]; then
-        pass "$file lost no rules against $BASELINE ($gone unmatched)"
-    else
+    risk="$(printf '%s\n' "$report" | sed -n '/^## at risk$/,/^## added$/p' \
+        | grep -c '^  - ' || true)"
+    if [[ "$gone" -gt "$MAX_UNMATCHED" ]]; then
         fail "$file lost $gone rules against $BASELINE, the limit is $MAX_UNMATCHED"
-        printf '%s\n' "$report" | sed -n '/^## gone$/,/^## added$/p' \
+        printf '%s\n' "$report" | sed -n '/^## gone$/,/^## at risk$/p' \
             | sed 's/^/       /' | head -25
+    elif [[ "$risk" -gt "$MAX_AT_RISK" ]]; then
+        fail "$file left $risk rules at risk against $BASELINE, the limit is $MAX_AT_RISK"
+        printf '%s\n' "$report" | sed -n '/^## at risk$/,/^## added$/p' \
+            | sed 's/^/       /' | head -25
+    else
+        pass "$file lost no rules against $BASELINE ($gone unmatched, $risk at risk)"
     fi
 done
 
