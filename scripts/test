@@ -55,6 +55,7 @@
 #   32. the prompt tiers keep their structure: the swarm prompt is within
 #       its size ceiling, every numbered heading sits at the depth its
 #       number says, and every section reference resolves
+#   33. the protected-content contract holds for all three tiers
 #
 # The numbered section banners in this file use the same numbering.
 #
@@ -2398,6 +2399,37 @@ assert_contains "the skill keeps its section 13 handover reference" \
 
 assert_heading "the skill's section 13 is the handover contract" \
     "## 13. Requirement Handover" "$SKILLMD"
+
+# ---------------------------------------------------------------------------
+# 33. the protected-content contract holds
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the protected-content contract holds ==="
+
+# scripts/prompt-contract holds the same protected strings in one declarative
+# file, so a compression pass has one place to look instead of reconstructing
+# the list from this suite by hand.
+#
+# It is checked here so that the contract cannot drift away from the files it
+# describes. The tool fails if a contract entry is missing from this suite or
+# if a suite assertion is missing from the contract, which is what makes the
+# contract a real check rather than a second copy that quietly goes stale.
+if [[ -x "$REPO/scripts/prompt-contract" ]]; then
+    set +e
+    contract_out="$("$REPO/scripts/prompt-contract" check 2>&1)"
+    contract_rc=$?
+    set -e
+    if [[ "$contract_rc" -eq 0 ]]; then
+        ok "the protected-content contract holds for all three tiers"
+    else
+        bad "the protected-content contract holds for all three tiers" \
+            "$contract_out"
+    fi
+else
+    bad "the protected-content contract holds for all three tiers" \
+        "scripts/prompt-contract is missing or not executable"
+fi
 
 # ---------------------------------------------------------------------------
 
