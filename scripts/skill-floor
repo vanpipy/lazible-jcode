@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""skill-floor : compute the vocabulary a Skill rewrite must keep alive.
+
+Usage:
+    skill-floor <candidate.md> [--baseline HEAD]
+
+The rule inventory matches a HEAD rule to a rewritten file by content-word
+coverage. A rule survives when at least half of its content words are still
+present AND its rarest word is still present. So the floor is not the whole
+rule, it is the rarest word plus the cheapest half of the rest.
+
+This tool prints, per HEAD rule, the words that rule needs. A compression
+pass can delete every other word. It also prints the size of the vocabulary
+that no pass may shrink, which is the byte floor for the file.
+
+With --unused it lists the words a candidate carries that no rule needs.
+Those are the words a compression pass can delete first.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import pathlib
+import re
+import subprocess
+import sys
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+RI = REPO / "scripts" / "rule-inventory"
+
+loader = importlib.machinery.SourceFileLoader("ri", str(RI))
+spec = importlib.util.spec_from_loader("ri", loader)
+ri = importlib.util.module_from_spec(spec)
+loader.exec_module(ri)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("candidate")
+    ap.add_argument("--baseline", default="HEAD")
+    ap.add_argument("--unused", action="store_true")
+    args = ap.parse_args()
+
+    base_text = subprocess.run(
+        ["git", "show", f"{args.baseline}:config/skills/swarm-engineering/SKILL.md"],
+        capture_output=True, text=True, check=True, cwd=REPO,
+    ).stdout
+    cand_text = pathlib.Path(args.candidate).read_text()
+
+    base_rows = ri.inventory(base_text)
+    corpus = ri.build_corpus({n for _, n, _ in base_rows})
+    after_terms = set(ri.stem(w) for w in re.findall(r"[a-z0-9]+", cand_text.lower()))
+
+    required: dict[str, set[str]] = {}
+    all_content: set[str] = set()
+    for kind, norm, raw in base_rows:
+        words = ri.content_words(norm)
+        if not words:
+            continue
+        all_content.update(words)
+        rarest = sorted(words, key=lambda w: (corpus.get(w, 0), w))[0]
+        need = ceil_half(len(words))
+        # The rule needs the rare word plus enough of the rest to reach
+        # half coverage. Keep the words that are cheapest to keep, which
+        # means the ones that also appear in other rules.
+        ranked = sorted(words, key=lambda w: (-corpus.get(w, 0), w))
+        keep = {rarest}
+        keep.update(ranked[:need])
+        required[raw] = keep
+
+    union = set().union(*required.values()) if required else set()
+
+    if args.unused:
+        cand_words = set(ri.stem(w) for w in re.findall(r"[a-z0-9]+", cand_text.lower()))
+        unused = sorted(cand_words - union - ri.STOP)
+        print(f"candidate carries {len(cand_words)} distinct words")
+        print(f"rule floor needs {len(union)} distinct words")
+        print(f"unused words: {len(unused)}")
+        print(" ".join(unused))
+        print()
+        print(f"unused bytes if each appears once: "
+              f"{sum(len(w) + 1 for w in unused)}")
+        return 0
+
+    print(f"{len(required)} rules, floor vocabulary is {len(union)} words")
+    print()
+    for raw, keep in sorted(required.items()):
+        missing = sorted(w for w in keep if w not in after_terms)
+        mark = "OK " if not missing else "LOST"
+        print(f"{mark} {raw[:76]}")
+        if missing:
+            print(f"      missing: {' '.join(missing)}")
+    return 0
+
+
+def ceil_half(n: int) -> int:
+    return (n + 1) // 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
