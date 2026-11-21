@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+"""rule-repair : find and verify repairs for thin or dropped rules.
+
+    ./scripts/rule-repair <candidate.md> [--before REF] [--min SCORE]
+    ./scripts/rule-repair --explain <rule text>
+
+Why this exists
+---------------
+
+A compression pass rewrites a rule that scored thin, and the rewrite
+looks correct to a reader.  The gate does not read.  It scores a HEAD
+rule by content-word overlap against the single best candidate sentence
+in the candidate file, so a rewrite can drop a rule the reader still
+sees plainly, and it can do so by accident.
+
+The accident has a specific shape, and it is the one that costs the
+most.  A HEAD rule that scored thin is usually worded differently in the
+candidate, not missing.  The natural repair is to substitute a sentence
+that carries the missing tokens.  But a sentence that serves two rules
+can carry the tokens of one and drop the tokens of the other.  The
+evidence-kinds enumeration in section 5 is the case in point: replacing
+it with a shorter phrase repairs the lifecycle rule and drops the
+enumeration rule from 96 percent to 52 percent.
+
+Reading cannot catch that.  Scoring every rule before and after the
+substitution catches it, because the enumeration rule's score moves.
+
+What it does
+------------
+
+For each HEAD rule that scores below the thin cutoff, it reports the
+rule's content words, which of them the winning candidate sentence is
+missing, and the candidate sentences that score highest.
+
+It then measures a repair.  A repair is a substitution of an existing
+sentence, not an addition, because a substitution costs the bytes the
+sentence already occupied.  Every repair is measured against the whole
+file, and a repair is only reported as USABLE if it lifts the target
+rule AND leaves every other rule's score unchanged or higher.  A repair
+that trades one rule for another is reported as REJECTED, with the rule
+it broke named.
+
+Which file the baseline comes from
+-----------------------------------
+
+The baseline is the same file the gate compares against, so the tool
+works on all three tiers.  The file is taken from the candidate's path
+inside the repository, and --before selects the ref.  When the candidate
+lives outside the repository, --file names the tier explicitly.
+
+Exit 0 when every reported repair is usable, 1 when one is not.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+
+# The three prompt tiers. The baseline for a candidate is the same tier
+# at the given ref, so the tool works on any of them.
+TIERS = (
+    "config/swarm-prompt.md",
+    "config/prompt-overlay.md",
+    "config/skills/swarm-engineering/SKILL.md",
+)
+
+
+def load(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+RD = load("rd", REPO / "scripts" / "rule-drop")
+RI = load("ri", REPO / "scripts" / "rule-inventory")
+
+THIN = 0.75
+DROP = 0.5
+EPS = 1e-9
+
+
+def norm_map(text: str):
+    """The text with whitespace collapsed, and the map back to raw offsets."""
+    raw_idx: list[int] = []
+    chars: list[str] = []
+    prev_space = True
+    for i, ch in enumerate(text):
+        if ch in " \t\n":
+            if not prev_space:
+                chars.append(" ")
+                raw_idx.append(i)
+            prev_space = True
+        else:
+            chars.append(ch)
+            raw_idx.append(i)
+            prev_space = False
+    return "".join(chars), raw_idx
+
+
+def find_span(text: str, needle: str):
+    """The raw span of a sentence, which may be wrapped across lines."""
+    norm, raw_idx = norm_map(text)
+    target = " ".join(needle.split())
+    pos = norm.find(target)
+    if pos < 0:
+        return None
+    return raw_idx[pos], raw_idx[pos + len(target) - 1] + 1
+
+
+def scores_of(baseline: str, text: str) -> dict[str, float]:
+    """Every HEAD rule's score against the text, keyed by the rule text."""
+    cands = RD.rules_of(text)
+    out: dict[str, float] = {}
+    for norm, raw in RD.rules_of(baseline):
+        if not RI.content_words(norm):
+            continue
+        score, _ = RD.best_match(norm, cands)
+        out[raw] = score
+    return out
+
+
+def read_before(ref: str, tier: str) -> str:
+    """The tier's text at the given ref."""
+    out = subprocess.run(
+        ["git", "-C", str(REPO), "show", f"{ref}:{tier}"],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit(f"cannot read {ref}:{tier}")
+    return out.stdout
+
+
+def tier_of(candidate: pathlib.Path, explicit: str | None) -> str:
+    """Which tier a candidate belongs to, and so which baseline to read."""
+    if explicit:
+        if explicit not in TIERS:
+            raise SystemExit(f"unknown tier {explicit}, pick one of {TIERS}")
+        return explicit
+    # A candidate inside the repository keeps its own path.
+    try:
+        rel = candidate.resolve().relative_to(REPO).as_posix()
+    except ValueError:
+        rel = ""
+    if rel in TIERS:
+        return rel
+    # A candidate outside the repository is matched by name.
+    for tier in TIERS:
+        if candidate.name == pathlib.Path(tier).name:
+            return tier
+    raise SystemExit(
+        "cannot tell which tier this candidate belongs to, pass --file with "
+        f"one of {TIERS}"
+    )
+
+
+def candidate_sentences(text: str, words: list[str], limit: int = 3):
+    """The candidate sentences that carry the most of a rule's words."""
+    rows = []
+    for cand_norm, cand_raw in RD.rules_of(text):
+        cand_words = set(cand_norm.split())
+        if not cand_words:
+            continue
+        hit = [w for w in words if w in cand_words]
+        if not hit:
+            continue
+        rows.append((len(hit) / len(words), len(cand_raw), cand_raw, hit))
+    rows.sort(key=lambda t: (-t[0], t[1]))
+    return rows[:limit]
+
+
+def evaluate_repair(baseline: str, text: str, rule: str,
+                    current: str, replacement: str) -> dict:
+    """Score a substitution, and every other rule's score after it."""
+    span = find_span(text, current)
+    if span is None:
+        return {"ok": False, "why": "the sentence to replace was not found"}
+    start, end = span
+    new_text = text[:start] + replacement + text[end:]
+    before = scores_of(baseline, text)
+    after = scores_of(baseline, new_text)
+    target_before = before.get(rule, 0.0)
+    target_after = after.get(rule, 0.0)
+    broken = []
+    for other, score in before.items():
+        if other == rule:
+            continue
+        if after.get(other, 0.0) < score - EPS:
+            broken.append((other, score, after.get(other, 0.0)))
+    return {
+        "ok": not broken and target_after > target_before + EPS,
+        "target_before": target_before,
+        "target_after": target_after,
+        "delta": len(new_text.encode()) - len(text.encode()),
+        "broken": broken,
+        "text": new_text,
+    }
+
+
+def repair_mode(args) -> int:
+    """Measure a set of proposed repairs and report which are usable."""
+    spec = json.loads(pathlib.Path(args.repair).read_text())
+    candidate_path = pathlib.Path(spec["candidate"])
+    text = candidate_path.read_text()
+    tier = tier_of(candidate_path, spec.get("file") or args.file)
+    baseline = read_before(spec.get("before", args.before), tier)
+
+    print(f"candidate: {candidate_path} ({len(text.encode())} bytes)")
+    print(f"baseline:  {tier} at {spec.get('before', args.before)}")
+    print(f"{len(spec['repairs'])} repairs to measure\n")
+    all_ok = True
+    for entry in spec["repairs"]:
+        rule = entry["rule"]
+        current = entry["current"]
+        replacement = entry["replacement"]
+        result = evaluate_repair(baseline, text, rule, current, replacement)
+        label = entry.get("label", replacement[:60])
+        if not result.get("ok") and "why" in result:
+            print(f"REJECTED  {label}")
+            print(f"          {result['why']}")
+            all_ok = False
+            continue
+        status = "USABLE" if result["ok"] else "REJECTED"
+        if not result["ok"]:
+            all_ok = False
+        print(f"{status}  {label}")
+        print(f"          target {result['target_before']:.0%} -> "
+              f"{result['target_after']:.0%}, {result['delta']:+d} bytes")
+        for other, was, now in result["broken"]:
+            print(f"          BREAKS {was:.0%} -> {now:.0%}: {other[:100]}")
+        if result["ok"]:
+            text = result["text"]
+    print()
+    print("all repairs usable" if all_ok else "at least one repair is not usable")
+    return 0 if all_ok else 1
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="rule-repair",
+        description=(
+            "Find and verify repairs for thin or dropped rules.  A repair is "
+            "reported as usable only if it lifts the target rule and leaves "
+            "every other rule's score unchanged or higher."),
+    )
+    parser.add_argument("candidate", nargs="?",
+                        help="the candidate overlay file")
+    parser.add_argument("--before", default="HEAD",
+                        help="the git ref to compare against (default HEAD)")
+    parser.add_argument("--min", type=float, default=THIN,
+                        help="report rules scoring below this (default 0.75)")
+    parser.add_argument("--explain", metavar="RULE",
+                        help="explain one rule's score and exit")
+    parser.add_argument("--file", metavar="TIER",
+                        help=(
+                            "the tier the candidate belongs to, for a "
+                            "candidate outside the repository. One of "
+                            + ", ".join(TIERS)))
+    parser.add_argument("--repair", metavar="FILE",
+                        help=(
+                            "a JSON file of repairs to measure.  Each entry is "
+                            "{\"rule\": ..., \"current\": ..., "
+                            "\"replacement\": ...}.  Every repair is checked "
+                            "against the whole file and reported as usable or "
+                            "rejected."))
+    args = parser.parse_args(argv)
+
+    if args.repair:
+        return repair_mode(args)
+
+    if args.explain:
+        tier = args.file or TIERS[1]
+        words = RI.content_words(RI.normalize(args.explain))
+        print(f"rule: {args.explain}")
+        print(f"content words ({len(words)}): {words}")
+        return 0
+
+    if not args.candidate:
+        parser.error("a candidate file is required")
+
+    candidate_path = pathlib.Path(args.candidate)
+    if not candidate_path.exists():
+        candidate_path = REPO / args.candidate
+    text = candidate_path.read_text()
+    tier = tier_of(candidate_path, args.file)
+    baseline = read_before(args.before, tier)
+    scores = scores_of(baseline, text)
+
+    problems = sorted((s, r) for r, s in scores.items() if s < args.min)
+    if not problems:
+        print(f"no rules below {args.min:.0%}")
+        return 0
+
+    print(f"candidate: {candidate_path} ({len(text.encode())} bytes)")
+    print(f"baseline:  {tier} at {args.before}")
+    print(f"{len(problems)} rules below {args.min:.0%}\n")
+    for score, rule in problems:
+        words = RI.content_words(RI.normalize(rule))
+        print(f"[{score:.0%}] {rule}")
+        best = candidate_sentences(text, words)
+        if best:
+            sc, _ln, raw, hit = best[0]
+            print(f"    best candidate ({sc:.0%}): {raw[:160]}")
+            have = set(RI.content_words(RI.normalize(raw)))
+            missing = [w for w in words if w not in have]
+            print(f"    missing words: {missing}")
+        print(f"    content words: {words}")
+        print()
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
