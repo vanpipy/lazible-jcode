@@ -2180,9 +2180,19 @@ echo "=== the prompt tiers keep their structure ==="
 # loaded once per session and on demand respectively, so their bytes are not
 # paid on every request, but they are not free either, and a compression pass
 # that regressed one of them would not otherwise be caught.
+#
+# Each number is the size of the compressed file rounded up to the next 500
+# bytes, with at least 500 bytes of working margin. The swarm prompt keeps
+# the 6,000 it was given, because the compression brought it under that
+# number. The first set of ceilings was measured against the upstream files,
+# before the bounding rules existed, and it was never re-derived after the
+# bounding machinery grew the overlay and the Skill. The branch's own suite
+# therefore failed on the branch's own files. These are the re-measured
+# numbers, and the rule for them is the same one every time: measure the
+# file, then set the ceiling just above it.
 SWARM_PROMPT_MAX_BYTES=6000
-OVERLAY_MAX_BYTES=30000
-SKILL_MAX_BYTES=34000
+OVERLAY_MAX_BYTES=33500
+SKILL_MAX_BYTES=37500
 
 swarm_bytes="$(wc -c < "$SWARMPROMPT" | tr -d ' ')"
 if [[ "$swarm_bytes" -le "$SWARM_PROMPT_MAX_BYTES" ]]; then

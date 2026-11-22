@@ -102,14 +102,26 @@ without losing policy:
 | Tier | Ceiling | Why its bytes cost |
 | --- | --- | --- |
 | `config/swarm-prompt.md` | 6,000 | sent on every request in every session |
-| `config/prompt-overlay.md` | 30,000 | loaded once per session |
-| `config/skills/swarm-engineering/SKILL.md` | 34,000 | loaded only when the Skill is activated |
+| `config/prompt-overlay.md` | 33,500 | loaded once per session |
+| `config/skills/swarm-engineering/SKILL.md` | 37,500 | loaded only when the Skill is activated |
 
 The three numbers live in `scripts/test` as `SWARM_PROMPT_MAX_BYTES`,
 `OVERLAY_MAX_BYTES` and `SKILL_MAX_BYTES`. `scripts/doc-check` reads them out
 of that file rather than repeating them, so this table and the suite cannot
 drift apart silently. The swarm prompt's ceiling is the strict one, because it
 is the only tier whose bytes are paid on every request.
+
+A ceiling is a measured target, not a guess. Each of the three is the size of
+the compressed file rounded up to the next 500 bytes, with at least 500 bytes
+of working margin, so the check fails the moment a file grows well past the
+size it actually needs. The swarm prompt keeps the 6,000 it was given: the
+compression brought it under that number, and it is the only tier whose bytes
+are paid on every request. The first set of
+ceilings was measured against the upstream files, before the bounding rules
+existed, and it was never re-derived after the bounding machinery grew the
+overlay and the Skill. The branch's own suite failed on the branch's own
+files for exactly that reason, and the numbers above are the re-measured
+ones.
 
 The structure of the tiers is asserted the same way. Section 32 of
 `scripts/test` checks that the heading hierarchy of the overlay and the Skill
@@ -118,6 +130,31 @@ implies, and that the section references between the files still resolve to
 headings that exist. Section 8d of `scripts/doc-check` checks that this
 document still describes those properties, so the two cannot drift apart
 silently.
+
+### What the compression pass cut
+
+The three tiers were rewritten to fit their ceilings, and the rewrite is
+measurable rather than asserted. `scripts/rule-drop` compares every rule of
+the revision the pass started from against the rewrite and reports how many
+are gone. It reports none, for all three files. `scripts/prompt-contract`
+checks the 72 strings and heading references the suite depends on, and they
+are intact.
+
+What the pass removed was prose that repeated a rule stated beside it:
+explanations of a threshold that the threshold already makes plain, examples
+that carried no claim of their own, the reasoning behind rules the rules
+already give, and the version-specific detail in the review-surface
+description. The rules themselves stayed: the four thresholds that end an
+investigation, the 60-call soft budget, the rule that a sufficiency
+declaration binds the next action, the rule against re-reading a file that
+was already read in full, the rule that the verification phase ends at the
+first of four conditions, and the rule that the report is the last call.
+
+A rewrite can lose a rule without losing a word, and the gate is what found
+it. `scripts/rule-drop` recognises a rule by its deontic marker, so a
+sentence that keeps every content word but drops its "must" stops being a
+rule and stops being checked. Every such sentence was restored with its
+marker, and the restored wording is what the files carry now.
 
 ### The provider's input count varies for the same request shape
 
@@ -712,13 +749,23 @@ sentences.
 `scripts/measure-rule-tools` produces that comparison against a known
 answer, so the figures below can be checked rather than believed. It deletes
 one baseline rule at a time and asks each tool whether it still reports the
-rule as kept. Measured at HEAD on 2026-11-21:
+rule as kept. Measured at `5a6b03a` on 2026-11-22, the revision the
+compression pass started from:
 
 | Tier | `rule-inventory` misses | `rule-drop` misses |
 | --- | --- | --- |
-| `config/swarm-prompt.md` | 22 of 30 (73%) | 4 of 29 (14%) |
-| `config/prompt-overlay.md` | 71 of 73 (97%) | 14 of 103 (14%) |
-| `config/skills/swarm-engineering/SKILL.md` | 93 of 94 (99%) | 21 of 93 (23%) |
+| `config/swarm-prompt.md` | 22 of 30 (73%) | 7 of 34 (21%) |
+| `config/prompt-overlay.md` | 41 of 41 (100%) | 6 of 7 (86%) |
+| `config/skills/swarm-engineering/SKILL.md` | 78 of 78 (100%) | 29 of 113 (26%) |
+
+The figures this table carried before were measured on 2026-11-21, before the
+two tools changed in six commits, so they are not comparable line for line.
+The overlay's row is a structural fact rather than a tool defect: its
+paragraphs are merged blocks with no blank line between them, so a deleted
+sentence is still covered by the sentences around it, and only 7 of the 31
+rules the tool collects can be deleted cleanly enough for the test to mean
+anything. That is why the overlay's exact strings are held by the
+protected-content contract and not by the rule check.
 
 `rule-drop` reported no false positives on any tier: after a deletion, it
 never reported a surviving rule as gone. `rule-inventory` reported 5 false

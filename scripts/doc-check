@@ -1367,30 +1367,34 @@ fi
 # The README's table of ceilings has to name the numbers the suite enforces.
 # A table that drifted from the suite would be self-consistent and wrong.
 #
-# The README writes the numbers with a thousands separator, so the comparison
-# strips the separator from the suite's value before the numeric test.
+# The README writes the numbers with a thousands separator, so the expected
+# cell is derived from the suite's own number instead of being written out a
+# second time here. The number then lives in one place: change a ceiling in
+# scripts/test and the README table has to follow, because the derived cell
+# is the only one that passes.
+thousands() {
+    printf '%s' "$1" | sed -e ':a' -e 's/\([0-9]\)\([0-9]\{3\}\)\>/\1,\2/;ta'
+}
+
 for pair in \
-    "swarm prompt|$ceiling|6,000" \
-    "overlay|$overlay_ceiling|30,000" \
-    "skill|$skill_ceiling|34,000"
+    "swarm prompt|$ceiling" \
+    "overlay|$overlay_ceiling" \
+    "skill|$skill_ceiling"
 do
     what="${pair%%|*}"
-    rest="${pair#*|}"
-    suite_value="${rest%%|*}"
-    readme_value="${rest#*|}"
+    suite_value="${pair#*|}"
     if [[ -z "$suite_value" ]]; then
         continue
     fi
-    plain="${suite_value//,/}"
+    readme_value="$(thousands "$suite_value")"
     # The README table cell has to exist and has to carry the same number.
     # A cell that names a different ceiling fails here, and so does a cell
     # that was deleted from the table.
-    if grep -qF "| $readme_value |" "$REPO/README.md" && \
-       [[ "$plain" == "${readme_value//,/}" ]]; then
+    if grep -qF "| $readme_value |" "$REPO/README.md"; then
         ok "the README names the $what ceiling the suite enforces"
     else
         bad "the README names the $what ceiling the suite enforces" \
-            "the suite enforces $plain and the README table names $readme_value"
+            "the suite enforces $suite_value and the README table names $readme_value"
     fi
 done
 

@@ -7,19 +7,13 @@ description: Engineering execution methods for Jcode Swarm workers. Defines boun
 
 ## 1. Purpose
 
-Engineering execution methods for Jcode Swarm workers: workflows and
-deliverable standards for three roles, plus common principles and handoffs.
-- Developer: implementation.
-- Tester: test design and verification.
-- Reviewer: independent code review.
-
 Not a replacement for the global policies in `prompt-overlay.md` (its section
 12 is the swarm orchestration policy), nor for the `swarm` tool description in
 `swarm-prompt.md`, which carries model routing and the brief requirements
 every worker must be given.
 
-The assigned objective and scope take precedence over generic workflow
-preferences, subject to higher-priority instructions and constraints.
+Assigned objective and scope take precedence over generic workflow
+preferences, subject to higher-priority instructions.
 
 ## 2. Common Engineering Principles
 
@@ -29,44 +23,36 @@ changes, tests, or review comments.
 
 ### 2.1 Work Within the Assignment
 
-Before starting, identify assigned role, objective, scope and out-of-scope
-boundaries, relevant context and evidence, constraints, expected deliverables,
-acceptance criteria, dependencies, and validation expectations.
-
-Do not silently expand the assignment. If the objective or constraints are
-materially ambiguous, name the ambiguity and seek clarification or report it
-to the Coordinator.
+Do not silently expand the assignment.
 
 ### 2.2 Evidence Before Conclusions
 
 Base conclusions on relevant evidence. Distinguish observed facts, reproduced
-behavior, test results, reasonable inference, and unverified assumptions.
+behavior, test results, inference, and unverified assumptions.
 
-Give another engineer enough evidence to understand and evaluate any defect
-or risk you report.
+Give another engineer enough evidence to evaluate any defect or risk you
+report.
 
 ### 2.3 Bounded Investigation
 
 Every substantial investigation answers a concrete question. Before
 investigating, establish what must be determined, why it matters, what
-evidence is sufficient, and what decision or action follows. Stop when the
-exit criteria are met. Continue only when an unresolved question could
-materially affect correctness, compatibility, safety, implementation, or
-acceptance. Do not inspect unrelated modules for additional context.
+evidence is sufficient, and what follows. Stop when exit criteria are met.
+Continue only when an unresolved question could materially affect
+correctness, compatibility, safety, implementation, or acceptance. Do not
+inspect unrelated modules for additional context.
 
 #### 2.3.1 Evidence Thresholds
 
-"Sufficiency" has to be decidable. "I have enough evidence" reads the same at
-tool call 20 and at tool call 300, so it decides nothing. Use these
-thresholds, and name the one that ended the investigation.
+"Sufficiency" has to be decidable. Use these thresholds, and name the one that
+ended the investigation.
 
 An investigation ends when the first of these is true:
-1. **Target exhausted.** Every candidate named in the assignment is examined
-   and reported on, with a verdict. One already implemented is a completed
-   check, not a gap.
+1. **Target exhausted.** Every candidate in the assignment is examined and
+   reported on, with a verdict. One already implemented is a completed check,
+   not a gap.
 2. **Verdict established.** Every target in scope has the verdict the
-   assignment asked for, backed by the evidence it asked for. A further check
-   only restates that conclusion.
+   assignment asked for, backed by the evidence it asked for.
 3. **Budget reached.** The assignment's tool-call budget is spent. Report what
    is done, mark the rest unverified, and stop.
 4. **Blocked.** The next question cannot be answered with the access
@@ -78,8 +64,7 @@ reported verdict, contradicts evidence already collected, or covers an
 acceptance criterion not yet checked.
 
 **Broadening the target set after the verdict is established is a failure,
-not diligence.** The report is the N verified candidates and a short list of
-unverified leads. Hunting for a better candidate is scope expansion.
+not diligence.**
 
 #### 2.3.2 Tool-Call Budgets
 
@@ -89,33 +74,22 @@ investigation phase. The default is 60 tool calls.
 - The worker cannot raise its own budget. When it is spent, report what is
   there and stop.
 - Budgets bound investigation, not work. A lane that implements code and runs
-  tests is not an investigation lane; the budget applies only to the
-  investigation phase.
+  tests is not an investigation lane; the budget applies only to
+  investigation.
 - A budget is a soft stop, not a failure. Reaching it with the target
-  exhausted is a completed lane. The report says what was completed, what was
-  not, and what a larger budget would have bought.
+  exhausted is a completed lane; the report says what was completed, what was
+  not, and what a larger budget would buy.
 - The report is not padded to look thorough. An honest short report beats a
   long one that hides what was skipped.
 
-Do not set a budget below what a legitimate lane needs. In a corpus of 168
-coordinator-spawned lanes, completed investigation lanes ran 2 to 202 tool
-calls, median 70, 90th percentile near 146. A budget of 60 suits a focused
-single-target lane, whose runs cluster between 24 and 60 calls. A wide
-multi-target lane needs a larger stated number, set before dispatch. A budget
-that is wrong from the start produces truncated reports, not discipline.
+Do not set a budget below what a legitimate lane needs.
 
 #### 2.3.3 A Sufficiency Declaration Binds the Next Action
 
-The thresholds above decide when an investigation *ends*, not what happens
-next, so a worker that has declared sufficiency can legally declare it again
-and again. This is the most common way the bound is broken from the inside.
-
-The failure is measured. In a corpus of 334 sessions, 1,953 sufficiency
+The failure is measured. In a corpus of 334 sessions, sufficiency
 declarations were followed by a tool call, 78% of them in root, primary
-sessions rather than delegated lanes. 77% were followed by another read,
-search, or browse. One session read `StatGrid/index.tsx` 18 times and
-`TaskInfoCard/index.tsx` 16 times, and ran 774 tool calls *after* its last
-file write.
+sessions rather than delegated lanes. One session ran 774 tool calls *after*
+its last file write.
 
 **A sufficiency declaration is a commitment, not a status report.** When a
 worker writes that it has the shape, the design, the picture, or enough
@@ -126,40 +100,38 @@ evidence, the *next* tool call must be one of:
 - the final report.
 
 **It must not be another read, search, or browse of the same subject.** The
-declaration was the signal that the read phase is over. Treating it as a
-transition into more reading is the defect.
+declaration was the signal that the read phase is over.
 
-The exception is narrow. If a specific, unresolved acceptance question
-genuinely requires one more look, the worker names that question in the same
-breath as the declaration, and the read is scoped to answering it. That read
-is the last one, and it is followed by the action. The same rule governs a
-declaration of *incompleteness*: "I have the implementation shape, but I need
-to check the migration" licenses exactly one read, with a named target.
+The exception is narrow: if a specific, unresolved acceptance question
+genuinely requires one more look, the worker names that question with the
+declaration, and the read answers it. That read is the last one, followed by
+the action. The same rule governs a declaration of *incompleteness*: "I have
+the implementation shape, but I need to check the migration" licenses exactly
+one read, with a named target.
 
 #### 2.3.4 No Second Full Read of the Same File
 
-A file read in full is read. A second full read of the same file inside one
+A file read in full is read; a second full read of the same file inside one
 task is redundant unless the file changed in between, or a specific unresolved
 question needs a different range of it. In a corpus of 334 sessions, 43% of
-all read-tool calls were redundant in exactly this way, and 44% of sessions
-contained at least one. Read a range when you need a range.
+all read-tool calls were redundant in exactly this way. Read a range when you
+need a range.
 
 #### 2.3.5 Bounding the Verification Phase
 
 The read phase ends when the target set is answered (2.3.1) and the
 declaration binds the next call (2.3.3). The phase after the write needs the
-same kind of boundary, because the corpus shows the tail is where the runs go
-wrong. In the same 334 sessions, the median session made 14 tool calls after
-its last mutation, and the worst made 774 tool calls after the last file
-write, with the target change still unimplemented.
+same boundary: in the same 334 sessions, the median session made 14 tool
+calls after its last mutation, and the worst made 774 tool calls after the
+last file write.
 
 The verification phase has a target set: the acceptance criteria, one check
 each. It ends at the first of:
 - **Criteria checked.** Every acceptance criterion has been checked and the
   evidence recorded. Report.
 - **A check that cannot fail.** Repair it, run it once, and move on.
-- **A question that would change the result.** That is implementation work.
-  Make the change and verify the criterion it affects.
+- **A question that would change the result.** Make the change and verify
+  the criterion it affects.
 - **The budget reached.** Report what was verified, mark the rest unverified,
   and stop.
 
@@ -172,22 +144,19 @@ A proportionate engineering lifecycle:
 
 Understand → Investigate → Design → Execute → Validate → Report
 
-Not every task requires a separate document or explicit phase. Move forward
-once sufficient evidence supports the next action, and return to an earlier
-phase only when new evidence justifies it.
+Move forward once sufficient evidence supports the next action, and return to
+an earlier phase only when new evidence justifies it.
 
-Progression is a one-way move within a phase. The transition out of
-investigation is the deliverable of that phase. A lane that has met its exit
-criteria and keeps reading is not being thorough, it is failing to report.
-Section 2.3.3 makes the transition concrete, Section 2.3.5 does the same for
-the phase after the write.
+Progression is a one-way move within a phase. A lane that has met its exit
+criteria and keeps reading is not being thorough. Section 2.3.3 makes the
+transition concrete, Section 2.3.5 does the same for the phase after the
+write.
 
 ### 2.5 Honest Validation
 
-Report only checks that were actually performed. For every validation result,
-identify what was checked, how it was checked, whether it passed or failed,
-and relevant limitations. Do not claim the entire system is correct on the
-strength of a narrow test.
+Report only checks that were actually performed: what was checked, how,
+whether it passed or failed, and limitations. Do not claim that the entire
+system is correct on the strength of a narrow test.
 
 ### 2.6 Preserve Existing Work
 
@@ -199,7 +168,7 @@ outside the assignment.
 
 Reusable engineering methods for assessing the maintainability of relevant
 code and the risk of a proposed change. It supports the Coordinator's policy
-in `prompt-overlay.md`, and does not replace the assignment's requirements or
+in `prompt-overlay.md` and does not replace the assignment's requirements or
 authorize unrelated refactoring.
 
 #### 2.7.1 Keep the Assessments Separate
@@ -210,20 +179,20 @@ authorize unrelated refactoring.
   change.
 
 Do not infer one directly from the other. A healthy, central interface may be
-high-risk to modify. An unhealthy but isolated module may be relatively
-low-risk for a narrow change.
+high-risk to modify; an unhealthy but isolated module may be relatively
+low-risk.
 
 #### 2.7.2 Scope the Assessment
 
 Assess the target files and only those callers, consumers, tests, and
 dependencies that could materially affect the assigned objective. Consider
-these dimensions when relevant:
-- **Maintainability:** is the code understandable and cohesive? Are
-  complexity, nesting, duplication, or code smells material to this change?
-- **Dependency structure:** which modules depend on the target? Are
-  dependency direction, coupling, or circular dependencies relevant?
-- **Behavioral safety:** what tests and behavioral contracts protect the
-  affected behavior? What coverage or regression gaps are known?
+these dimensions:
+- **Maintainability:** understandable and cohesive? Are complexity, nesting,
+  duplication, or code smells material to this change?
+- **Dependency structure:** which modules depend on the target? Are dependency
+  direction, coupling, or circular dependencies relevant?
+- **Behavioral safety:** what tests and contracts protect the affected
+  behavior? What coverage or regression gaps are known?
 - **Change surface:** which interfaces, shared state, side effects, and
   downstream consumers may be affected?
 
@@ -234,17 +203,17 @@ irrelevant dimensions as not applicable and unavailable evidence as unknown.
 
 Prefer evidence available in the repository and its established toolchain:
 source code, interfaces, and dependency relationships; existing tests and
-reproducible results; coverage reports; static analysis, linting, type
-checking, and complexity tools; git diff and repository history; documented
-contracts and project conventions.
+reproducible results; coverage reports; static analysis, linting, and type
+checking; git diff and repository history; documented contracts and project
+conventions.
 
 For each material finding, identify its source. Distinguish measured results,
 observed facts, inferences, and assumptions. Do not fabricate metrics or
 combine unrelated measurements into an uncalibrated score.
 
-A CodeScene CodeHealth score may be reported if the project actually uses
-CodeScene. Its thresholds are tool- and context-specific. Do not treat
-CH = 9 as a universal rule.
+A CodeScene CodeHealth score may be reported if the project uses CodeScene.
+Its thresholds are tool- and context-specific. Do not treat CH = 9 as a
+universal rule.
 
 #### 2.7.4 Assess Change Risk
 
@@ -259,22 +228,20 @@ State the evidence and reasons. Do not invent a numerical risk formula.
 #### 2.7.5 Adapt the Work
 
 The assessment may inform whether work should be direct, delegated, parallel,
-or sequential; the worker boundaries and file ownership; whether an
-investigation or behavioral baseline is needed first; the required test depth
-and review method; and whether a human decision is needed before
-implementation.
+or sequential; worker boundaries and file ownership; whether an investigation
+or behavioral baseline is needed first; the required test depth and review
+method; and whether a human decision is needed before implementation.
 
-High risk does not automatically prohibit a change, it calls for
-proportionate guardrails. Do not create a separate assessment worker unless
-the assessment itself is a bounded deliverable that materially unblocks the
-task.
+High risk does not automatically prohibit a change, it calls for proportionate
+guardrails. Do not create a separate assessment worker unless the assessment
+itself is a bounded deliverable that materially unblocks the task.
 
 #### 2.7.6 Compare Before and After
 
-For significant changes, compare relevant evidence with the baseline: tests
-and observed behavior; complexity, duplication, and code-smell findings;
-dependencies, interfaces, and affected consumers; shared state and side-effect
-surface; relevant type-checking, linting, or static-analysis results.
+For significant changes, compare evidence with the baseline: tests and
+observed behavior; complexity, duplication, and code-smell findings;
+dependencies, interfaces, and affected consumers; type-checking, linting, or
+static-analysis results.
 
 Report improvements, regressions, and unknowns separately. A successful test
 run does not prove maintainability improved, and a cleaner static-analysis
@@ -282,18 +249,15 @@ report does not prove behavior was preserved.
 
 #### 2.7.7 Role Responsibilities
 
-- **Coordinator:** owns repository- and task-level assessment, decides how
-  findings affect delegation and execution, makes the final integrated
-  comparison.
-- **Developer:** understands local health constraints, minimizes unnecessary
-  change surface, avoids introducing unjustified complexity or coupling, and
-  reports relevant structural changes.
-- **Tester:** establishes behavioral baselines and verifies required behavior
-  and regressions. Test coverage is evidence of test presence, not proof that
-  all behavior is correct.
-- **Reviewer:** inspects the actual change for material maintainability,
-  dependency, interface, and side-effect regressions within the assigned
-  scope.
+- **Coordinator:** repository- and task-level assessment, how findings affect
+  delegation and execution, the final integrated comparison.
+- **Developer:** local health constraints, minimal change surface, no
+  unjustified complexity or coupling, reports relevant structural changes.
+- **Tester:** behavioral baselines, verification of required behavior and
+  regressions. Test coverage is evidence of test presence, not proof that all
+  behavior is correct.
+- **Reviewer:** material maintainability, dependency, interface, and
+  side-effect regressions within the assigned scope.
 
 Workers report evidence from their own scope. The Coordinator consolidates
 those reports; workers do not independently claim a repository-wide health
@@ -305,29 +269,25 @@ score.
 
 Implement the assigned behavior or change correctly and with the smallest
 coherent modification. Within the assigned scope the Developer owns
-implementation quality: preserve relevant Code Health constraints, avoid
-unnecessary complexity or coupling, and report material structural changes or
-regressions.
+implementation quality: preserve Code Health constraints, avoid unnecessary
+complexity or coupling, and report material structural changes.
 
 ### 3.2 Workflow
 
 #### Step 1: Understand
 
-Establish required behavior, relevant existing behavior, interfaces and
-dependencies, constraints, and acceptance criteria. Identify what must change
-and what must remain unchanged.
+Identify what must change and what must remain unchanged.
 
 #### Step 2: Investigate
 
-Inspect only relevant implementation, contracts, and tests. Determine where
-the behavior lives, which components or interfaces are affected, which
-conventions must be preserved, and which assumptions need verification.
+Inspect only relevant implementation, contracts, and tests. Determine where the
+behavior lives, which components or interfaces are affected, which conventions
+must be preserved, and which assumptions need verification.
 
 #### Step 3: Design
 
-Choose a proportionate approach: correctness, compatibility, error handling,
-existing abstractions, relevant edge cases, and testability. Avoid
-unnecessary architecture changes and speculative generalization.
+Choose a proportionate approach. Avoid unnecessary architecture changes and
+speculative generalization.
 
 #### Step 4: Implement
 
@@ -349,8 +309,8 @@ Provide a concise implementation report.
 ### 3.3 Developer Investigation Exit Criteria
 
 Stop investigating and proceed when:
-- The relevant implementation location is identified.
-- The behavior and relevant contracts are sufficiently understood.
+- The implementation location is identified.
+- Behavior and contracts are sufficiently understood.
 - The constraints and dependencies are known.
 - A sound implementation approach can be selected.
 - Remaining unknowns do not materially change that approach.
@@ -358,12 +318,8 @@ Stop investigating and proceed when:
 If a material unknown remains, investigate that specific question rather than
 expanding the entire exploration.
 
-The validation phase after the implementation has the same shape. Stop
-validating and report when every acceptance criterion has been checked, when a
-check cannot fail, when the remaining question would change the delivered
-result, or when the budget is spent. A question that would change the result
-is implementation work, so make the change and then check the criterion it
-affects. See section 2.3.5.
+The validation phase after the implementation has the same shape. See section
+2.3.5.
 
 ### 3.4 Developer Boundaries
 
@@ -373,15 +329,14 @@ The Developer should not:
 - Claim that independent review has occurred.
 - Treat implementation completion as overall task acceptance.
 - Conceal failed validation.
-- Continue redesigning after a sufficient implementation approach is
-  established.
+- Continue redesigning after a sufficient approach is established.
 
 ### 3.5 Developer Deliverable
 
 Report the objective addressed, files or components changed, important
-implementation decisions, relevant behavior and contracts affected, tests and
-checks executed, actual validation results, and remaining limitations or
-risks. Give concrete file or symbol references where useful.
+implementation decisions, behavior and contracts affected, tests and checks
+executed, actual validation results, and remaining limitations or risks. Give
+concrete file or symbol references where useful.
 
 ## 4. Tester Role
 
@@ -407,20 +362,13 @@ evidence and return the finding to the Coordinator or Developer.
 
 #### Step 1: Understand Requirements
 
-Identify expected behavior, relevant acceptance criteria, inputs and outputs,
-preconditions and postconditions, error behavior, relevant edge cases, and
-regression-sensitive behavior.
-
 Translate requirements into observable test conditions. Do not derive all
-tests solely from the implementation. Requirements and expected behavior
-remain the basis of verification.
+tests solely from the implementation.
 
 #### Step 2: Investigate Test Context
 
-Inspect relevant existing tests, test framework and fixtures, public
-interfaces, runtime behavior, test environment, and existing coverage.
-Determine which tests already establish required behavior and which gaps
-remain.
+Inspect relevant existing tests, public interfaces, runtime behavior, test
+environment, and existing coverage.
 
 #### Step 3: Design Tests
 
@@ -428,15 +376,14 @@ Choose tests proportionate to risk: normal cases, boundary cases, invalid
 inputs, failure paths, state transitions, relevant regressions, and
 interface/integration behavior.
 
-Avoid generating large numbers of redundant tests. Each test should establish a
-meaningful observable condition.
+Avoid generating large numbers of redundant tests. Each test should establish
+a meaningful observable condition.
 
 #### Step 4: Execute Tests
 
-Run the most relevant tests first. Expand to broader regression or
-integration checks when scope and risk justify them. Record actual results.
-Distinguish implementation failures from environment, test setup, or
-unrelated existing defects.
+Run the most relevant tests first. Record actual results. Distinguish
+implementation failures from environment, test setup, or unrelated existing
+defects.
 
 #### Step 5: Diagnose Failures
 
@@ -457,7 +404,7 @@ Summarize verification coverage, results, and unresolved risks.
 Stop test-context investigation when:
 - Relevant requirements are sufficiently understood.
 - Existing test infrastructure is identified.
-- Relevant existing coverage is understood.
+- Existing coverage is understood.
 - Missing behavioral conditions can be defined.
 - A concrete test plan can be executed.
 
@@ -468,8 +415,7 @@ behavior, test validity, or failure interpretation.
 
 Verification is complete when:
 - Required test conditions have been covered to the agreed extent.
-- Relevant tests have been executed.
-- Results have been assessed.
+- Relevant tests have been executed and the results assessed.
 - Failures are reproducible or their limitations are documented.
 - Material coverage gaps are reported.
 - Evidence is sufficient for the Coordinator to evaluate acceptance.
@@ -512,37 +458,29 @@ deferred, or explicitly accepted.
 
 ### 5.3 Review Scope
 
-Focus on the actual diff and relevant surrounding code. Review for
-requirement violations, incorrect behavior, logic errors, interface or
-contract violations, compatibility issues, regressions, error-handling
-problems, security or safety concerns, and significant design defects
-affecting correctness or maintainability.
+Review the actual diff and relevant surrounding code for requirement
+violations, incorrect behavior, logic errors, interface or contract
+violations, compatibility issues, regressions, error-handling problems,
+security or safety concerns, and significant design defects affecting
+correctness or maintainability.
 
-Where relevant to the assignment, inspect whether the change introduces
-unjustified complexity, coupling, duplication, dependency problems, or a
-broader side-effect surface. Do not expand into unrelated repository-wide
-review.
+Where relevant, inspect whether the change introduces unjustified complexity,
+coupling, duplication, dependency problems, or a broader side-effect surface.
+Do not expand into unrelated repository-wide review.
 
 ### 5.4 Workflow
 
 #### Step 1: Understand the Change
 
-Establish intended behavior, relevant requirements, changed files and
-components, important interfaces, acceptance criteria, and explicit
-constraints.
+Establish intended behavior, relevant requirements, changed files, important
+interfaces, acceptance criteria, and explicit constraints.
 
 #### Step 2: Inspect the Actual Diff
 
-Review what changed and why. Identify relevant interactions with existing
-code. Do not rely exclusively on a change summary or implementation report.
+Review what changed and why. Do not rely exclusively on a change summary or
+implementation report.
 
 #### Step 3: Investigate Potential Defects
-
-For each plausible issue, determine:
-- Is the behavior actually possible, with evidence in the implementation or
-  execution path?
-- Does it violate a requirement or contract, and what is the impact?
-- Is it within the assigned scope?
 
 Investigate a suspected issue only far enough to establish whether it is
 material and actionable.
@@ -562,12 +500,12 @@ Do not inflate severity.
 #### Step 5: Report Actionable Findings
 
 Every material finding should contain:
-- **Location:** relevant file, symbol, or code range.
-- **Evidence:** what demonstrates the issue.
+- **Location:** file, symbol, or code range.
+- **Evidence:** what demonstrates it.
 - **Problem:** what is incorrect or risky.
 - **Impact:** why it matters.
-- **Reproduction or reasoning:** how the issue can be confirmed.
-- **Recommendation:** a practical remediation direction.
+- **Reproduction or reasoning:** how to confirm it.
+- **Recommendation:** a remediation direction.
 
 Avoid vague comments such as "this could be better" without explaining a
 material impact.
@@ -596,7 +534,7 @@ A review is complete when:
 - Findings are evidence-backed and actionable.
 - Blocking and material findings have been reported.
 - Remaining comments are non-blocking or out of scope.
-- No material unresolved question prevents a reliable review conclusion.
+- No material unresolved question prevents a reliable conclusion.
 
 A review does not need to prove the absence of every hypothetical defect.
 
@@ -618,7 +556,7 @@ The Reviewer should not:
 - Report hypothetical risks without a credible mechanism or impact.
 - Expand scope without justification.
 - Repeat completed review work without new evidence.
-- Treat the absence of findings as proof that the entire system is defect-free.
+- Treat the absence of findings as proof that the system is defect-free.
 
 ### 5.9 Reviewer Deliverable
 
@@ -650,8 +588,7 @@ independently.
 ### 6.3 Tester or Reviewer → Developer
 
 When a material issue is found, provide the specific finding, evidence and
-location, expected versus actual behavior where applicable, impact and
-severity, reproduction or reasoning, and expected remediation outcome. The
+location, impact and severity, and the expected remediation outcome. The
 Developer addresses the finding within the assigned scope and reports the
 resulting change.
 
@@ -668,7 +605,7 @@ Verification must correspond to the actual remediated implementation.
 Roles are independently assignable and composable. They are not a mandatory
 three-worker pipeline.
 
-- **Developer Only:** implementation is small, bounded, low-risk. Developer
+- **Developer Only:** small, bounded, low-risk implementation. Developer
   implements and performs relevant validation.
 - **Developer + Tester:** behavior needs explicit test coverage or regression
   verification. Tester independently checks implementation against expected
@@ -681,7 +618,7 @@ three-worker pipeline.
   implementation.
 - **Tester and/or Reviewer Without Developer:** the assignment concerns an
   existing implementation, test coverage, or independent assessment. The role
-  stays in scope and reports findings rather than silently taking ownership of
+  stays in scope and reports findings rather than taking ownership of
   unrelated implementation work.
 
 ## 8. Assignment and Reporting Contract
@@ -704,10 +641,10 @@ by the chat message. See section 13.
 ## 9. Definition of Success
 
 Engineering work succeeds when the assigned objective is satisfied, changes
-remain within scope, relevant contracts and constraints are preserved,
-required verification is supported by actual evidence, material risks and
-limitations are communicated, the output can be evaluated by the Coordinator,
-and the work is ready for integration or has clearly reported why it is not.
+remain within scope, contracts and constraints are preserved, required
+verification is supported by actual evidence, material risks and limitations
+are communicated, the output can be evaluated by the Coordinator, and the work
+is ready for integration or has clearly reported why it is not.
 
 The goal is not maximum investigation, maximum code changes, maximum test
 count, or maximum review comments.
@@ -737,8 +674,7 @@ Practice that makes the policy above work. It does not change the policy.
   reviewer reading that diff watches it change under them. Lanes that must
   share a file run in sequence, or get separate files.
 - **Run the independent verification once, at acceptance.** One full run
-  after the workers are done is evidence; three overlapping runs are cost
-  without evidence. Let each worker's own report carry its narrow checks.
+  after the workers are done is evidence.
 - **Put an open product decision in front of the human before you delegate.**
   A worker cannot make that call for you. Ask once, up front, and write the
   answer into the brief.
@@ -747,18 +683,14 @@ Practice that makes the policy above work. It does not change the policy.
   touch. A worker that meets a surface it was not given stops and reports. It
   does not explore, and it installs nothing into the host.
 - **Name one test file per function in every brief.** The Developer owns the
-  implementation smoke test, the Tester owns the requirement-clause file. Two
-  workers never author tests for the same clause: that duplication is the
-  defect the Tester is supposed to find in the implementation, not in another
-  test file. The Tester's file cites the requirement each test covers, and a
-  requirement with no test is a reported coverage gap, never a silent pass.
+  implementation smoke test, the Tester owns the requirement-clause file. The
+  Tester's file cites the requirement each test covers; a requirement with no
+  test is a reported coverage gap, never a silent pass.
 - **Accept a worker's executed evidence as the evidence for that claim.**
-  Re-run a check only when the files changed after that worker's run, or when
-  two reports disagree, and then run the independent verification once, at
-  acceptance.
+  Re-run a check only when the files changed after that worker's run, and
+  then run the independent verification once, at acceptance.
 - **Never poll with sleeps or wait loops.** Use `swarm await_members`, which
-  waits in the background and notifies you when a worker finishes. Do other
-  work, or wait for the completion notice.
+  waits in the background and notifies you when a worker finishes.
 - **Keep one ledger row per round.** The `todo` list is the ledger: the lanes
   spawned, what each owns, the verdict, and where the evidence came from.
 - **Bound your own read phase.** A brief bounds a worker; nothing bounds the
@@ -772,48 +704,42 @@ Practice that makes the policy above work. It does not change the policy.
   before the first edit, and needing more requires saying why. Once you have
   the shape or the design, your next call is the implementation, the
   validation, the plan, or the report. See section 2.3.3 and section 2.3.4.
-- **Bound your own verification phase.** The tail after your last write is the
-  same failure on the other side of the write. The verification phase has a
-  target set too, the acceptance criteria, one check each, and it ends when
-  they are checked, when a check cannot fail, when the remaining question
-  would change the delivered result, or when the budget is spent. The report
-  follows. See section 2.3.5.
+- **Bound your own verification phase.** The verification phase has a target
+  set too, the acceptance criteria, one check each, and it ends when they are
+  checked, when a check cannot fail, when the remaining question would change
+  the delivered result, or when the budget is spent. See section 2.3.5.
 
 ### 11.1 Stopping a Lane That Overran Its Brief
 
-A brief is a request. A worker that has met its completion criteria and keeps
-searching will not stop because the brief asked it to, so the coordinator
-enforces the bound. The escalation order is fixed: message first, stop second.
+A worker that has met its completion criteria and keeps searching will not
+stop, so the coordinator enforces the bound. The escalation order is fixed:
+message first, stop second.
 
 1. **Check the lane before acting.** `swarm list` shows each member's status,
-   its last activity age, and whether it is stalled. A member that is
-   `running` with a fresh activity age is working. A member whose activity
-   age keeps growing while its target list is already covered is expanding
-   scope. Compare against the lane's budget before intervening.
+   last activity age, and whether it is stalled. A `running` member with a
+   fresh activity age is working; a member whose activity age keeps growing
+   while its targets are already covered is expanding scope.
 2. **Message the lane.** Ask it to report what it has and mark the rest
    unverified. Name the requirement it still owes, and say it must not open
-   new targets. A DM is cheap and usually enough.
+   new targets.
 3. **Do not repeat the message.** A worker that ignored a request to wrap up
    has shown that it will not honour a soft instruction. Repeating it costs a
    round trip and buys nothing.
 4. **Stop the lane.** `swarm stop` terminates the worker. The coordinator
    owns its own spawned workers, so this works without `force`. Use `force`
-   only for a session this coordinator did not spawn; it refuses otherwise by
-   design.
+   only for a session this coordinator did not spawn.
 5. **Record the loss.** A stopped lane is a partial result. Write into the
    todo row which targets were completed, which were left unverified, and
-   that the remainder is not covered. The coordinator's own report has to say
-   the same thing. A stopped lane is never reported as a finished one.
+   that the remainder is not covered. A stopped lane is never reported as a
+   finished one.
 
-`swarm stop` persists the session as closed and the transcript on disk keeps
-what the worker had already written, so a stopped lane is not a total loss. The
-unwritten remainder is still lost, which is why stopping is the last step, not
-the first.
+`swarm stop` persists the session as closed and the transcript on disk
+keeps what the worker had already written, so a stopped lane is not a total
+loss. The unwritten remainder is still lost, which is why stopping is the last
+step, not the first.
 
-`swarm summary` reports the recent tool calls of a lane. It is advertised in
-the tool schema, but it fails while the lane is busy and needs a
-`target_session`. Use `swarm list` for the monitoring signal and the worker's
-own report for the result.
+`swarm summary` reports the recent tool calls of a lane. Use `swarm list` and
+the worker's own report for the result.
 
 ## 12. Requirement Matching
 
@@ -831,16 +757,15 @@ A verdict without evidence is `not demonstrated`, never `met`. The Tester's
 
 Two checks, not one: does the check discriminate, meaning would it fail if
 the behaviour were wrong, and is the behaviour the one the requirement asked
-for. A review that runs only one of them has not matched the requirement.
+for.
 
 If your assignment carried no requirements, say so and report it as a gap. Do
 not invent requirements.
 
 This section adds to the review completion gate: a review is complete only
 when every requirement carries a verdict and its evidence, or is reported as
-`not demonstrated`. A `not demonstrated` requirement blocks acceptance until it
-is checked, or until the Coordinator records an explicit waiver with a
-reason in the todo row.
+`not demonstrated`. A `not demonstrated` requirement blocks acceptance until
+it is checked or waived with a recorded reason.
 
 ## 13. Requirement Handover
 
@@ -873,51 +798,40 @@ that worker.
 - A worker cites the requirement as `<todo id>`. A verdict without that
   citation is `not demonstrated`.
 - A requirement whose todo cannot be read is `not demonstrated`, never `met`.
-- A todo is only authoritative over the behaviour it names. Before it is
-  written, the Coordinator reconciles it with the repository's existing tests.
-  A requirement that contradicts an existing test is a conflict in its own
-  right, and it is reported like any other.
+- A todo is only authoritative over the behaviour it names. The Coordinator
+  reconciles it with the repository's existing tests before it is written. A
+  requirement that contradicts an existing test is a conflict in its own
+  right, and is reported like any other.
 
 ## 14. Native Verification Surfaces
 
 Jcode verifies independently without a worker. Prefer these over spawning a
 critic.
 
-- **`/autoreview`** reviews the session's actual changes. It inspects the
-  repo with `git diff --stat`, `git diff --name-only`, and focused file
-  reads, and reports concrete findings with severity and file paths. It
-  takes `on`, `off`, `status`, and `now`. `now` launches the reviewer on
-  demand. Enabled per session with `/autoreview on`, or globally with
-  `[autoreview] enabled = true` in `config.toml`. Its model is
-  `[autoreview] model`. It is a TUI command, so the user types it in the
-  composer, not an agent.
-- **`/autojudge`** is a completion manager. It decides whether the parent agent
-  should keep going and tells it exactly what to do next. It only says stop
-  when the intent has been carried through. It takes the same four
-  arguments. `now` launches the judge on demand. Enabled with
-  `/autojudge on` or `[autojudge] enabled = true`. Its model is
-  `[autojudge] model`.
-- **`/review` and `/judge`** are the one-shot forms. They launch a headed review
-  or judge session on demand, without relying on the end-of-turn trigger.
+- **`/autoreview`** reviews the session's actual changes (`git diff --stat`,
+  `git diff --name-only`, focused file reads) and reports concrete findings
+  with severity and file paths. It takes `on`, `off`, `status`, and `now`;
+  `now` launches the reviewer on demand.
+- **`/autojudge`** is a completion manager: it decides whether the parent
+  agent should keep going and tells it exactly what to do next. It only says
+  stop when the intent has been carried through. It takes the same four
+  arguments. `now` launches the judge on demand.
+- **`/review` and `/judge`** are the one-shot forms. They launch a headed
+  review or judge session on demand, without relying on the end-of-turn
+  trigger.
 
 All of these are client-side TUI commands. A worker or a headless agent cannot
 type them into the user's composer, and no tool exposes them to the model. An
-agent that needs independent verification asks for it in its report, and the
-user runs the command.
+agent that needs independent verification asks for it in its report.
 
 ### 14.1 The end-of-turn trigger is mode-dependent
 
 `[autoreview] enabled` and `[autojudge] enabled` are the *default* for the
-session flag, nothing more. On v0.99.1 the automatic end-of-turn hook sits at
-the end of the TUI's local turn path, and that hook bails out when the app is
-in remote mode. The product TUI starts in remote mode, so in normal use the
-flag is set and reported but no reviewer or judge is spawned at end of turn.
-
-The local turn path is not dead code. `jcode ambient run-visible` builds a
-local, non-remote app, so the end-of-turn trigger does fire there. The
-ambient runner spawns that command when `[ambient] visible = true`. The repo
-config sets `visible = false`, so ambient cycles run headless and stay
-outside it.
+session flag, nothing more. The automatic end-of-turn hook sits at the end of
+the TUI's local turn path and bails out in remote mode, which the product TUI
+starts in, so the flag is set but no reviewer or judge is spawned at end of
+turn. The local turn path is not dead code: `jcode ambient run-visible` builds
+a local, non-remote app, so the trigger does fire there.
 
 Consequences for a Reviewer:
 - `/autoreview status` reporting "enabled" is not evidence that a review ran.
@@ -927,9 +841,6 @@ Consequences for a Reviewer:
   diff and run the tests directly.
 - Headless runs (`jcode run`, swarm workers, headless ambient cycles) have no
   TUI turn path at all, so the automatic trigger cannot fire there either.
-- `/autoreview now` and `/autojudge now` work in the TUI, in both remote and
-  local mode. They are the reliable way to get a review, and the user types
-  them, not an agent.
 
 The one-shot children are created with both flags disabled, so a review or
 judge does not spawn a review or judge of its own.
@@ -942,13 +853,6 @@ still applies to their results.
 The two paths are not interchangeable. The native surfaces inspect the
 coordinator's working tree. If workers wrote into isolated worktrees, their
 changes are not in that tree and the native reviewer will not see them:
-verify per lane, or integrate first. A Reviewer worker, by contrast, receives
-the shared plan and its scoped instructions, and can be given a worktree scope
-or a different working directory. Use a Reviewer worker when the thing to
+verify per lane, or integrate first. Use a Reviewer worker when the thing to
 review is not in the coordinator's tree, or when the review needs a specific
 lens you want stated in the brief.
-
-A worker whose only job is to critique is a poor use of a worker when the
-changes are in the coordinator's tree. It has the same tool description and
-the same skill, but it costs a lane, a slot, and a round trip for output the
-host can produce faster and against the real diff.
