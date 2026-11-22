@@ -111,17 +111,22 @@ of that file rather than repeating them, so this table and the suite cannot
 drift apart silently. The swarm prompt's ceiling is the strict one, because it
 is the only tier whose bytes are paid on every request.
 
-A ceiling is a measured target, not a guess. Each of the three is the size of
-the compressed file rounded up to the next 500 bytes, with at least 500 bytes
-of working margin, so the check fails the moment a file grows well past the
-size it actually needs. The swarm prompt keeps the 6,000 it was given: the
-compression brought it under that number, and it is the only tier whose bytes
-are paid on every request. The first set of
-ceilings was measured against the upstream files, before the bounding rules
-existed, and it was never re-derived after the bounding machinery grew the
-overlay and the Skill. The branch's own suite failed on the branch's own
-files for exactly that reason, and the numbers above are the re-measured
-ones.
+A ceiling is a measured target, not a guess. The overlay and the Skill
+each carry a ceiling that is the size of the compressed file rounded up to
+the next 500 bytes, plus 500 bytes of working margin, so the check fails
+the moment a file grows well past the size it actually needs. The swarm
+prompt keeps the 6,000 it was given: the compression brought it to 5,930,
+so it carries 70 bytes of headroom rather than 500. That is deliberate,
+because it is the only tier whose bytes are paid on every request and the
+strictest number is the one worth keeping there.
+
+A ceiling derived from the current size is a change detector, not a budget:
+it cannot tell you that a file is too large for its purpose, only that it
+grew. The first set of ceilings was measured against the upstream files,
+before the bounding rules existed, and it was never re-derived after the
+bounding machinery grew the overlay and the Skill. The branch's own suite
+failed on the branch's own files for exactly that reason, and the numbers
+above are the re-measured ones.
 
 The structure of the tiers is asserted the same way. Section 32 of
 `scripts/test` checks that the heading hierarchy of the overlay and the Skill
