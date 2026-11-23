@@ -54,11 +54,11 @@ the target set has a verdict. Verdict established means every acceptance
 criterion has a conclusion that names its source: a file and a line, or a
 command and its output. Budget reached means the budget in section 2.3.2 is
 spent. Blocked means the next question cannot be answered with the access
-available, and answering it is not the worker's call.
+available, and answering it is not the worker's call; the worker reports the
+blocker instead of widening the search.
 
 An item already implemented is a completed check, not a gap. Report what is
-done, mark the rest unverified, and stop. Report a blocker instead of
-widening the search.
+done, mark the rest unverified, and stop.
 
 A new question reopens a closed investigation only when it could change a
 reported verdict, contradicts evidence already collected, or covers an
@@ -129,7 +129,8 @@ Read a range when you need a range.
 The read phase ends when the target set is answered (2.3.1) and the end event
 binds the next call (2.3.3). The phase after the write needs the same
 boundary: in the same 334 sessions, the median made 14 tool calls after its
-last mutation, the worst made 774 tool calls after its last file write.
+last mutation, the worst made 774 tool calls after its last file write, with
+the change unimplemented.
 
 The verification phase has a target set: the acceptance criteria, one
 check each.
@@ -704,7 +705,8 @@ Practice that makes the policy above work. It does not change the policy.
   you need to know and read only those. A named section, category, or file is
   the scope, not a licence to read the whole specification. The soft default is
   45 tool calls before the first edit, scaled to the target set at 5 tool calls
-  per target item, with a floor of 20 and a cap of 45. Once you have the shape
+  per target item, with a floor of 20 and a cap of 45; needing more requires
+saying why. Once you have the shape
   or the design, the next call is the implementation, the validation, the plan,
   or the report. See section 2.3.1, section 2.3.3, and section 2.3.4.
 - **Bound your own verification phase.** The verification phase has a target

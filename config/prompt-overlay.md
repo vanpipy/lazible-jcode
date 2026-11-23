@@ -40,12 +40,17 @@ means every item in the target set has a verdict. Verdict established means
 every acceptance criterion has a conclusion that names its source: a file and a
 line, or a command and its output. Budget reached means the budget in
 section 2.2.2 is spent. Blocked means the next question cannot be answered
-with the access available, and answering it is not the worker's call.**
+with the access available, and answering it is not the worker's call; the worker
+reports the blocker instead of widening the search.**
 A **new** question does not reopen a closed investigation unless it could change
 a verdict already reported, contradict evidence already collected, or cover a
 required acceptance criterion not yet checked at all.
 **Broadening the target set after the verdict is established is a reportable
 failure, not diligence.**
+
+A brief asking for N candidates is answered by the N verified candidates, with
+the unverified leads marked; searching for a better candidate is scope
+expansion.
 #### 2.2.2 Tool-Call Budgets
 A bounded investigation names its budget in the assignment, set before the work
 starts and unchanged while the work runs.
@@ -64,8 +69,6 @@ Do not set a budget below what a legitimate lane needs: in a corpus of 168
 coordinator-spawned lanes, investigation lanes ran 2 to 202 tool calls, median
 70. A wide multi-target lane needs a larger number, stated before dispatch.
 #### 2.2.3 The End Event Binds the Next Action
-The thresholds in 2.2.1 end an investigation, and the end event binds the next
-action.
 The failure is measured: in a corpus of 334 sessions, 1,953 sufficiency
 declarations were followed by a tool call, 78% in root rather than delegated
 lanes, and 77% by another read, search, or browse; one session ran

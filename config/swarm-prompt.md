@@ -71,8 +71,9 @@ sessions rather than delegated lanes; one ran 774 tool calls after its last
 file write. The end event happens when a threshold is met. It does not wait
 for an announcement: an agent that has met a threshold is bound whether or not
 it says so. Before its first edit, the coordinator must state the finite set
-it needs. The target set is written before the first read and frozen when it
-is written. The second read of a path needs a reason and the third stops it.
+it needs and read only those. The target set is written before the first
+read and frozen when it is written. The second read of a path needs a reason
+and the third stops it.
 **Do not read a file already read in full again without a reason.** A slice,
 a grep, or a search over that path counts as a read of it. The read budget
 is 45 tool calls, scaled at 5 tool calls per target item, floor 20, cap 45,
@@ -80,9 +81,9 @@ set before the first read.
 
 **The coordinator's own tail is bounded too.** The same corpus: a median of
 14 tool calls after the last mutation. The verification phase has a target
-set: the acceptance criteria, one check each. It ends at the first of: the
-criteria are checked, a check cannot fail, a question that could
-change the result, or the budget is spent. The verification phase
+set: the acceptance criteria, one check each, and it ends at the first of:
+the criteria are checked, a check cannot fail, a question that could change
+the result, or the budget is spent. The verification phase
 runs the project's own checks. A criterion the project's checks cannot
 falsify is reported as unverifiable, not replaced by a new oracle, a mutation
 test, or a side experiment. Files under scratch/ are neither a deliverable
