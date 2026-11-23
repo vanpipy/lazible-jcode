@@ -91,15 +91,44 @@ done
 echo ""
 echo "=== the heading structure is unchanged ==="
 
+# Three headings were renamed on purpose: the end-event rule lost the name
+# that tied it to a thing the agent had to write, and the re-read rule was
+# renamed after the counting it now does. A rename is a change to the
+# structure, so the comparison below rewrites these three sanctioned pairs in
+# the baseline before it compares. Every other heading change still fails.
+sanctioned_renames=(
+    "#### 2.2.3 A Sufficiency Declaration Binds the Next Action|#### 2.2.3 The End Event Binds the Next Action"
+    "#### 2.3.3 A Sufficiency Declaration Binds the Next Action|#### 2.3.3 The End Event Binds the Next Action"
+    "#### 2.3.4 No Second Full Read of the Same File|#### 2.3.4 No Third Read of the Same Path"
+)
+
+apply_sanctioned_renames() {
+    local line="$1" pair old new
+    for pair in "${sanctioned_renames[@]}"; do
+        old="${pair%%|*}"
+        new="${pair#*|}"
+        if [[ "$line" == "$old" ]]; then
+            line="$new"
+            break
+        fi
+    done
+    printf '%s\n' "$line"
+}
+
 for file in config/prompt-overlay.md config/skills/swarm-engineering/SKILL.md; do
     before="$(git show "$BASELINE:$file" 2>/dev/null | grep -cE '^#{1,6} ' || true)"
     after="$(grep -cE '^#{1,6} ' "$file" || true)"
     # The heading TEXT has to match, not just the count. A heading that was
     # renamed and a heading that was added in its place would keep the count.
-    before_titles="$(git show "$BASELINE:$file" 2>/dev/null | grep -E '^#{1,6} ' | sort || true)"
+    before_titles="$(
+        git show "$BASELINE:$file" 2>/dev/null \
+            | grep -E '^#{1,6} ' | sort \
+            | while IFS= read -r line; do apply_sanctioned_renames "$line"; done \
+            | sort || true
+    )"
     after_titles="$(grep -E '^#{1,6} ' "$file" | sort || true)"
     if [[ "$before_titles" == "$after_titles" ]]; then
-        pass "$file kept its $after headings, text and level"
+        pass "$file kept its $after headings, text and level, apart from the sanctioned renames"
     else
         fail "$file kept its headings"
         diff <(printf '%s\n' "$before_titles") <(printf '%s\n' "$after_titles") \

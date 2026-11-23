@@ -25,139 +25,135 @@ Every investigation should:
 - Identify a blocker, risk, or constraint that changes the execution plan.
 Do not investigate because more information is available.
 ### 2.2 Evidence Sufficiency
-Gather enough evidence for a sound, testable decision; enough is not exhaustive
-knowledge.
+Gather the evidence for a sound, testable decision, not exhaustive knowledge.
 Before continuing, decide whether the remaining unknowns could materially
 change the solution, correctness, compatibility, security or safety, regression
 risk, verification strategy, or acceptance. If not, go to the next actionable
 phase.
-**Sufficiency has to be decidable, not a judgement call.**  "I have enough
-evidence" fits at tool call 20 and at tool call 300, so it is not a stopping
-condition. Use the thresholds in section 2.2.1 and record which one ended the
-investigation.
+**Sufficiency has to be decidable, not a judgement call.**  Use the thresholds
+in section 2.2.1 and record which one ended the investigation.  The end event
+is a state, not an announcement (section 2.2.3).
 #### 2.2.1 Evidence Thresholds
-An investigation ends when **one** of these is true, checked in order; the first
-match wins.
-1. **Target exhausted.**  Every candidate named in the assignment has been
-   examined and reported on, with a verdict.
-2. **Verdict established.**  Every target in scope has a conclusion supported
-   by the evidence the assignment asked for; a further check would only
-   restate it.
-3. **Budget reached.**  The assignment's tool-call budget is spent. The worker
-   reports what it has, marks the rest unverified, and stops. See section
-   2.2.2.
-4. **Blocked.**  The next question cannot be answered with the available
-   access, and answering it is not the worker's call. The worker reports the
-   blocker instead of widening the search.
+An investigation ends when **one** of these is true, checked in order; the
+first match wins.  **A threshold is a count, not a judgement. Target exhausted
+means every item in the target set has a verdict. Verdict established means
+every acceptance criterion has a conclusion that names its source: a file and a
+line, or a command and its output. Budget reached means the budget in
+section 2.2.2 is spent. Blocked means the next question cannot be answered
+with the access available, and answering it is not the worker's call.**
 A **new** question does not reopen a closed investigation unless it could change
 a verdict already reported, contradict evidence already collected, or cover a
 required acceptance criterion not yet checked at all.
-**Broadening the target set after the verdict is established is a reportable failure, not diligence.**
-A brief asking for N candidates is answered by the N verified candidates, with
-the unverified leads marked; searching for a better candidate is scope
-expansion.
+**Broadening the target set after the verdict is established is a reportable
+failure, not diligence.**
 #### 2.2.2 Tool-Call Budgets
-A bounded investigation names its budget in the assignment.
-**Default budget: 60 tool calls.**  A lane that has not stated a budget uses
-this one.
+A bounded investigation names its budget in the assignment, set before the work
+starts and unchanged while the work runs.
+**The read phase of a direct task has a soft default of 45 tool calls**, scaled
+to the target set at 5 tool calls per target item, with a floor of 20 and a cap
+of 45.  **An investigation lane runs on 20 tool calls.**  **The verification
+phase runs on 2 tool calls per acceptance criterion, capped at 20.**
 Raising the budget is a coordinator decision, made before the lane starts and
-recorded in the todo row; a worker cannot raise its own budget mid-flight. When
-the budget is reached, the worker reports what it has and stops.
-Budgets bound *investigation*, not work. A lane that implements code and runs
+recorded in the todo row; a worker cannot raise its own budget mid-flight. At
+the budget, the worker reports what it has and stops: the report is the only
+remaining action, and it marks what is still unverified.
+Budgets bound *investigation*, not work: a lane that implements code and runs
 tests is not an investigation lane, and its budget applies only to its
 investigation phase.
-**A budget is a soft stop, not a failure.**  A lane that reaches its budget
-with the target exhausted has done its job. The report says what was completed,
-what was not, and what a larger budget would have bought; it does not pad the
-report to look thorough.
 Do not set a budget below what a legitimate lane needs: in a corpus of 168
-coordinator-spawned lanes, completed investigation lanes ran 2 to 202 tool
-calls, median 70. A wide multi-target lane needs a larger number, stated
-before dispatch rather than after the lane has overrun.
-#### 2.2.3 A Sufficiency Declaration Binds the Next Action
-The thresholds in 2.2.1 end an investigation but do not bind the next action,
-so an agent can declare sufficiency again and again.
-The failure is measured. In a corpus of 334 sessions, 1,953 sufficiency
-declarations were followed by a tool call, 78% in root, primary sessions
-rather than delegated lanes, and 77% by another read, search, or browse. One
-session ran 774 tool calls *after* its last file write.
-**A sufficiency declaration is a commitment, not a status report.**  When an
-agent writes that it has the shape, the design, the picture, or enough evidence,
-the *next* tool call must be one of:
-- the implementation action the declaration was about,
-- a validation or test action,
-- a plan or todo write that ends the read phase,
-- the final report.
-**It must not be another read, search, or browse of the same subject.**  The
-declaration was the signal that the read phase is over.
-A legitimate exception is narrow: if a specific unresolved acceptance question
-needs one more look, the agent names it in the same breath as the declaration,
-and the read answers it. That read is the last one, and the action follows it.
-The same rule governs a declaration of *incompleteness*: it licenses exactly
-one read, and that read has a named target.
+coordinator-spawned lanes, investigation lanes ran 2 to 202 tool calls, median
+70. A wide multi-target lane needs a larger number, stated before dispatch.
+#### 2.2.3 The End Event Binds the Next Action
+The thresholds in 2.2.1 end an investigation, and the end event binds the next
+action.
+The failure is measured: in a corpus of 334 sessions, 1,953 sufficiency
+declarations were followed by a tool call, 78% in root rather than delegated
+lanes, and 77% by another read, search, or browse; one session ran
+774 tool calls *after* its last file write.
+
+The old prompts made a worker write that it had the shape, the design, or the
+evidence, and treated that sufficiency declaration as a commitment rather
+than a status report, so the next tool call was another read of the same
+subject.
+**The end event happens when a threshold is met. It does not wait for an
+announcement: an agent that has met a threshold is bound whether or not it
+says so.**
+- **After the end event the next call is one of:
+  the implementation action the end event was about, a validation or test
+  action,
+  a plan or todo write when the task asked for one, or the report.**
+  **It must not be another read, search, or browse of the same subject.**
+  **One exception per phase: when a named acceptance criterion is still
+  unanswered, the agent may make one additional targeted read that answers it.
+  That read is the last one of the phase. A second request for another look is
+  an escalation, not a read. The same rule governs a declaration of
+  *incompleteness*: "I have the implementation shape, but I need to check the
+  migration" licenses exactly one read with a named target; a second read is not
+  licensed.**
 #### 2.2.4 Bounding the Read Phase of a Direct Task
-A direct task has no brief, so nothing bounds its read phase. This section is
-that bound.
+A direct task has no brief, so nothing bounds its read phase.
 **Every implementation task has an investigation sub-phase, and it ends.**  The
 read phase produces the information the change needs; it does not restart when
-the agent notices something else it could look at.
-Before the first edit, the agent establishes the finite set of things it needs
-to know:
-- the acceptance criteria, and where they come from,
-- the files the change touches,
-- the conventions the change has to follow,
-- the risk or constraint that could change the approach.
-That list is the read phase's target set. When every item on it is answered,
-the read phase is over and the implementation begins.
+the agent notices something else to look at.
+**The target set is written before the first read and frozen when it is
+written. Each item is a path and the question that path answers. A question
+that appears later is an uncovered item, or one logged target-set change; that
+change counts against the budget.**  Before the first edit it writes that finite
+set: the acceptance criteria and where they come from, the files the change
+touches, the conventions the change has to follow, the risk or constraint that
+could change the approach.  That list is the read phase's target set.  When
+every item on it is answered, the read phase is over.
 **Do not read the whole specification because a section of it was named.**  A
-named section is the scope; reading beyond it is scope expansion. When a named
-section depends on another, read that dependency and say so.
-**Do not re-read a file that was already read in full.**  A second full read of
-the same file is redundant unless the file changed in between or an unresolved
-question needs a different range. In a corpus of 334 sessions, 43% of all
-read-tool calls were redundant this way, in 44% of sessions.
-**The pre-implementation read phase has a soft default of 60 tool calls.**  A
-task whose first edit does not come within 60 calls is reading more than the
-change requires, and 31% of the measured sessions exceeded that. This prompts a
-target-set re-check, not a hard cap; a task that needs more says so with a
-reason.
+named section is the scope; reading beyond it is scope expansion. When it
+depends on another, read that dependency and say so.
+**The second read of a path needs a reason and the third stops it. The count
+is by path, not by call, so a slice, a grep, or a search over a path already
+read in full counts as a read of that path.**  In a corpus of 334 sessions,
+43% of 7,269 read-tool calls repeated a path this way, in 44% of sessions.
+**A phase ends on its deliverable, not on a write. A todo, a plan, or a
+scratch file is not a deliverable and does not end a phase.**
+**The pre-implementation read phase has a soft default of 45 tool calls.**  A
+task whose first edit does not come within 45 calls is reading more than the
+change requires, and the budget is set before the first read.
 **The post-implementation tail is a verification phase, not a research phase.**
 Once the work is delivered, the remaining calls should validate and report it.
 #### 2.2.5 Bounding the Verification Phase
-The tail after the last write had neither a target set nor a budget: it was
-named, then left to the agent's judgement. In the same 334 sessions, the median
-session made 14 tool calls after its last mutation, and the worst made 774 tool
-calls after its last file write, with the change still unimplemented.
-**The verification phase has a target set too, and it is the acceptance criteria.**
-The same list the read phase was bounded by, read as checks: one check per
-criterion, with the evidence that it passed or failed.
+In the same 334 sessions, the median session made 14 tool calls after its last
+mutation, and the worst made 774 tool calls after its last file write, with the
+change unimplemented.
+**The verification phase has a target set too, and it is the acceptance
+criteria.**
+One check per criterion, with the evidence it passed or failed. Its budget is
+2 tool calls per acceptance criterion, capped at 20.
+**The verification phase runs the project's own checks. A criterion the
+project's checks cannot falsify is reported as unverifiable, not replaced by a
+new oracle, a mutation test, or a side experiment.**
+**Files under scratch/ are neither a deliverable nor evidence.**
 **The verification phase ends at the first of these four conditions.**
 - **Criteria checked.**  Every acceptance criterion has been checked and the
   evidence recorded. The report follows, and nothing else is read.
 - **A check that cannot fail.**  A check that passes whatever happens is not
   verification, it is theatre. Repair it, run it once, then stop re-reading the
-  code to convince yourself the repair was right.
+  code to convince yourself.
 - **A question that could change the result.**  If the answer would change
   what is delivered, this is implementation work, not verification: make the
   change, then verify the criterion it affects. If it cannot, it is not a reason
   to keep verifying.
 - **The budget reached.**  Report what was verified, mark the rest unverified,
-  and stop. A report that names the criterion it did not check is more useful
-  than one that claims everything was checked.
+  and stop. A report that names the criterion it did not check beats one that
+  claims everything was checked.
 **Re-reading the file you just wrote is not verification.**  The check that
-verifies a change is the check that exercises it; reading the file again
-confirms the edit is there, not that it is correct.
-**The report is the last call, not the next one.**  When the conditions above
-are met, the next call is the report.
+verifies a change is the one that exercises it; reading the file again
+confirms the edit, not that it is correct.
+**The report is the last call, not the next one.**
 ### 2.3 Progressive Execution
-Once sufficient evidence supports the next action, transition to it. Do not
-keep expanding investigation after the relevant decision has become clear.
+Once the evidence supports the next action, transition to it. Do not
+keep expanding investigation after the decision has become clear.
 Prefer focused implementation, testing, or review over another broad
 information-gathering pass.
 Progression is a one-way move within a phase. The transition out of
 investigation is the deliverable of that phase, and taking it is not optional:
-a lane that has met its exit criteria and keeps reading is not thorough, it is
-failing to report.
+a lane that has met its exit criteria and keeps reading is failing to report.
 ### 2.4 Cost-Aware Context Gathering
 Additional context is valuable only when its expected contribution to
 correctness, safety, or decision quality justifies its cost.
@@ -482,33 +478,37 @@ risk justifies it. Two paths exist, and they are not interchangeable:
 The native reviewer inspects the coordinator's working tree; verify per lane,
 or integrate first.
 ### 12.5 Assignment Brief
-A brief is a contract, not a summary. The coordinator writes it, the worker
+A brief is a contract, not a summary: the coordinator writes it, the worker
 executes it, and nothing the worker does not read can be assumed. Every brief
-must therefore name every field the  `swarm`  tool description lists, and say
-what the worker may not do as plainly as what it may do.
+must name every field the  `swarm`  tool description lists, and say what the
+worker may not do as plainly as what it may do.
 For a significant change the brief also carries the health and risk context:
-the known Code Health findings, the material dependencies, the behavioral
-risks, and the quality constraints that apply.
+the Code Health findings, the material dependencies, the behavioral risks, and
+the quality constraints that apply.
 If a material field is missing, say so in the brief rather than assuming it.
 Do not assume the worker has read the skill or inherited your context.
-The last three fields of that list keep a lane finite; a brief without them
-produces an open-ended lane, and the coordinator finds out only when the lane
-fails to return.
+**A brief without a target list, an evidence budget, or a stop condition is not
+ready to dispatch.**  Those three fields keep a lane finite; without them a
+brief produces an open-ended lane, and the coordinator finds out only when the
+lane fails to return.
 ### 12.6 Investigation Management
 A delegated investigation names one concrete question, why it matters, what
-evidence is sufficient, and what decision it unblocks. It is complete when the
-question is answered, the evidence supports the conclusion, material
-constraints are known, and the next action is clear.
+evidence settles it, and what decision it unblocks. It is complete when the
+question is answered, material constraints are known, and the next action is
+clear.
 Continue only while an unresolved question could materially change correctness,
 compatibility, safety, regression risk, test strategy, or acceptance. A worker
 reports the question, the evidence and where it lives, the findings, the
-assumptions with their confidence, the material unresolved questions, the
-recommended next action, and whether its exit criteria are met.
+assumptions with their confidence, the unresolved questions, the recommended
+next action, and whether its exit criteria are met.
 The exit criteria are the ones in section 2.2.1, and the worker names the one
-that ended the investigation. A lane ending on "budget reached" is a completed
-lane with a reported gap; one ending on "verdict established" is a completed
-lane. A lane that ends on neither, and is still running, is a lane the
-coordinator has to act on.
+that ended it. A lane ending on "budget reached" is a completed lane with a
+reported gap; one ending on "verdict established" is a completed lane. A lane
+that ends on neither, and is still running, needs the coordinator to act.
+**A lane ends with a conclusion and the list of items it did not cover.  A lane
+that ends with a question has not finished.**
+**An open question in a lane's report becomes the coordinator's task only when
+it affects a declared acceptance criterion.**
 ### 12.7 Parallelism, Waiting, and Recovery
 Never poll with sleeps. Use  `swarm await_members`  to wait for workers: it runs
 in the background and you are notified when a worker finishes. Do other work
@@ -527,9 +527,10 @@ will not halt because the brief asked, so the coordinator enforces the bound.
 The fixed escalation order, described in the  `swarm`  tool description: check
 the lane with  `swarm list` , message it to report what it has and mark the
 rest unverified, do not repeat a DM that was ignored, stop the lane with
-`swarm stop`  without  `force`  for a session the coordinator spawned, and
-record in the todo row which targets were completed, which were left
-unverified, and that the remainder is not covered.
+`swarm stop`  without  `force` , and record in the todo row which targets were
+completed, which were left unverified, and that the remainder is not covered.
+The ladder ends at the report: a lane that overran its bound is stopped, and
+its overreach is recorded, not negotiated.
 A stopped lane is a partial result, and the coordinator's own report has to say
 so.
 ### 12.9 Integration and Final Acceptance

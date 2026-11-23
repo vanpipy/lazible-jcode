@@ -150,10 +150,10 @@ explanations of a threshold that the threshold already makes plain, examples
 that carried no claim of their own, the reasoning behind rules the rules
 already give, and the version-specific detail in the review-surface
 description. The rules themselves stayed: the four thresholds that end an
-investigation, the 60-call soft budget, the rule that a sufficiency
-declaration binds the next action, the rule against re-reading a file that
-was already read in full, the rule that the verification phase ends at the
-first of four conditions, and the rule that the report is the last call.
+investigation, the read-phase budget, the rule that the end event binds the
+next action, the rule that the second read of a path needs a reason, the rule
+that the verification phase ends at the first of four conditions, and the rule
+that the report is the last call.
 
 A rewrite can lose a rule without losing a word, and the gate is what found
 it. `scripts/rule-drop` recognises a rule by its deontic marker, so a
@@ -318,7 +318,7 @@ verdict already reported, contradicts evidence already collected, or covers
 an acceptance criterion never checked. "It would be nice to confirm" is not
 one of them.
 
-The default budget is 60 tool calls, which fits a focused single-target lane.
+The default budget is 20 tool calls, which fits a focused single-target lane.
 It bounds the *investigation* phase only. A lane that implements code and
 runs tests is not an investigation lane, and capping it would truncate real
 work. The coordinator sets a larger number before dispatch when it expects a
@@ -371,8 +371,8 @@ them root sessions and 143 swarm workers:
 | Sufficiency declarations ("I have the design. Let me ...") followed by a tool call | 1,953 |
 | Of those, in root, primary sessions rather than delegated lanes | 78% |
 | Of those, followed by another read, search, or browse | 77% |
-| Read-tool calls that were redundant, meaning the file was already read in full earlier in the same session | 43% of 7,269 |
-| Sessions containing at least one redundant read | 44% |
+| Read-tool calls that repeated a path already read in full earlier in the same session | 43% of 7,269 |
+| Sessions containing at least one repeated read | 44% |
 | Tool calls before the first mutation, median | 39 |
 | Sessions whose first mutation came after more than 60 calls | 31% |
 | Tool calls *after* the last mutation, median | 14 |
@@ -385,34 +385,54 @@ the change it was asked for, so the tail was not verification of anything.
 
 The three prompt files now close this in two parts.
 
-**A sufficiency declaration binds the next action.** Declaring that the shape,
-the design, or the picture is in hand is a commitment, not a status report. The
-next tool call is the implementation, the validation, the plan, or the report.
-It is not another read of the same subject. The one exception is narrow: a
-specific unresolved acceptance question, named in the same breath as the
-declaration, licenses one scoped read, and that read is the last one.
+**The end event binds the next action.** The end of an investigation is a
+state, not a sentence the agent writes. A threshold is met, the phase is over,
+and the next call is bound whether or not the agent says so. The next call is
+one of four: the implementation action the end event was about, a validation
+or test action, a plan or todo write when the task asked for one, or the
+report. It is not another read of the same subject. One exception per phase:
+when a named acceptance criterion is still unanswered, one targeted read that
+answers it is allowed, and that read is the last of the phase. A second request
+for another look is an escalation, not a read.
 
-**A direct task has a target set and a soft budget.** Before its first edit, the
-agent establishes the finite set of things it needs to know: the acceptance
-criteria and their source, the files the change touches, the conventions it has
-to follow, and the risk that could change the approach. When that list is
-answered, the read phase is over. Three concrete limits follow from it:
+**A direct task has a frozen target set and a budget.**
+The target set is frozen when it is written, and it is written before the
+first read. Each item is a path and the question that path answers: the
+acceptance criteria and their source, the files the change touches, the
+conventions to follow, and the risk that could change the approach. When every
+item has a verdict, the read phase is over. A question that appears later is an
+uncovered item, or one logged target-set change, which counts against the
+budget.
+
+The end criterion is countable in both phases. Every target item and every
+acceptance criterion ends with a conclusion that names its source: a file and
+a line, or a command and its output. A phase ends on its deliverable, not on a
+write: a todo, a plan, or a scratch file does not end a phase.
+
+Three limits follow from the target set:
 
 - A named section, category, or file is the scope. Reading the whole
   specification because a section of it was named is scope expansion.
-- A file already read in full is not read in full again.
-- The soft default is 60 tool calls before the first edit. 31% of the sessions
-  measured exceeded that. It is a prompt to re-check the target set, not a
-  hard cap, and a task that genuinely needs more says why.
+- The second read of a path needs a reason and the third stops it. The count
+  is by path, not by call, so a slice, a grep, or a search over a path already
+  read in full counts as a read of that path.
+- The soft default is 45 tool calls before the first edit, scaled at 5 tool
+  calls per target item, with a floor of 20 and a cap of 45. The budget is set
+  before the work starts and does not change while it runs. A lane does not
+  raise its own budget: only a coordinator raises one, and only before it
+  dispatches the work. A root with no assignment sets its own before its
+  first read, from its own target set. At the budget the report is the only
+  remaining action. The corpus median before the first mutation was 39 calls,
+  and the default sits above it.
 
 The tail after the last mutation is named as well. It is a verification phase,
 not a research phase.
 
 | File | What it holds |
 | --- | --- |
-| `config/prompt-overlay.md` | Section 2.2.3 binds a sufficiency declaration to the next action. Section 2.2.4 bounds the read phase of a direct task. |
-| `config/swarm-prompt.md` | The coordinator's own read phase, in the routing context where a coordinator reads it. |
-| `config/skills/swarm-engineering/SKILL.md` | Section 2.3.3 and 2.3.4 carry the same rules for a worker, plus a coordinator bullet in section 11. |
+| `config/prompt-overlay.md` | Section 2.2.3 states the end event and the calls it allows. Section 2.2.4 bounds the read phase of a direct task. |
+| `config/swarm-prompt.md` | The coordinator's own read phase, and the target list, the evidence budget and the stop condition in the brief contract. |
+| `config/skills/swarm-engineering/SKILL.md` | Section 2.3.3 carries the end event for a worker, section 2.3.4 the re-read rule, and section 11 the coordinator's own read phase. |
 
 These are model-guidance rules, not runtime safeguards. Jcode's tool schemas
 cannot tell an agent it read a file it already read, and the prompts cannot
@@ -422,12 +442,11 @@ runtime would be a different mechanism and is not claimed here.
 
 ## Bounding the verification phase
 
-The read phase got a target set, a budget, and a rule about what follows a
-sufficiency declaration. The tail after the last write got a name and nothing
-else, and the tail is where the worst row of the corpus sits: 774 calls after
-the last file write, with the target change unimplemented. A name is not a
-stopping condition, so the defect the fix was written to cure was still
-reachable after the fix.
+The read phase got a target set, a budget, and an end event that binds the
+next call. The tail after the last write got a name and nothing else, and the
+tail is where the worst row of the corpus sits: 774 calls after the last file
+write, with the target change unimplemented. A name is not a stopping
+condition, so the defect was still reachable after the fix.
 
 The verification phase ends at the first of four conditions.
 
@@ -440,23 +459,52 @@ The verification phase ends at the first of four conditions.
 
 The verification phase has a target set too, and it is the acceptance criteria:
 one check per criterion, the same list the read phase was bounded by, read as
-checks rather than as questions. Re-reading the file you just wrote is not
-verification, because a check that verifies a change is the check that
-exercises it. And the report is the last call, not the next one.
+checks. Re-reading the file you just wrote is not verification, because a
+check that verifies a change is the check that exercises it. And the report is
+the last call, not the next one.
+
+The verification phase runs the project's own checks. A criterion those
+checks cannot falsify is reported as unverifiable, not replaced by a new
+oracle or a side experiment. Files under scratch/ are neither a deliverable
+nor evidence.
+
+The verification phase has its own budget: 2 tool calls per acceptance
+criterion, capped at 20, set before the phase starts. A criterion the phase
+did not check is named in the report.
 
 In the same corpus, the median session made 14 tool calls after its last
-mutation. The rule above is what keeps the median short and the tail honest: a
-report that names the criterion it did not check is more useful than one that
-claims everything was checked.
+mutation. A report that names the criterion it did not check is more useful
+than one that claims everything was checked.
 
 | File | What it holds |
 | --- | --- |
 | `config/prompt-overlay.md` | Section 2.2.5 bounds the verification phase. |
 | `config/swarm-prompt.md` | The coordinator's own tail, and the lane's completion criteria as its verification target set. |
-| `config/skills/swarm-engineering/SKILL.md` | Section 2.3.5 carries the same rule for a worker, with the developer exit criteria, the tester exit criteria and a coordinator bullet in section 11 pointing at it. |
+| `config/skills/swarm-engineering/SKILL.md` | Section 2.3.5 carries the same rule for a worker, with the developer and tester exit criteria and a coordinator bullet in section 11 pointing at it. |
 
 The same limit applies as before: these are model-guidance rules, not runtime
 safeguards, and the prompts cannot hard-stop a read.
+
+## The rules as cards
+
+Each card names the audience it binds, what fires it, what ends it, its
+exception, its enforcer, and the file and section that state it. The ten
+rules, in order: threshold, budget, end event, closed set, one exception,
+frozen target set, re-read rule, verification phase, lane conclusion, brief
+completeness.
+
+| Rule | Audience | Trigger | End | Exception | Enforcer | Where it is stated |
+| --- | --- | --- | --- | --- | --- | --- |
+| Threshold | both | One of four thresholds is met: target exhausted, verdict established, budget reached, or blocked. | The investigation ends; the next call is bound by the closed set. | none | The report names the threshold; the coordinator checks it against the target list and budget. | `config/prompt-overlay.md` section 2.2.1 and `config/skills/swarm-engineering/SKILL.md` section 2.3.1, both titled "Evidence Thresholds" |
+| Budget | both | The number is written down before the first read: 45 tool calls for a direct task, scaled at 5 tool calls per target item, floor 20, cap 45, 20 tool calls for an investigation lane, 2 tool calls per acceptance criterion capped at 20 for verification. | The budget is spent; the report is the only action left. | none | The brief carries the number; only a coordinator raises one, before dispatch. The coordinator's own read phase follows the same rules. | `config/prompt-overlay.md` section 2.2.2 and `config/skills/swarm-engineering/SKILL.md` section 2.3.2, both titled "Tool-Call Budgets"; the skill's read budget is in section 11 and its verification budget in section 2.3.5; `config/swarm-prompt.md`, brief contract, evidence budget |
+| End event | both | A threshold is met. The end event does not wait for an announcement: an agent that met a threshold is bound whether or not it says so. | The phase ends; the next call is bound. | none | The report records the end event; the coordinator checks the next call. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
+| Closed set | both | The end event has happened. | The next call is one of four: the implementation action the end event was about, a validation or test action, a plan or todo write when the task asked for one, or the report. | one targeted read that answers a named acceptance criterion | The report shows the next call; the coordinator stops a lane that reads. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
+| One exception | both | A named acceptance criterion is still unanswered when the end event happens. | One more targeted read answers it, and that read is the last of the phase. A second request for another look is an escalation, not a read. | none | The report names the criterion and the read; the coordinator takes the escalation. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
+| Frozen target set | both | Before the first read the target set is written. Each item is a path and the question it answers: the acceptance criteria and their source, the files the change touches. | Every item has a verdict, or the item is listed as uncovered in the report. | one logged target-set change, which counts against the budget | The brief carries the target list; the report lists the items not covered; the coordinator stops a widened set. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/swarm-prompt.md`, brief contract, target list |
+| Re-read rule | both | A path is read again. The count is by path, not by call, so a slice, a grep, or a search over a path already read in full counts as a read of that path. | The third read of the same path stops the phase; the second read needs a stated reason. | one second read of the same path, with a stated reason | The report records the reads; the coordinator stops the third. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/skills/swarm-engineering/SKILL.md` section 2.3.4 No Third Read of the Same Path |
+| Verification phase | both | The deliverable is written. The target set is the acceptance criteria, one check each, run as the project's own checks. | The first of four conditions: criteria checked, a check that cannot fail, a question that could change the result, or the budget of 2 tool calls per acceptance criterion reached. | none | The report names each criterion checked and each left unverified. | `config/prompt-overlay.md` section 2.2.5 and `config/skills/swarm-engineering/SKILL.md` section 2.3.5, both titled "Bounding the Verification Phase"; `config/swarm-prompt.md`, the coordinator's own tail |
+| Lane conclusion | lane | The lane's budget is spent, or its target set is answered. An open question becomes a coordinator task only when it affects a declared acceptance criterion. | The lane ends with a conclusion and the items it did not cover. | none | The coordinator closes the lane and records the uncovered items in the todo row. | `config/prompt-overlay.md` section 12.6 Investigation Management and section 12.8 Enforcing a Lane's Bound; `config/swarm-prompt.md`, brief contract, stop condition; `config/skills/swarm-engineering/SKILL.md` section 11.1 Stopping a Lane That Overran Its Brief, for a lane stopped at its bound |
+| Brief completeness | root | A brief is written for a lane. | The brief carries the role and objective, the scope, the evidence, the acceptance criteria, the validation, the ownership, the dependencies, the report contract, the target list, the evidence budget and the stop condition. A brief without a target list, an evidence budget, or a stop condition is not ready to dispatch. | none | The coordinator names the missing field instead of assuming it. | `config/prompt-overlay.md` section 12.5 Assignment Brief; `config/swarm-prompt.md`, brief contract |
 
 ## Native review surfaces
 
@@ -737,6 +785,12 @@ and the rule check. `scripts/rule-drop` is the part of that gate that
 catches a lost policy, and it is worth knowing what it does and does not
 prove.
 
+The heading check compares a tier's headings with the baseline's, so a renamed
+heading fails it. Three renames are sanctioned and only three: the overlay's
+`#### 2.2.3` and the skill's `#### 2.3.3` now name the end event, and the
+skill's `#### 2.3.4` names the third read. Every other heading keeps its
+number, its text, and its level.
+
 A byte count cannot see a dropped rule, and the first version of the rule
 check could not either. It scored each rule by content-word coverage over the
 whole rewritten file, so a rule whose words survived somewhere else in the
@@ -898,7 +952,7 @@ install puts the repo's copy back.
 
 It also checks the read-phase safeguard. Section 30 asserts that all three
 prompt files carry the rule, that they quote the same measured numbers, and
-that the 60-call budget is the only one they quote. The legacy swarm
+that every budget they quote is 45 tool calls or 20 tool calls. The legacy swarm
 safeguard is asserted still to be present, because the two are separate
 mechanisms and this one does not replace it.
 
@@ -938,12 +992,6 @@ It checks the verification-phase section of this README the same way: its
 claims are quoted back and asserted, the section numbers it points at are
 checked against the actual headings in the prompt files, and the headings are
 checked by number *and* title.
-
-It also checks the read-phase section of this README. The claims it makes
-are quoted back and asserted, the section numbers it points at are checked
-against the actual headings in the prompt files, and the headings are checked
-by number *and* title, because a section can keep its number and change
-what it holds.
 
 That matters because a README can drift from the code while every other test
 still passes. A claim in prose has no test behind it unless something checks

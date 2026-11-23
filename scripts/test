@@ -1957,15 +1957,21 @@ SKILLMD="$REPO/config/skills/swarm-engineering/SKILL.md"
 # A safeguard that only reached the Skill would not have reached the session
 # that exhibited the problem.
 
-assert_contains_wrapped "the overlay binds a sufficiency declaration to the next action" \
-    "A Sufficiency Declaration Binds the Next Action" "$(cat "$OVERLAY")"
+assert_contains_wrapped "the overlay binds the end event to the next action" \
+    "The End Event Binds the Next Action" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay says the end event does not wait for an announcement" \
+    "The end event happens when a threshold is met" "$(cat "$OVERLAY")"
 
 assert_contains_wrapped "the overlay names the next action as implementation or validation" \
-    "the implementation action the declaration was about" "$(cat "$OVERLAY")"
+    "the implementation action the end event was about" "$(cat "$OVERLAY")"
 
-assert_contains_wrapped "the overlay forbids a read right after a sufficiency declaration" \
+assert_contains_wrapped "the overlay forbids a read right after the end event" \
     "It must not be another read, search, or browse of the same subject" \
     "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay grants one exception per phase" \
+    "One exception per phase" "$(cat "$OVERLAY")"
 
 assert_contains_wrapped "the overlay bounds the read phase of a direct task" \
     "Bounding the Read Phase of a Direct Task" "$(cat "$OVERLAY")"
@@ -1973,11 +1979,22 @@ assert_contains_wrapped "the overlay bounds the read phase of a direct task" \
 assert_contains_wrapped "the overlay gives the read phase a target set" \
     "That list is the read phase's target set" "$(cat "$OVERLAY")"
 
-assert_contains_wrapped "the overlay forbids a second full read of the same file" \
-    "Do not re-read a file that was already read in full" "$(cat "$OVERLAY")"
+assert_contains_wrapped "the overlay freezes the target set when it is written" \
+    "The target set is written before the first read and frozen when it is written" \
+    "$(cat "$OVERLAY")"
 
-assert_contains_wrapped "the overlay states a soft budget for the read phase" \
-    "soft default of 60 tool calls" "$(cat "$OVERLAY")"
+assert_contains_wrapped "the overlay counts the re-read rule by path" \
+    "The second read of a path needs a reason and the third stops it" \
+    "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay ends a phase on its deliverable" \
+    "A phase ends on its deliverable, not on a write" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay states the budget for the read phase" \
+    "soft default of 45 tool calls" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay states the budget for an investigation lane" \
+    "An investigation lane runs on 20 tool calls" "$(cat "$OVERLAY")"
 
 assert_contains_wrapped "the overlay names the post-implementation tail as verification" \
     "The post-implementation tail is a verification phase" "$(cat "$OVERLAY")"
@@ -1988,15 +2005,155 @@ assert_contains_wrapped "the overlay names the post-implementation tail as verif
 assert_contains_wrapped "the swarm prompt bounds the coordinator's own read phase" \
     "The coordinator's own read phase is bounded too" "$(cat "$SWARMPROMPT")"
 
-# The Skill carries the same rules in more detail for a worker that loads it.
-assert_contains_wrapped "the skill binds a sufficiency declaration to the next action" \
-    "A Sufficiency Declaration Binds the Next Action" "$(cat "$SKILLMD")"
+assert_contains_wrapped "the swarm prompt gives the coordinator the lane's rules" \
+    "The coordinator's own read phase, budget, and stop condition are the same rules a lane follows" \
+    "$(cat "$SWARMPROMPT")"
 
-assert_contains_wrapped "the skill forbids a second full read of the same file" \
-    "No Second Full Read of the Same File" "$(cat "$SKILLMD")"
+assert_contains_wrapped "the swarm prompt freezes the coordinator's target set" \
+    "The target set is written before the first read and frozen when it is written" \
+    "$(cat "$SWARMPROMPT")"
+
+assert_contains_wrapped "the swarm prompt counts the re-read rule by path" \
+    "The second read of a path needs a reason and the third stops it" \
+    "$(cat "$SWARMPROMPT")"
+
+# The Skill carries the same rules in more detail for a worker that loads it.
+assert_contains_wrapped "the skill binds the end event to the next action" \
+    "The End Event Binds the Next Action" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill counts the re-read rule by path" \
+    "The second read of a path needs a reason and the third stops it" \
+    "$(cat "$SKILLMD")"
 
 assert_contains_wrapped "the skill bounds the coordinator's own read phase" \
     "Bound your own read phase" "$(cat "$SKILLMD")"
+
+# The four thresholds are counted, not judged. Each one is asserted in the
+# tier that states it, so a tier that loses one of them fails the suite
+# instead of quietly narrowing the rule.
+assert_contains_wrapped "the overlay says a threshold is a count, not a judgement" \
+    "A threshold is a count, not a judgement" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay counts the target-exhausted threshold" \
+    "Target exhausted means every item in the target set has a verdict" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay counts the verdict-established threshold" \
+    "Verdict established means every acceptance criterion has a conclusion" \
+    "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay counts the budget-reached threshold" \
+    "Budget reached means the budget in section 2.2.2 is spent" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay counts the blocked threshold" \
+    "Blocked means the next question cannot be answered with the access available" \
+    "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill says a threshold is a count, not a judgement" \
+    "A threshold is a count, not a judgement" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill counts the target-exhausted threshold" \
+    "Target exhausted means every item in the target set has a verdict" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill counts the verdict-established threshold" \
+    "Verdict established means every acceptance criterion has a conclusion" \
+    "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill counts the budget-reached threshold" \
+    "Budget reached means the budget in section 2.3.2 is spent" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill counts the blocked threshold" \
+    "Blocked means the next question cannot be answered with the access available" \
+    "$(cat "$SKILLMD")"
+
+# The end event binds whether or not it is announced, and the one exception is
+# exactly one read: the clause that carries the criterion is asserted.
+assert_contains_wrapped "the overlay says the end event does not wait for an announcement" \
+    "It does not wait for an announcement: an agent that has met a threshold is bound whether or not it says so" \
+    "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill says the end event does not wait for an announcement" \
+    "It does not wait for an announcement: an agent that has met a threshold is bound whether or not it says so" \
+    "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the overlay closes the one exception with the last read" \
+    "That read is the last one of the phase" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill closes the one exception with the last read" \
+    "That read is the last one of the phase" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the overlay calls a second request an escalation" \
+    "A second request for another look is an escalation, not a read" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill calls a second request an escalation" \
+    "A second request for another look is an escalation, not a read" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill names the next action as implementation or validation" \
+    "the implementation action the end event was about" "$(cat "$SKILLMD")"
+
+# The target set is frozen when it is written: each item is a path and the
+# question it answers, and a question that appears later costs budget.
+assert_contains_wrapped "the overlay names the target set items" \
+    "Each item is a path and the question that path answers" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay counts a later question against the budget" \
+    "A question that appears later is an uncovered item, or one logged target-set change; that change counts against the budget" \
+    "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the overlay says a scratch file does not end a phase" \
+    "A todo, a plan, or a scratch file is not a deliverable and does not end a phase" \
+    "$(cat "$OVERLAY")"
+
+# A scratch file is not evidence either, in every tier that says so.
+assert_contains_wrapped "the overlay says scratch files are not evidence" \
+    "Files under scratch/ are neither a deliverable nor evidence" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill says scratch files are not evidence" \
+    "Files under scratch/ are neither a deliverable nor evidence" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the swarm prompt says scratch files are not evidence" \
+    "Files under scratch/ are neither a deliverable nor evidence" "$(cat "$SWARMPROMPT")"
+
+# A lane ends with a conclusion, and only a question that touches a declared
+# acceptance criterion becomes the coordinator's task.
+assert_contains_wrapped "the overlay ends a lane with a conclusion" \
+    "A lane ends with a conclusion and the list of items it did not cover" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the swarm prompt ends a lane with a conclusion" \
+    "A lane ends with a conclusion and the list of items it did not cover" "$(cat "$SWARMPROMPT")"
+
+assert_contains_wrapped "the overlay refuses an incomplete brief" \
+    "A brief without a target list, an evidence budget, or a stop condition is not ready to dispatch" \
+    "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the swarm prompt refuses an incomplete brief" \
+    "A brief without a target list, an evidence budget, or a stop condition is not ready to dispatch" \
+    "$(cat "$SWARMPROMPT")"
+
+assert_contains_wrapped "the overlay turns an open question into a task only when it matters" \
+    "An open question in a lane's report becomes the coordinator's task only when it affects a declared acceptance criterion" \
+    "$(cat "$OVERLAY")"
+
+# The budgets are stated the same way in every tier that states them.
+assert_contains_wrapped "the overlay scales the read budget per target item" \
+    "5 tool calls per target item" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the swarm prompt scales the read budget per target item" \
+    "5 tool calls per target item" "$(cat "$SWARMPROMPT")"
+
+assert_contains_wrapped "the overlay floors and caps the read budget" \
+    "with a floor of 20 and a cap of 45" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the swarm prompt floors the read budget" \
+    "floor 20" "$(cat "$SWARMPROMPT")"
+
+assert_contains_wrapped "the skill states the lane budget" \
+    "An investigation lane's budget is 20 tool calls" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill scales the read budget per target item" \
+    "5 tool calls per target item" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the skill floors and caps the read budget" \
+    "with a floor of 20 and a cap of 45" "$(cat "$SKILLMD")"
 
 # The three files quote the same numbers. If one of them is edited alone, the
 # numbers drift and the three tiers start telling the agent different stories.
@@ -2004,13 +2161,23 @@ assert_contains_wrapped "the skill bounds the coordinator's own read phase" \
 # The figures are the ones the README's evidence table carries, and they are
 # measured, not invented. They are asserted here so that a future edit that
 # changes one of them without changing the others fails the suite.
+#
+# The corpus figures are shared by all three tiers. The budget figures are
+# shared by the tiers that state a budget: the read-phase budget belongs to
+# the two always-on tiers, and the lane budget belongs to all three, because
+# every lane runs on it.
 for f in "$OVERLAY" "$SWARMPROMPT" "$SKILLMD"; do
     assert_contains_wrapped "the read-phase evidence in $(basename "$f") cites 334 sessions" \
         "334 sessions" "$(cat "$f")"
     assert_contains_wrapped "the read-phase evidence in $(basename "$f") cites 774 post-write calls" \
         "774 tool calls" "$(cat "$f")"
-    assert_contains_wrapped "the read-phase evidence in $(basename "$f") cites the 60-call soft budget" \
-        "60 tool calls" "$(cat "$f")"
+    assert_contains_wrapped "the lane budget in $(basename "$f") is 20 tool calls" \
+        "20 tool calls" "$(cat "$f")"
+done
+
+for f in "$OVERLAY" "$SWARMPROMPT"; do
+    assert_contains_wrapped "the read-phase budget in $(basename "$f") is 45 tool calls" \
+        "45 tool calls" "$(cat "$f")"
 done
 
 # The overlay and the Skill must not drift apart on the headline share of
@@ -2034,31 +2201,62 @@ assert_heading "the overlay holds the swarm investigation thresholds" \
 assert_heading "the overlay holds the swarm investigation budget" \
     "#### 2.2.2 Tool-Call Budgets" "$OVERLAY"
 
+assert_heading "the overlay holds the end-event rule" \
+    "#### 2.2.3 The End Event Binds the Next Action" "$OVERLAY"
+
 assert_heading "the overlay holds the lane escalation order" \
     "### 12.8 Enforcing a Lane's Bound" "$OVERLAY"
 
-# The read-phase budget is one number, and it is stated in several places in
-# the same file. A cross-reference that quotes a different number would send
-# an agent a budget the rule does not use, so the file is scanned for every
-# figure attached to "tool calls" and every one of them has to be the same.
+assert_heading "the skill holds the end-event rule" \
+    "#### 2.3.3 The End Event Binds the Next Action" "$SKILLMD"
+
+assert_heading "the skill holds the path-counted re-read rule" \
+    "#### 2.3.4 No Third Read of the Same Path" "$SKILLMD"
+
+# The tool-call figures are one closed set. A figure that is neither a budget
+# figure nor a measured corpus figure is a number no tier can justify, and a
+# budget figure from an older rule is worse: it tells the agent two budgets.
 #
-# The swarm-lane corpus figures are deliberately not checked here. They are
-# from a different corpus and a different mechanism, and the file states them
-# in prose rather than in the read-phase form.
+# The allowed budget figures are 45 (the read phase), 20 (a lane), 5 (one read
+# phase budget per target item) and 2 (one verification call per acceptance
+# criterion). The allowed corpus figures are the measured ones: 14, 39, 70,
+# 202 and 774. The old rule required one figure to be present and one to be
+# absent; this one accepts only what the rules and the evidence allow.
 for f in "$OVERLAY" "$SWARMPROMPT" "$SKILLMD"; do
     call_budgets="$(grep -o '[0-9][0-9]* tool calls' "$f" | sort -u | tr '\n' ' ')"
-    # The swarm prompt and the Skill carry the swarm-lane figures too, so only
-    # the figures that the read-phase rule introduces are required here.
-    if [[ "$call_budgets" == *"60 tool calls"* ]]; then
-        ok "the read-phase budget in $(basename "$f") is 60 tool calls"
+    stray=""
+    # The figures are read one phrase at a time. A plain word-splitting loop
+    # would iterate "14", "tool", "calls" and compare those against the
+    # allowed phrases, so every tier would be reported as carrying a stray
+    # figure even when every figure it carries is allowed.
+    while IFS= read -r figure; do
+        [[ -z "$figure" ]] && continue
+        case "$figure" in
+            "2 tool calls"|"5 tool calls"|"14 tool calls"|"20 tool calls"|\
+            "39 tool calls"|"45 tool calls"|"70 tool calls"|\
+            "202 tool calls"|"774 tool calls")
+                ;;
+            *)
+                stray="$stray $figure"
+                ;;
+        esac
+    done < <(grep -o '[0-9][0-9]* tool calls' "$f" | sort -u)
+    if [[ -z "$stray" ]]; then
+        ok "every tool-call figure in $(basename "$f") is a budget or a measured figure"
     else
-        bad "the read-phase budget in $(basename "$f") is 60 tool calls" \
+        bad "every tool-call figure in $(basename "$f") is a budget or a measured figure" \
+            "the file says:$stray"
+    fi
+    if [[ "$call_budgets" != *"60 tool calls"* ]]; then
+        ok "the tool-call figures in $(basename "$f") carry no stale 60-call budget"
+    else
+        bad "the tool-call figures in $(basename "$f") carry no stale 60-call budget" \
             "the file says: $call_budgets"
     fi
     if [[ "$call_budgets" != *"30 tool calls"* ]]; then
-        ok "the read-phase budget in $(basename "$f") has no stray 30-call figure"
+        ok "the tool-call figures in $(basename "$f") have no stray 30-call figure"
     else
-        bad "the read-phase budget in $(basename "$f") has no stray 30-call figure" \
+        bad "the tool-call figures in $(basename "$f") have no stray 30-call figure" \
             "the file says: $call_budgets"
     fi
 done
@@ -2128,14 +2326,57 @@ assert_contains_wrapped "the skill's coordinator practice bounds its own tail" \
 
 # The role sections and the phase-progression section have to point at the
 # rule. A worker that reads only its own role section never learns it.
+#
+# The pointer is checked in two parts. The section number carries the target
+# and the clause carries the claim, so a sentence that names the verification
+# section passes whether or not the section's title is repeated inside it.
+assert_contains_wrapped "the skill's phase progression names the verification section" \
+    "Section 2.3.5" "$(cat "$SKILLMD")"
+
 assert_contains_wrapped "the skill's phase progression points at the verification rule" \
-    "Section 2.3.5 does the same for the phase after the write" "$(cat "$SKILLMD")"
+    "does the same for the phase after the write" "$(cat "$SKILLMD")"
 
 assert_contains_wrapped "the skill's developer exit criteria cover the validation phase" \
     "The validation phase after the implementation has the same shape" "$(cat "$SKILLMD")"
 
 assert_contains_wrapped "the skill's tester exit criteria cover a check that cannot fail" \
     "A check that passes whatever happens is not evidence" "$(cat "$SKILLMD")"
+
+# The verification phase runs the project's own checks, and a criterion they
+# cannot falsify is reported as unverifiable rather than replaced.
+assert_contains_wrapped "the overlay runs the project's own checks" \
+    "The verification phase runs the project's own checks" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill runs the project's own checks" \
+    "The verification phase runs the project's own checks" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the swarm prompt runs the project's own checks" \
+    "The verification phase runs the project's own checks" "$(cat "$SWARMPROMPT")"
+
+assert_contains_wrapped "the overlay reports an unverifiable criterion" \
+    "reported as unverifiable, not replaced by a new oracle" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill reports an unverifiable criterion" \
+    "reported as unverifiable, not replaced by a new oracle" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the swarm prompt reports an unverifiable criterion" \
+    "reported as unverifiable, not replaced by a new oracle" "$(cat "$SWARMPROMPT")"
+
+# The verification budget is stated the same way in every tier that states it.
+assert_contains_wrapped "the overlay sets the verification budget per criterion" \
+    "2 tool calls per acceptance criterion" "$(cat "$OVERLAY")"
+
+assert_contains_wrapped "the skill sets the verification budget per criterion" \
+    "2 tool calls per acceptance criterion" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the swarm prompt sets the verification budget per criterion" \
+    "2 tool calls per acceptance criterion" "$(cat "$SWARMPROMPT")"
+
+assert_contains_wrapped "the skill caps the verification budget" \
+    "capped at 20" "$(cat "$SKILLMD")"
+
+assert_contains_wrapped "the overlay caps the verification budget" \
+    "capped at 20" "$(cat "$OVERLAY")"
 
 # The three files quote the same tail figures. Section 30 asserts they agree
 # on the corpus they cite; this asserts the post-write tail specifically,
@@ -2245,6 +2486,36 @@ else
         "the ceiling is $SKILL_MAX_BYTES"
 fi
 
+# The line shape of a tier is part of its structure. A trailing space is
+# invisible in review and survives every content check; a runaway line is a
+# line the file's own wrapping broke. Neither is reachable by a prose
+# check, so both are checked here.
+#
+# The limit is 240 characters because the longest line the three tiers
+# already carry is 225: the Skill's frontmatter description. The check is a
+# bound, not the wrap width; the wrap width is a convention the files keep
+# by hand, and this one only catches the line that was never wrapped at all.
+TIER_LINE_MAX=240
+for f in "$OVERLAY" "$SWARMPROMPT" "$SKILLMD"; do
+    base="$(basename "$f")"
+
+    ws_lines="$(tr -d '\r' < "$f" | grep -c '[[:space:]]$' || true)"
+    if [[ "$ws_lines" -eq 0 ]]; then
+        ok "$base has no trailing whitespace"
+    else
+        bad "$base has no trailing whitespace" \
+            "$ws_lines line(s) end in whitespace"
+    fi
+
+    long_lines="$(tr -d '\r' < "$f" | awk -v max="$TIER_LINE_MAX" 'length > max { c++ } END { print c + 0 }')"
+    if [[ "$long_lines" -eq 0 ]]; then
+        ok "$base has no line longer than $TIER_LINE_MAX characters"
+    else
+        bad "$base has no line longer than $TIER_LINE_MAX characters" \
+            "$long_lines line(s) exceed the limit"
+    fi
+done
+
 # The heading hierarchy is the part of these files that no prose check can
 # reach. The sections are numbered, the files cross-reference each other by
 # number, and a demoted or promoted heading breaks both the outline and the
@@ -2351,8 +2622,8 @@ assert_heading "the overlay nests its evidence thresholds one level deeper" \
 assert_heading "the overlay nests its tool-call budgets one level deeper" \
     "#### 2.2.2 Tool-Call Budgets" "$OVERLAY"
 
-assert_heading "the overlay nests its sufficiency declaration one level deeper" \
-    "#### 2.2.3 A Sufficiency Declaration Binds the Next Action" "$OVERLAY"
+assert_heading "the overlay nests its end-event rule one level deeper" \
+    "#### 2.2.3 The End Event Binds the Next Action" "$OVERLAY"
 
 assert_heading "the overlay nests its read-phase bound one level deeper" \
     "#### 2.2.4 Bounding the Read Phase of a Direct Task" "$OVERLAY"

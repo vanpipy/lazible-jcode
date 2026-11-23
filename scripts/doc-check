@@ -1135,18 +1135,18 @@ echo "=== the README's read-phase claims hold ==="
 
 check_claim "the README states the read-phase section" \
     "## Bounding the read phase of a direct task"
-check_claim_wrapped "the README says a sufficiency declaration binds the next action" \
-    "A sufficiency declaration binds the next action"
+check_claim_wrapped "the README says the end event binds the next action" \
+    "The end event binds the next action"
 check_claim_wrapped "the README names the four things the target set covers" \
     "the acceptance criteria and their source, the files the change touches"
 check_claim_wrapped "the README says a named section is the scope" \
     "A named section, category, or file is the scope"
-check_claim_wrapped "the README says a file read in full is not read in full again" \
-    "A file already read in full is not read in full again"
-check_claim_wrapped "the README states the soft budget for the read phase" \
-    "The soft default is 60 tool calls before the first edit"
-check_claim_wrapped "the README says the soft budget is not a hard cap" \
-    "It is a prompt to re-check the target set, not a hard cap"
+check_claim_wrapped "the README says the second read of a path needs a reason" \
+    "The second read of a path needs a reason and the third stops it"
+check_claim_wrapped "the README states the budget for the read phase" \
+    "The soft default is 45 tool calls before the first edit"
+check_claim_wrapped "the README says the target set is frozen" \
+    "The target set is frozen when it is written"
 check_claim_wrapped "the README names the post-implementation tail" \
     "It is a verification phase, not a research phase"
 check_claim_wrapped "the README distinguishes model guidance from a runtime safeguard" \
@@ -1176,10 +1176,10 @@ skill="$REPO/config/skills/swarm-engineering/SKILL.md"
 swarm_prompt="$REPO/config/swarm-prompt.md"
 
 for pair in \
-    "$overlay|2.2.3|A Sufficiency Declaration Binds the Next Action" \
+    "$overlay|2.2.3|The End Event Binds the Next Action" \
     "$overlay|2.2.4|Bounding the Read Phase of a Direct Task" \
-    "$skill|2.3.3|A Sufficiency Declaration Binds the Next Action" \
-    "$skill|2.3.4|No Second Full Read of the Same File"
+    "$skill|2.3.3|The End Event Binds the Next Action" \
+    "$skill|2.3.4|No Third Read of the Same Path"
 do
     f="${pair%%|*}"
     rest="${pair#*|}"
@@ -1188,7 +1188,10 @@ do
     # The carriage return a CRLF checkout leaves at the end of a heading is
     # stripped before the match, so the anchored pattern stays exact and
     # the check holds on the host that runs it, not only on an LF checkout.
-    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n} ${title}$"; then
+    # The dots in a section number are dots. Without the escape they are
+    # wildcards, and a check that matches the wrong heading cannot fail.
+    n_re="${n//./\\.}"
+    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n_re} ${title}$"; then
         ok "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")"
     else
         bad "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")" \
@@ -1255,7 +1258,8 @@ do
     rest="${pair#*|}"
     n="${rest%%|*}"
     title="${rest#*|}"
-    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n} ${title}$"; then
+    n_re="${n//./\\.}"
+    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n_re} ${title}$"; then
         ok "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")"
     else
         bad "section $n still exists in $(basename "$(dirname "$f")")/$(basename "$f")" \
@@ -1485,7 +1489,8 @@ do
     # "## 13. Requirement Handover". A subsection does not, so
     # "### 2.7 Code Health and Change Risk Assessment". The period is
     # therefore optional here.
-    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n}\.? ${title}$"; then
+    n_re="${n//./\\.}"
+    if tr -d '\r' < "$f" | grep -qE "^#{2,6} ${n_re}\.? ${title}$"; then
         ok "section $n still exists in $(basename "$f")"
     else
         bad "section $n still exists in $(basename "$f")" \
@@ -1567,6 +1572,121 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
 else
     ok "the historical byte figures are checked against the history"
 fi
+
+# ---------------------------------------------------------------------------
+# 8e. the rule cards
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== the README's rule cards hold ==="
+
+# The cards are the reader's map of the rules: who each one binds, what fires
+# it, what ends it, what excepts it, what enforces it, and where it is
+# written. A card with a missing column loses one of those answers, so the
+# columns are checked for presence and for content, and each card's pointer
+# is checked against the file it names.
+
+check_claim "the README has a rule-card section" \
+    "## The rules as cards"
+
+cards_section="$(
+    awk '/^## The rules as cards/{inside=1; next} inside && /^## /{exit} inside{print}' \
+        "$README"
+)"
+
+card_header='| Rule | Audience | Trigger | End | Exception | Enforcer | Where it is stated |'
+if [[ "$(printf '%s\n' "$cards_section" | grep -m1 '^| Rule |')" == "$card_header" ]]; then
+    ok "the rule cards name every column"
+else
+    bad "the rule cards name every column" \
+        "expected: $card_header"
+fi
+
+card_rows="$(
+    printf '%s\n' "$cards_section" \
+        | grep '^|' \
+        | grep -v '^| ---' \
+        | grep -v '^| Rule |'
+)"
+
+card_count="$(printf '%s\n' "$card_rows" | grep -c '|' || true)"
+if [[ "$card_count" -eq 10 ]]; then
+    ok "the rule cards hold ten rules"
+else
+    bad "the rule cards hold ten rules" \
+        "found $card_count card rows"
+fi
+
+for rule in \
+    Threshold Budget "End event" "Closed set" "One exception" \
+    "Frozen target set" "Re-read rule" "Verification phase" \
+    "Lane conclusion" "Brief completeness"
+do
+    if printf '%s\n' "$card_rows" | grep -q "^| ${rule} |"; then
+        ok "the rule card for $rule is present"
+    else
+        bad "the rule card for $rule is present" \
+            "no card row names it"
+    fi
+done
+
+# Every cell of every card has to hold something. A card with an empty cell
+# is a rule the reader cannot apply.
+empty_cells="$(
+    printf '%s\n' "$card_rows" \
+        | awk -F'|' '{
+            for (i = 2; i <= 7; i++) {
+                cell = $i
+                gsub(/^[ \t]+|[ \t]+$/, "", cell)
+                if (cell == "") {
+                    name = $2
+                    gsub(/^[ \t]+|[ \t]+$/, "", name)
+                    print name " column " (i - 1)
+                }
+            }
+        }'
+)"
+if [[ -z "$empty_cells" ]]; then
+    ok "every card fills its audience, trigger, end, exception and enforcer"
+else
+    bad "every card fills its audience, trigger, end, exception and enforcer" \
+        "$empty_cells"
+fi
+
+# Each card says where its rule is written. The pointer has to resolve: the
+# section it names has to exist in the file it names.
+while IFS= read -r row; do
+    [[ -z "$row" ]] && continue
+    rule_name="$(printf '%s\n' "$row" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')"
+    where="$(printf '%s\n' "$row" | awk -F'|' '{print $8}')"
+    refs="$(
+        printf '%s\n' "$where" \
+            | grep -oE 'config/[A-Za-z0-9_./-]+\.md|section [0-9]+(\.[0-9]+)*' || true
+    )"
+    last_file=""
+    while IFS= read -r ref; do
+        [[ -z "$ref" ]] && continue
+        case "$ref" in
+            config/*)
+                last_file="$ref"
+                ;;
+            section\ *)
+                n="${ref#section }"
+                if [[ -n "$last_file" ]]; then
+                n_re="${n//./\\.}"
+                    path="$REPO/$last_file"
+                    if [[ -f "$path" ]] \
+                        && tr -d '\r' < "$path" | grep -qE "^#{2,6} ${n_re}\.? "; then
+                        ok "the card for $rule_name points at a section that exists in $last_file"
+                    else
+                        bad "the card for $rule_name points at a section that exists in $last_file" \
+                            "no heading '$n' in $last_file"
+                    fi
+                fi
+                ;;
+        esac
+    done <<< "$refs"
+done <<< "$card_rows"
 
 # ---------------------------------------------------------------------------
 # 9. the historical cleanup claims

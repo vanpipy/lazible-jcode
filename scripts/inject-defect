@@ -96,9 +96,8 @@ DEFECTS = [
         "long-line",
         OVERLAY,
         lambda t: t.replace(
-            "## 3. Understand the Objective",
-            "## 3. Understand the Objective "
-            + "and the constraints that bound it",
+            "## 3. Understand the Objective\n",
+            "## 3. Understand the Objective\n" + ("x" * 400) + "\n",
             1,
         ),
         ("test",),
