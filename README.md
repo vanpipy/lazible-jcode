@@ -103,7 +103,7 @@ without losing policy:
 | --- | --- | --- | --- | --- |
 | `config/swarm-prompt.md` | 6,000 | 5,959 | 41 | sent on every request in every session |
 | `config/prompt-overlay.md` | 33,500 | 33,180 | 320 | loaded once per session |
-| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 35,934 | 1,566 | loaded only when the Skill is activated |
+| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 35,938 | 1,562 | loaded only when the Skill is activated |
 
 The swarm prompt's ceiling is the strict one, because it is the only tier whose
 bytes are paid on every request, and the two always-on tiers sit close to

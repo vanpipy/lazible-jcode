@@ -54,7 +54,7 @@ against the budget.
 
 A threshold is a count, not a judgement. Target exhausted means every item in
 the target set has a verdict. Verdict established means every acceptance
-criterion has a conclusion naming its source: a file and a line, or a
+criterion has a conclusion that names its source: a file and a line, or a
 command and its output. Budget reached means the budget in section 2.3.2 is
 spent. Blocked means the next question cannot be answered with the access
 available, and answering it is not the worker's call; the worker reports the
