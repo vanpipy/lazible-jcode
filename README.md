@@ -47,7 +47,7 @@ different costs, in different places.
 | File | Loaded as | Cost | Holds |
 | --- | --- | --- | --- |
 | `config/swarm-prompt.md` | the `swarm` tool description | always-on, every session | model routing, when to spawn, what a brief must carry |
-| `config/prompt-overlay.md` | a system-prompt layer | always-on, every session | coordinator policy: delegation, verification, acceptance |
+| `config/prompt-overlay.md` | a system-prompt layer | always-on, every session | the always-on global policy: delegation, verification, acceptance, and the worker-facing rules |
 | `config/skills/swarm-engineering/SKILL.md` | a Skill, on demand | only when loaded | the Developer / Tester / Reviewer methods |
 
 `swarm-prompt.md` is the expensive one. It becomes a tool description, so it
@@ -102,15 +102,15 @@ a number to check by hand rather than a judgement to leave to review.
 All three tiers are held under a ceiling now, at the size each one can carry
 without losing policy:
 
-| Tier | Ceiling | Size at `39ce723` | Why its bytes cost |
+| Tier | Ceiling | Size at `350fcf2` | Why its bytes cost |
 | --- | --- | --- | --- |
-| `config/swarm-prompt.md` | 6,000 | 5,997 | sent on every request in every session |
-| `config/prompt-overlay.md` | 33,500 | 33,489 | loaded once per session |
-| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 36,341 | loaded only when the Skill is activated |
+| `config/swarm-prompt.md` | 6,000 | 5,966 | sent on every request in every session |
+| `config/prompt-overlay.md` | 33,500 | 33,476 | loaded once per session |
+| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 36,919 | loaded only when the Skill is activated |
 
 The swarm prompt's ceiling is the strict one, because it is the only tier whose
 bytes are paid on every request, and the two always-on tiers sit close to
-theirs: 3 bytes of headroom on the swarm prompt and 11 on the overlay, as of
+theirs: 34 bytes of headroom on the swarm prompt and 24 on the overlay, as of
 the revision named in the table. `wc -c` against the files themselves is the
 check now. Nothing fails when a tier grows past its number; the number is here
 so that the growth is visible.
@@ -312,8 +312,8 @@ named thresholds rather than a judgement call. The first match wins:
 
 | Threshold | Meaning |
 | --- | --- |
-| Target exhausted | Every candidate in the assignment has a verdict. A candidate that turned out to be implemented is a completed check, not a gap. |
-| Verdict established | Every target in scope has the verdict and the evidence the assignment asked for. |
+| Target exhausted | Every item in the target set has a verdict. An item already implemented is a completed check, not a gap. |
+| Verdict established | Every acceptance criterion has a conclusion that names its source: a file and a line, or a command and its output. |
 | Budget reached | The tool-call budget is spent. Report what is done, mark the rest unverified, stop. |
 | Blocked | The next question needs access the worker does not have. Report the blocker, do not widen the search. |
 
@@ -394,10 +394,11 @@ state, not a sentence the agent writes. A threshold is met, the phase is over,
 and the next call is bound whether or not the agent says so. The next call is
 one of four: the implementation action the end event was about, a validation
 or test action, a plan or todo write when the task asked for one, or the
-report. It is not another read of the same subject. One exception per phase:
-when a named acceptance criterion is still unanswered, one targeted read that
-answers it is allowed, and that read is the last of the phase. A second request
-for another look is an escalation, not a read.
+report. It is not another read of the same subject. One exception per phase,
+and only before the budget is spent: when a named acceptance criterion is still
+unanswered, one targeted read that answers it is allowed, and that read is the
+last of the phase. A second request for another look is an escalation, not a
+read.
 
 **A direct task has a frozen target set and a budget.**
 The target set is frozen when it is written, and it is written before the
@@ -469,8 +470,8 @@ the last call, not the next one.
 
 The verification phase runs the project's own checks. A criterion those
 checks cannot falsify is reported as unverifiable, not replaced by a new
-oracle or a side experiment. Files under scratch/ are neither a deliverable
-nor evidence.
+oracle, a mutation test, or a side experiment. Files under scratch/ are neither
+a deliverable nor evidence.
 
 The verification phase has its own budget: 2 tool calls per acceptance
 criterion, capped at 20, set before the phase starts. A criterion the phase
@@ -503,9 +504,9 @@ completeness.
 | Budget | both | The number is written down before the first read: 45 tool calls for a direct task, scaled at 5 tool calls per target item, floor 20, cap 45, 20 tool calls for an investigation lane, 2 tool calls per acceptance criterion capped at 20 for verification. | The budget is spent; the report is the only action left. | none | The brief carries the number; only a coordinator raises one, before dispatch. The coordinator's own read phase follows the same rules. | `config/prompt-overlay.md` section 2.2.2 and `config/skills/swarm-engineering/SKILL.md` section 2.3.2, both titled "Tool-Call Budgets"; the skill's read budget is in section 11 and its verification budget in section 2.3.5; `config/swarm-prompt.md`, brief contract, evidence budget |
 | End event | both | A threshold is met. The end event does not wait for an announcement: an agent that met a threshold is bound whether or not it says so. | The phase ends; the next call is bound. | none | The report records the end event; the coordinator checks the next call. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
 | Closed set | both | The end event has happened. | The next call is one of four: the implementation action the end event was about, a validation or test action, a plan or todo write when the task asked for one, or the report. | one targeted read that answers a named acceptance criterion | The report shows the next call; the coordinator stops a lane that reads. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
-| One exception | both | A named acceptance criterion is still unanswered when the end event happens. | One more targeted read answers it, and that read is the last of the phase. A second request for another look is an escalation, not a read. | none | The report names the criterion and the read; the coordinator takes the escalation. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
-| Frozen target set | both | Before the first read the target set is written. Each item is a path and the question it answers: the acceptance criteria and their source, the files the change touches. | Every item has a verdict, or the item is listed as uncovered in the report. | one logged target-set change, which counts against the budget | The brief carries the target list; the report lists the items not covered; the coordinator stops a widened set. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/swarm-prompt.md`, brief contract, target list |
-| Re-read rule | both | A path is read again. The count is by path, not by call, so a slice, a grep, or a search over a path already read in full counts as a read of that path. | The third read of the same path stops the phase; the second read needs a stated reason. | one second read of the same path, with a stated reason | The report records the reads; the coordinator stops the third. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/skills/swarm-engineering/SKILL.md` section 2.3.4 No Third Read of the Same Path |
+| One exception | both | A named acceptance criterion is still unanswered when the end event happens, and the budget is not yet spent. | One more targeted read answers it, and that read is the last of the phase. A second request for another look is an escalation, not a read. | none | The report names the criterion and the read; the coordinator takes the escalation. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
+| Frozen target set | both | Before the first read the target set is written. Each item is a path and the question it answers: the acceptance criteria and their source, the files the change touches. | Every item has a verdict, or the item is listed as uncovered in the report. | one logged target-set change, which counts against the budget | The brief carries the target list; the report lists the items not covered; the coordinator stops a widened set. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/swarm-prompt.md`, brief contract, target list; `config/skills/swarm-engineering/SKILL.md` section 2.3.1 Evidence Thresholds |
+| Re-read rule | both | A path is read again. The count is by path, not by call, so a slice, a grep, or a search over a path already read in full counts as a read of that path. | The third read of the same path stops it; the second read needs a stated reason. | one second read of the same path, with a stated reason | The report records the reads; the coordinator stops the third. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/skills/swarm-engineering/SKILL.md` section 2.3.4 No Third Read of the Same Path |
 | Verification phase | both | The deliverable is written. The target set is the acceptance criteria, one check each, run as the project's own checks. | The first of four conditions: criteria checked, a check that cannot fail, a question that could change the result, or the budget of 2 tool calls per acceptance criterion reached. | none | The report names each criterion checked and each left unverified. | `config/prompt-overlay.md` section 2.2.5 and `config/skills/swarm-engineering/SKILL.md` section 2.3.5, both titled "Bounding the Verification Phase"; `config/swarm-prompt.md`, the coordinator's own tail |
 | Lane conclusion | lane | The lane's budget is spent, or its target set is answered. An open question becomes a coordinator task only when it affects a declared acceptance criterion. | The lane ends with a conclusion and the items it did not cover. | none | The coordinator closes the lane and records the uncovered items in the todo row. | `config/prompt-overlay.md` section 12.6 Investigation Management and section 12.8 Enforcing a Lane's Bound; `config/swarm-prompt.md`, brief contract, stop condition; `config/skills/swarm-engineering/SKILL.md` section 11.1 Stopping a Lane That Overran Its Brief, for a lane stopped at its bound |
 | Brief completeness | root | A brief is written for a lane. | The brief carries the role and objective, the scope, the evidence, the acceptance criteria, the validation, the ownership, the dependencies, the report contract, the target list, the evidence budget and the stop condition. A brief without a target list, an evidence budget, or a stop condition is not ready to dispatch. | none | The coordinator names the missing field instead of assuming it. | `config/prompt-overlay.md` section 12.5 Assignment Brief; `config/swarm-prompt.md`, brief contract |
