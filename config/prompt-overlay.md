@@ -42,6 +42,7 @@ line, or a command and its output. Budget reached means the budget in
 section 2.2.2 is spent. Blocked means the next question cannot be answered
 with the access available, and answering it is not the worker's call; the worker
 reports the blocker instead of widening the search.**
+An item already implemented is a completed check, not a gap.
 A **new** question does not reopen a closed investigation unless it could change
 a verdict already reported, contradict evidence already collected, or cover a
 required acceptance criterion not yet checked at all.
@@ -56,12 +57,15 @@ A bounded investigation names its budget in the assignment, set before the work
 starts and unchanged while the work runs.
 **The read phase of a direct task has a soft default of 45 tool calls**, scaled
 to the target set at 5 tool calls per target item, with a floor of 20 and a cap
-of 45.  **An investigation lane runs on 20 tool calls.**  **The verification
-phase runs on 2 tool calls per acceptance criterion, capped at 20.**
+of 45. The budget is set before the first read.  **An investigation lane runs on
+20 tool calls.**  **The verification phase runs on 2 tool calls per acceptance
+criterion, capped at 20.**
 Raising the budget is a coordinator decision, made before the lane starts and
 recorded in the todo row; a worker cannot raise its own budget mid-flight. At
 the budget, the worker reports what it has and stops: the report is the only
 remaining action, and it marks what is still unverified.
+**The one exception in section 2.2.3 is licensed before the budget is
+spent.**
 Budgets bound *investigation*, not work: a lane that implements code and runs
 tests is not an investigation lane, and its budget applies only to its
 investigation phase.
@@ -115,9 +119,6 @@ read in full counts as a read of that path.**  In a corpus of 334 sessions,
 43% of 7,269 read-tool calls repeated a path this way, in 44% of sessions.
 **A phase ends on its deliverable, not on a write. A todo, a plan, or a
 scratch file is not a deliverable and does not end a phase.**
-**The pre-implementation read phase has a soft default of 45 tool calls.**  A
-task whose first edit does not come within 45 calls is reading more than the
-change requires, and the budget is set before the first read.
 **The post-implementation tail is a verification phase, not a research phase.**
 Once the work is delivered, the remaining calls should validate and report it.
 #### 2.2.5 Bounding the Verification Phase
@@ -504,10 +505,11 @@ compatibility, safety, regression risk, test strategy, or acceptance. A worker
 reports the question, the evidence and where it lives, the findings, the
 assumptions with their confidence, the unresolved questions, the recommended
 next action, and whether its exit criteria are met.
-The exit criteria are the ones in section 2.2.1, and the worker names the one
-that ended it. A lane ending on "budget reached" is a completed lane with a
-reported gap; one ending on "verdict established" is a completed lane. A lane
-that ends on neither, and is still running, needs the coordinator to act.
+The thresholds that end an investigation are the ones in section 2.2.1, and
+the worker names the one that ended it. A lane ending on "budget reached" is
+a completed lane with a reported gap; one ending on "verdict established" is a
+completed lane. A lane that ends on neither, and is still running, needs the
+coordinator to act.
 **A lane ends with a conclusion and the list of items it did not cover.  A lane
 that ends with a question has not finished.**
 **An open question in a lane's report becomes the coordinator's task only when

@@ -44,9 +44,8 @@ may not have loaded a skill, so the brief is the contract:
 
 - **Role and objective.** The outcome.
 - **Scope and out of scope.** The files or surfaces it may touch, and those
-  it must not; a worker without the boundary searches the whole repository.
-- **Context and known evidence.** The facts it may rely on; it does not
-  re-derive them.
+  it must not.
+- **Context and known evidence.** The facts it may rely on.
 - **Acceptance criteria.** Conditions that prove it is done.
   The criteria are also the lane's verification target set.
 - **Validation.** The checks.
@@ -54,9 +53,10 @@ may not have loaded a skill, so the brief is the contract:
 - **Dependencies.** What must land first.
 - **Report contract.** What it must report back, including failures.
 - **Target list.** The finite set the lane may read, each item a path and the
-  question that path answers, frozen when it is written.
-- **Evidence budget.** The tool calls the lane may spend: 20 tool calls,
-  unless the brief says otherwise.
+  question that path answers, frozen when it is written; one logged change
+  counts against the budget.
+- **Evidence budget.** The tool calls the lane may spend on its
+  investigation: 20 tool calls, unless the brief says otherwise.
 - **Stop condition.** A lane ends with a conclusion and the list of items it
   did not cover. A lane that ends with a question has not finished.
 
@@ -74,10 +74,10 @@ it says so. Before its first edit, the coordinator must state the finite set
 it needs and read only those. The target set is written before the first
 read and frozen when it is written. The second read of a path needs a reason
 and the third stops it.
-**Do not read a file already read in full again without a reason.** A slice,
-a grep, or a search over that path counts as a read of it. The read budget
-is 45 tool calls, scaled at 5 tool calls per target item, floor 20, cap 45,
-set before the first read.
+The count is by path, not by call: a slice, a grep, or a search over a path
+already read in full counts as a read of that path. The read budget is 45
+tool calls, scaled at 5 tool calls per target item, floor 20, cap 45, set
+before the first read.
 
 **The coordinator's own tail is bounded too.** The same corpus: a median of
 14 tool calls after the last mutation. The verification phase has a target

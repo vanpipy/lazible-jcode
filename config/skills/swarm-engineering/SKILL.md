@@ -47,7 +47,8 @@ unrelated modules for additional context.
 ended the investigation.
 
 The target set is the finite list of paths to read, each with the question it
-answers.
+answers. It is frozen when it is written; one logged target-set change is
+allowed, and it counts against the budget.
 
 A threshold is a count, not a judgement. Target exhausted means every item in
 the target set has a verdict. Verdict established means every acceptance
@@ -81,6 +82,7 @@ investigation phase. An investigation lane's budget is 20 tool calls.
   tests is not an investigation lane; the budget applies only there.
 - At the budget, the report is the only remaining action, and it marks what is
   unverified.
+- The one exception in section 2.3.3 is licensed before the budget is spent.
 - The report is not padded to look complete. An honest short report beats one
   that hides what was skipped.
 
@@ -158,6 +160,10 @@ Files under scratch/ are neither a deliverable nor evidence.
 A proportionate lifecycle:
 
 Understand → Investigate → Design → Execute → Validate → Report
+
+Execute and Validate are the overlay's Implement and Verify, and Report is the
+lane's conclusion. **A phase ends on its deliverable, not on a write: a todo, a
+plan, or a scratch file is not a deliverable.**
 
 Move forward once the evidence supports the next action, and return to an
 earlier phase only when new evidence justifies it.
@@ -431,8 +437,8 @@ Do not continue adding tests once required behavior has been adequately
 verified. A check that passes whatever happens is not evidence: repair it, run
 it once, and move on to the next criterion. The verification phase runs the
 project's own checks. A criterion the project's checks cannot falsify is
-reported as unverifiable, not replaced by a new oracle or side experiment. See
-section 2.3.5.
+reported as unverifiable, not replaced by a new oracle, a mutation test, or a
+side experiment. See section 2.3.5.
 
 ### 4.6 Tester Boundaries
 
@@ -705,10 +711,12 @@ Practice that makes the policy above work. It does not change the policy.
   you need to know and read only those. A named section, category, or file is
   the scope, not a licence to read the whole specification. The soft default is
   45 tool calls before the first edit, scaled to the target set at 5 tool calls
-  per target item, with a floor of 20 and a cap of 45; needing more requires
-saying why. Once you have the shape
-  or the design, the next call is the implementation, the validation, the plan,
-  or the report. See section 2.3.1, section 2.3.3, and section 2.3.4.
+  per target item, with a floor of 20 and a cap of 45; the budget is set before
+  the first read. **The end event happens when a threshold is met. It does not
+  wait for an announcement.** After it, the next call is one of: the
+  implementation action the end event was about, a validation or test action, a
+  plan or todo write when the task asked for one, or the report. See section
+  2.3.1, section 2.3.3, and section 2.3.4.
 - **Bound your own verification phase.** The verification phase has a target
   set too, the acceptance criteria, one check each, and it ends when they are
   checked, when a check cannot fail, when the remaining question could change
