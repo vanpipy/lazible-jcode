@@ -45,7 +45,8 @@ may not have loaded a skill, so the brief is the contract:
 - **Role and objective.** The outcome.
 - **Scope and out of scope.** The files or surfaces it may touch, and those
   it must not.
-- **Context and known evidence.** The facts it may rely on.
+- **Context and known evidence.** The facts it may rely on; it does not
+  re-derive them.
 - **Acceptance criteria.** Conditions that prove it is done.
   The criteria are also the lane's verification target set.
 - **Validation.** The checks.
@@ -74,7 +75,7 @@ it says so. Before its first edit, the coordinator must state the finite set
 it needs and read only those. The target set is written before the first
 read and frozen when it is written. The second read of a path needs a reason
 and the third stops it.
-The count is by path, not by call: a slice, a grep, or a search over a path
+The count is by path, not by call, so a slice, a grep, or a search over a path
 already read in full counts as a read of that path. The read budget is 45
 tool calls, scaled at 5 tool calls per target item, floor 20, cap 45, set
 before the first read.

@@ -36,8 +36,8 @@ Give another engineer the evidence to evaluate any defect or risk you report.
 
 Every substantial investigation answers a concrete question. Before
 investigating, establish what must be determined, why it matters, and what
-decision or action follows. Stop when the exit criteria are met. Continue only
-when an unresolved question could materially affect correctness,
+decision or action follows. Stop when the thresholds in section 2.3.1 are met.
+Continue only when an unresolved question could materially affect correctness,
 compatibility, safety, implementation, or acceptance. Do not inspect
 unrelated modules for additional context.
 
@@ -46,9 +46,10 @@ unrelated modules for additional context.
 "Sufficiency" has to be decidable. Use these thresholds, and name the one that
 ended the investigation.
 
-The target set is the finite list of paths to read, each with the question it
-answers. It is frozen when it is written; one logged target-set change is
-allowed, and it counts against the budget.
+The target set is written before the first read and frozen when it is written.
+Each item is a path and the question that path answers. A question that appears
+later is an uncovered item, or one logged target-set change; that change counts
+against the budget.
 
 A threshold is a count, not a judgement. Target exhausted means every item in
 the target set has a verdict. Verdict established means every acceptance
@@ -58,12 +59,11 @@ spent. Blocked means the next question cannot be answered with the access
 available, and answering it is not the worker's call; the worker reports the
 blocker instead of widening the search.
 
-An item already implemented is a completed check, not a gap. Report what is
-done, mark the rest unverified, and stop.
+An item already implemented is a completed check, not a gap.
 
-A new question reopens a closed investigation only when it could change a
-reported verdict, contradicts evidence already collected, or covers an
-acceptance criterion not yet checked.
+A **new** question does not reopen a closed investigation unless it could change
+a verdict already reported, contradict evidence already collected, or cover a
+required acceptance criterion not yet checked at all.
 
 **Broadening the target set after the verdict is established is a reportable
 failure, not diligence.**
@@ -162,14 +162,14 @@ A proportionate lifecycle:
 Understand → Investigate → Design → Execute → Validate → Report
 
 Execute and Validate are the overlay's Implement and Verify, and Report is the
-lane's conclusion. **A phase ends on its deliverable, not on a write: a todo, a
-plan, or a scratch file is not a deliverable.**
+lane's conclusion. **A phase ends on its deliverable, not on a write. A todo, a
+plan, or a scratch file is not a deliverable and does not end a phase.**
 
 Move forward once the evidence supports the next action, and return to an
 earlier phase only when new evidence justifies it.
 
-A lane that has met its exit criteria and keeps reading is not progressing,
-it is failing to report.
+A lane that has met the thresholds in section 2.3.1 and keeps reading is not
+progressing, it is failing to report.
 Section 2.3.3 The End Event Binds the Next Action makes the transition
 concrete. Section 2.3.5 does the same for the phase after the write: Bounding
 the Verification Phase.
@@ -713,7 +713,8 @@ Practice that makes the policy above work. It does not change the policy.
   45 tool calls before the first edit, scaled to the target set at 5 tool calls
   per target item, with a floor of 20 and a cap of 45; the budget is set before
   the first read. **The end event happens when a threshold is met. It does not
-  wait for an announcement.** After it, the next call is one of: the
+  wait for an announcement: an agent that has met a threshold is bound whether or
+  not it says so.** After the end event the next call is one of: the
   implementation action the end event was about, a validation or test action, a
   plan or todo write when the task asked for one, or the report. See section
   2.3.1, section 2.3.3, and section 2.3.4.

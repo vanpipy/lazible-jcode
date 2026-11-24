@@ -157,7 +157,8 @@ Prefer focused implementation, testing, or review over another broad
 information-gathering pass.
 Progression is a one-way move within a phase. The transition out of
 investigation is the deliverable of that phase, and taking it is not optional:
-a lane that has met its exit criteria and keeps reading is failing to report.
+a lane that has met the thresholds in section 2.2.1 and keeps reading is failing
+to report.
 ### 2.4 Cost-Aware Context Gathering
 Additional context is valuable only when its expected contribution to
 correctness, safety, or decision quality justifies its cost.
