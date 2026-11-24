@@ -3,7 +3,7 @@
 My [jcode](https://github.com/1jehuang/jcode) configuration.
 
 This repository is **configuration only**. It holds the values that make jcode
-run the way I want, plus one skill. It does not build, patch or install the
+run the way I want, plus ten skills. It does not build, patch or install the
 jcode binary.
 
 ```text
@@ -21,6 +21,7 @@ scripts/install        ->  wires the two above
 | `config/swarm-prompt.md` | Copy of `~/.jcode/swarm-prompt.md`, for review |
 | `config/mcp.example.json` | MCP server shape, with placeholder values |
 | `config/skills/swarm-engineering/` | The swarm coordination skill |
+| `config/skills/swarm-craft-*/` | The nine craft skills: one per role, one per language |
 | `scripts/install` | Copies config and skills into `~/.jcode` |
 | `scripts/uninstall` | Reverses install |
 | `scripts/common.sh` | Shared paths and helpers, sourced by both scripts |
@@ -103,7 +104,7 @@ without losing policy:
 | --- | --- | --- | --- | --- |
 | `config/swarm-prompt.md` | 6,000 | 5,959 | 41 | sent on every request in every session |
 | `config/prompt-overlay.md` | 33,500 | 33,180 | 320 | loaded once per session |
-| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 35,999 | 1,501 | loaded only when the Skill is activated |
+| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 36,573 | 927 | loaded only when the Skill is activated |
 
 The swarm prompt's ceiling is the strict one, because it is the only tier whose
 bytes are paid on every request, and the two always-on tiers sit close to
@@ -279,6 +280,70 @@ description.
 The Skill is loaded only when an agent asks for it, which is why it can be
 long. It is also the file most likely to be read by a worker that was handed a
 brief, so a brief should say which section of it governs the task.
+
+## The craft skills
+
+The swarm skill owns the process: what a lane does, in what order, and what
+its report has to carry. The craft is a second layer, one Skill per role and
+one per language, and a lane loads only the Skills its assignment names.
+
+| Skill | What it holds |
+| --- | --- |
+| `swarm-craft-shared` | the core every lane works by: the three checks, the pieces that shape the code, and the same piece in another stack |
+| `swarm-craft-developer` | how a Developer names the target, shapes the change, and proves it as it goes |
+| `swarm-craft-tester` | how a Tester chooses the oracle, makes the check discriminate, and reports honestly |
+| `swarm-craft-reviewer` | how a Reviewer reads the change as a claim and hunts the check that cannot fail |
+| `swarm-craft-python` | the Python pieces: the idioms, the version floors and the traps |
+| `swarm-craft-java` | the Java pieces |
+| `swarm-craft-go` | the Go pieces |
+| `swarm-craft-typescript` | the TypeScript pieces |
+| `swarm-craft-rust` | the Rust pieces |
+
+Each one is a directory under `config/skills/` holding a `SKILL.md`, which is
+the shape the installer already copies: `install` globs
+`config/skills/*/SKILL.md` and writes each to `~/.jcode/skills/<name>/SKILL.md`,
+so a flat directory per Skill needs no change to the scripts. A nested layout,
+one directory holding all nine craft files, would install none of them.
+
+The craft is additive. It holds the craft of a role, not a rule about it: a
+piece that cannot be checked is advice, and the process skill stays the place
+a rule lives. Each craft Skill's frontmatter carries a name and a description,
+the two keys the process skill uses.
+
+They were ported from the DSH plugin that ships the same craft for another
+host. The bodies are that plugin's, byte for byte, except where a reference
+named a file in that layout: `shared.md` became `swarm-craft-shared`,
+`languages/<language>.md` became `swarm-craft-<language>`, and "this file"
+became "this Skill". Three more changes came with the port: a
+sentence that opened with the name of a file now opens with a capital, the one
+place that said "the skill" now names `swarm-engineering`, because ten skills
+live here and "the skill" would have been ambiguous, and one description says
+"the role Skills apply" where the plugin said "the role files apply". No rule
+was added, dropped, or reworded.
+
+### The craft skills' bytes
+
+| Skill | Ceiling | Size now | Headroom |
+| --- | --- | --- | --- |
+| `config/skills/swarm-craft-shared/SKILL.md` | 15,500 | 15,007 | 493 |
+| `config/skills/swarm-craft-developer/SKILL.md` | 8,000 | 7,892 | 108 |
+| `config/skills/swarm-craft-tester/SKILL.md` | 7,500 | 7,045 | 455 |
+| `config/skills/swarm-craft-reviewer/SKILL.md` | 6,000 | 5,888 | 112 |
+| `config/skills/swarm-craft-python/SKILL.md` | 10,000 | 9,645 | 355 |
+| `config/skills/swarm-craft-java/SKILL.md` | 10,500 | 10,114 | 386 |
+| `config/skills/swarm-craft-go/SKILL.md` | 12,000 | 11,790 | 210 |
+| `config/skills/swarm-craft-typescript/SKILL.md` | 11,000 | 10,747 | 253 |
+| `config/skills/swarm-craft-rust/SKILL.md` | 11,500 | 11,184 | 316 |
+
+Each ceiling is the size that file weighed when it was ported, rounded up to
+the next 500 bytes, on the same rule the three tiers use. The nine Skills
+weigh 89,312 bytes together, and they are not always-on: a lane loads three of
+them, the core, the role, and the language in play.
+
+The pointer in the process Skill's section 10 costs 574 bytes. The Skill is
+now 36,573 bytes: above the 36,000-byte target it was held to, under the
+37,500-byte ceiling the tier table records. The overshoot buys the pointer,
+and it is reported rather than trimmed out of policy.
 
 ## Bounded swarm investigation
 
@@ -706,9 +771,9 @@ cp ~/.jcode/prompt-overlay.md config/prompt-overlay.md
 cp ~/.jcode/swarm-prompt.md   config/swarm-prompt.md
 ```
 
-`swarm-engineering` exists only here. jcode does not ship it, so this repo
-is its only source. Keep it under `config/skills/` and do not delete it, or
-you lose the skill.
+`swarm-engineering` and the nine craft skills exist only here. jcode does
+not ship them, so this repo is their only source. Keep them under
+`config/skills/` and do not delete one, or you lose the skill.
 
 Every directory under `config/skills/` that holds a `SKILL.md` is a skill this
 repo owns, and the installer and the uninstaller both work from that list. Add
@@ -769,8 +834,9 @@ silently; in `config/config.toml` it is a comment, not a live setting.
 ```
 
 The jcode binary and `~/AGENTS.md` are never removed. `--full` does remove
-`~/.jcode/skills/swarm-engineering/`. jcode does not ship that skill, so
-this repo is its only source. To get it back, run `./scripts/install`.
+`~/.jcode/skills/swarm-engineering/` and the nine `~/.jcode/skills/swarm-craft-*/`
+directories. jcode does not ship those skills, so this repo is their only
+source. To get them back, run `./scripts/install`.
 
 A refusal to touch the repo is checked before anything is removed, so
 `uninstall` either removes the whole set or removes nothing.

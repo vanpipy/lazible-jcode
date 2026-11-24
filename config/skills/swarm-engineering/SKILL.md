@@ -663,6 +663,15 @@ This Skill defines role procedures but does not guarantee injection
 into every worker's context. The Coordinator must ensure each worker receives
 the instructions for its assignment.
 
+The craft Skills are separate from this one and load on demand: a lane loads
+the Skill for its role (`swarm-craft-developer`, `swarm-craft-tester`,
+`swarm-craft-reviewer`), the core (`swarm-craft-shared`), and the language in
+play (`swarm-craft-python`, `swarm-craft-java`, `swarm-craft-go`,
+`swarm-craft-typescript`, `swarm-craft-rust`). The assignment names the Skills
+a lane loads, the way it names the files the lane may touch; a lane given
+none works from this document alone: the craft sharpens the work and never
+carries a rule this document does not already state.
+
 When Skill availability or inheritance is uncertain, include the essential role
 procedure in the assignment, the scope and acceptance criteria, and do not
 assume a worker has read this document.
