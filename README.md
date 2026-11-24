@@ -311,15 +311,18 @@ a rule lives. Each craft Skill's frontmatter carries a name and a description,
 the two keys the process skill uses.
 
 They were ported from the DSH plugin that ships the same craft for another
-host. The bodies are that plugin's, byte for byte, except where a reference
-named a file in that layout: `shared.md` became `swarm-craft-shared`,
+host. The bodies are that plugin's, with the references that named a file in
+that layout rewritten: `shared.md` became `swarm-craft-shared`,
 `languages/<language>.md` became `swarm-craft-<language>`, and "this file"
-became "this Skill". Three more changes came with the port: a
-sentence that opened with the name of a file now opens with a capital, the one
-place that said "the skill" now names `swarm-engineering`, because ten skills
-live here and "the skill" would have been ambiguous, and one description says
-"the role Skills apply" where the plugin said "the role files apply". No rule
-was added, dropped, or reworded.
+became "this Skill". Four more changes came with the port: a sentence that
+opened with the name of a file now opens with a capital; the one place that
+said "the skill" now names `swarm-engineering`, because ten skills live here
+and "the skill" would have been ambiguous; one description says "the role
+Skills apply" where the plugin said "the role files apply"; and one paragraph
+in the core Skill was reworded, because `languages/` no longer exists and each
+language is now its own Skill. No rule about the craft was added, dropped, or
+reworded: the reworded paragraph carries the same rule, that a language grows
+without the core growing with it, and its added clause states the new layout.
 
 ### The craft skills' bytes
 
