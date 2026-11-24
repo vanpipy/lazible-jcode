@@ -23,11 +23,14 @@ scripts/install        ->  wires the two above
 | `config/skills/swarm-engineering/` | The swarm coordination skill |
 | `scripts/install` | Copies config and skills into `~/.jcode` |
 | `scripts/uninstall` | Reverses install |
-| `scripts/test` | Exercises the real install and uninstall against a sandbox HOME |
-| `scripts/doc-check` | Checks the claims in this README against the real scripts |
-| `scripts/testlib.sh` | Shared helpers for the two test scripts |
 | `scripts/common.sh` | Shared paths and helpers, sourced by both scripts |
 | `.gitignore` | Keeps the live secrets out of git |
+
+`scripts/` holds the two installers and the helpers they share, and nothing
+else. There is no test suite in this repository: the checks it used to carry
+against itself are in the file history at commit `39ce723`, and the
+[Verification](#verification) section says what that costs and what to read
+by hand instead.
 
 `config/mcp.json` is the real MCP server list, with the servers you actually
 run. It is **not tracked**: `.gitignore` excludes it, because a live MCP
@@ -94,29 +97,29 @@ under their ceilings. Check the live sizes against the files themselves,
 
 The swarm prompt's size is the one that matters for cost, because it is sent on
 every request in every session. It is held under a ceiling, and the ceiling is
-asserted by the test suite rather than left to review.
+a number to check by hand rather than a judgement to leave to review.
 
 All three tiers are held under a ceiling now, at the size each one can carry
 without losing policy:
 
-| Tier | Ceiling | Why its bytes cost |
-| --- | --- | --- |
-| `config/swarm-prompt.md` | 6,000 | sent on every request in every session |
-| `config/prompt-overlay.md` | 33,500 | loaded once per session |
-| `config/skills/swarm-engineering/SKILL.md` | 37,500 | loaded only when the Skill is activated |
+| Tier | Ceiling | Size at `39ce723` | Why its bytes cost |
+| --- | --- | --- | --- |
+| `config/swarm-prompt.md` | 6,000 | 5,997 | sent on every request in every session |
+| `config/prompt-overlay.md` | 33,500 | 33,489 | loaded once per session |
+| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 36,341 | loaded only when the Skill is activated |
 
-The three numbers live in `scripts/test` as `SWARM_PROMPT_MAX_BYTES`,
-`OVERLAY_MAX_BYTES` and `SKILL_MAX_BYTES`. `scripts/doc-check` reads them out
-of that file rather than repeating them, so this table and the suite cannot
-drift apart silently. The swarm prompt's ceiling is the strict one, because it
-is the only tier whose bytes are paid on every request.
+The swarm prompt's ceiling is the strict one, because it is the only tier whose
+bytes are paid on every request, and the two always-on tiers sit close to
+theirs: 3 bytes of headroom on the swarm prompt and 11 on the overlay, as of
+the revision named in the table. `wc -c` against the files themselves is the
+check now. Nothing fails when a tier grows past its number; the number is here
+so that the growth is visible.
 
 A ceiling is a measured target, not a guess. The overlay and the Skill
 each carry a ceiling that is the size of the compressed file rounded up to
-the next 500 bytes, plus 500 bytes of working margin, so the check fails
-the moment a file grows well past the size it actually needs. The swarm
-prompt keeps the 6,000 it was given: the compression brought it to 5,930,
-so it carries 70 bytes of headroom rather than 500. That is deliberate,
+the next 500 bytes, plus 500 bytes of working margin, so a file that grows
+well past the size it actually needs is visible. The swarm prompt keeps the
+6,000 it was given rather than a re-derived number. That is deliberate,
 because it is the only tier whose bytes are paid on every request and the
 strictest number is the one worth keeping there.
 
@@ -124,26 +127,27 @@ A ceiling derived from the current size is a change detector, not a budget:
 it cannot tell you that a file is too large for its purpose, only that it
 grew. The first set of ceilings was measured against the upstream files,
 before the bounding rules existed, and it was never re-derived after the
-bounding machinery grew the overlay and the Skill. The branch's own suite
-failed on the branch's own files for exactly that reason, and the numbers
-above are the re-measured ones.
+bounding machinery grew the overlay and the Skill. The numbers above are the
+re-measured ones.
 
-The structure of the tiers is asserted the same way. Section 32 of
-`scripts/test` checks that the heading hierarchy of the overlay and the Skill
-is well formed, that every numbered heading sits at the depth its number
-implies, and that the section references between the files still resolve to
-headings that exist. Section 8d of `scripts/doc-check` checks that this
-document still describes those properties, so the two cannot drift apart
-silently.
+The structure of the tiers was asserted the same way, by a suite that is no
+longer in the tree. What it checked is worth keeping in the reader's head:
+the heading hierarchy of the overlay and the Skill is well formed, every
+numbered heading sits at the depth its number implies, and the section
+references between the files resolve to headings that exist. A renamed
+heading is now a broken reference rather than a failed check, so the
+cross-references in this README and in the three prompt files are the ones to
+read after a rename.
 
 ### What the compression pass cut
 
-The three tiers were rewritten to fit their ceilings, and the rewrite is
-measurable rather than asserted. `scripts/rule-drop` compares every rule of
-the revision the pass started from against the rewrite and reports how many
-are gone. It reports none, for all three files. `scripts/prompt-contract`
-checks the 72 strings and heading references the suite depends on, and they
-are intact.
+The three tiers were rewritten to fit their ceilings, and the rewrite was
+measured rather than asserted. A rule-preservation tool compared every rule of
+the revision the pass started from against the rewrite and reported none gone
+on any of the three files, and a protected-content contract held 126 exact
+strings and heading references across the tiers. Both are in the file history
+at commit `39ce723`; neither is in the tree now, so this paragraph records
+what was measured rather than what you can rerun.
 
 What the pass removed was prose that repeated a rule stated beside it:
 explanations of a threshold that the threshold already makes plain, examples
@@ -155,11 +159,11 @@ next action, the rule that the second read of a path needs a reason, the rule
 that the verification phase ends at the first of four conditions, and the rule
 that the report is the last call.
 
-A rewrite can lose a rule without losing a word, and the gate is what found
-it. `scripts/rule-drop` recognises a rule by its deontic marker, so a
-sentence that keeps every content word but drops its "must" stops being a
-rule and stops being checked. Every such sentence was restored with its
-marker, and the restored wording is what the files carry now.
+A rewrite can lose a rule without losing a word, and it was the rule check
+that found it. A rule was recognised by its deontic marker, so a sentence that kept every
+content word but dropped its "must" stopped being a rule and stopped being
+checked. Every such sentence was restored with its marker, and the restored
+wording is what the files carry now.
 
 ### The provider's input count varies for the same request shape
 
@@ -720,13 +724,13 @@ a repo without it installs cleanly and records an empty skill list.
 - `~/AGENTS.md`, yours to edit
 - everything else under `~/.jcode`, including runtime state and goal history
 
-Every one of those is something the scripts never write and never remove,
-and `scripts/test` checks it: it plants one artifact per category, then
-asserts that both the install and `uninstall --full` leave every one of
-them byte-identical. The planted paths are the real ones jcode uses on
-v0.99.1: `~/.jcode/sessions/`, `~/.jcode/goals/global/`,
-`~/.jcode/servers.json`, `~/.jcode/mcp.json`, `~/.local/bin/jcode`,
-`~/AGENTS.md`, and a skill directory this repo does not own.
+Every one of those is something the scripts never write and never remove.
+The paths are the real ones jcode uses on v0.99.1: `~/.jcode/sessions/`,
+`~/.jcode/goals/global/`, `~/.jcode/servers.json`, `~/.jcode/mcp.json`,
+`~/.local/bin/jcode`, `~/AGENTS.md`, and a skill directory this repo does not
+own. A suite that used to plant one artifact per category and assert that both
+the install and `uninstall --full` left every one of them byte-identical is in
+the file history at commit `39ce723`.
 
 `~/.jcode/servers.json` is not the MCP config, despite the file name
 being adjacent to it. On v0.99.1 it is the registry of *running* jcode
@@ -741,18 +745,17 @@ orchestrator prompts to `~/.local/share/jcode-orchestrate/`. This repo no
 longer manages them; all of them have since been deleted from the machine, and
 `uninstall` never touched them.
 
-The repo side of that is checkable and is checked: those paths are gone from
-the repo, and the git history shows the commit that removed them
-(`c330070`, "chore: clean legacy docs and tools"). The machine side is
-historical: it describes what happened on the machine this repo was developed
-on, and `doc-check` does not and cannot verify another machine's
-`~/.local/bin`.
+The repo side of that is checkable: those paths are gone from the repo, and
+the git history shows the commit that removed them (`c330070`, "chore: clean
+legacy docs and tools"). The machine side is historical: it describes what
+happened on the machine this repo was developed on, and nothing in this repo
+can verify another machine's `~/.local/bin`.
 
 The `[hooks]` block that referenced two of those CLIs is gone too. Nothing now
 gates a remote push or a commit on an `ambient/*` branch, and the
 `~/.jcode/audit.log` trail those hooks maintained has been deleted. The
 config still records the removal in a comment rather than dropping it
-silently, and `doc-check` checks that the block is not live.
+silently; in `config/config.toml` it is a comment, not a live setting.
 
 ## Uninstall
 
@@ -769,266 +772,61 @@ this repo is its only source. To get it back, run `./scripts/install`.
 A refusal to touch the repo is checked before anything is removed, so
 `uninstall` either removes the whole set or removes nothing.
 
-## Testing
+## Verification
+
+There is no automated verification in this repository. What there is:
 
 ```bash
-./scripts/test
-./scripts/doc-check
-./scripts/prompt-verify [baseline-ref]
-./scripts/inject-defect
+./scripts/install --dry-run   # writes nothing, and predicts the real run
+./scripts/install --check     # 6 checks against the live install, writes nothing
+./scripts/install             # the real install
+./scripts/uninstall --dry-run
 ```
 
-`scripts/prompt-verify` is the gate for a prompt-tier compression. It runs
-every check that has to pass before a compressed tier is accepted: the
-protected-content contract, the three size ceilings, the heading structure,
-and the rule check. `scripts/rule-drop` is the part of that gate that
-catches a lost policy, and it is worth knowing what it does and does not
-prove.
+The two read-only modes disagree on purpose. The dry run previews an install
+and skips verification; the check runs the verification and installs nothing.
+The six checks are that the installed config parses, that it is a regular file
+rather than a symlink, that it matches `config/config.toml`, that every repo
+skill is installed, that the installed skills match the repo, and that the two
+prompt files have not drifted from live. Drift is a warning on a normal run
+and a failure under `--check`, because `install` never writes the prompt
+files.
 
-The heading check compares a tier's headings with the baseline's, so a renamed
-heading fails it. Three renames are sanctioned and only three: the overlay's
-`#### 2.2.3` and the skill's `#### 2.3.3` now name the end event, and the
-skill's `#### 2.3.4` names the third read. Every other heading keeps its
-number, its text, and its level.
+A dry run that reports success is a promise the real install keeps. Preflight
+checks the same things in both modes, and a refusal carries the same message
+and the same exit code in both, so the preview never reports a success that
+the real run is going to refuse.
 
-A byte count cannot see a dropped rule, and the first version of the rule
-check could not either. It scored each rule by content-word coverage over the
-whole rewritten file, so a rule whose words survived somewhere else in the
-file counted as kept. That measure was checked against a known answer on
-2026-11-21: deleting one rule at a time from each tier and re-scoring left
-44 of 49 swarm-prompt rules, 146 of 148 overlay rules and 180 of 183 Skill
-rules still reported as kept.
+### What this repository used to check
 
-`rule-drop` asks the stricter question. It joins the wrapped lines of a
-paragraph before splitting it into rules, on both sides of the comparison, so
-a rule that spans two lines is one claim rather than two fragments. It then
-matches each baseline rule against the rewrite's rules, not against all of its
-sentences.
+The gates are in the file history at commit `39ce723`, not in the tree:
 
-`scripts/measure-rule-tools` produces that comparison against a known
-answer, so the figures below can be checked rather than believed. It deletes
-one baseline rule at a time and asks each tool whether it still reports the
-rule as kept. Measured at `5a6b03a` on 2026-11-22, the revision the
-compression pass started from:
+| What it did | What it caught |
+| --- | --- |
+| `scripts/test`, 356 checks | the install and uninstall behaviour, the paths the scripts must not touch, the prompt content, the three size ceilings, the heading structure |
+| `scripts/doc-check`, 193 checks | every claim this README makes about this repository's own behaviour |
+| `scripts/prompt-contract` and `scripts/prompt-contract.json` | 126 protected strings and heading references across the three tiers: 64 in the overlay, 42 in the Skill, 20 in the swarm prompt |
+| `scripts/prompt-verify` | the gate for a prompt compression: the contract, the ceilings, the headings, the rule check, and both suites |
+| `scripts/inject-defect` | proof that the gates fail when they should: 7 of 7 injected defects caught, re-run at `39ce723` |
+| `scripts/rule-drop`, `rule-inventory`, `rule-repair`, `measure-rule-tools` | a rule lost by a rewrite, and the measurement of how well those tools detect one |
 
-| Tier | `rule-inventory` misses | `rule-drop` misses |
-| --- | --- | --- |
-| `config/swarm-prompt.md` | 22 of 30 (73%) | 7 of 34 (21%) |
-| `config/prompt-overlay.md` | 41 of 41 (100%) | 6 of 7 (86%) |
-| `config/skills/swarm-engineering/SKILL.md` | 78 of 78 (100%) | 29 of 113 (26%) |
+The practical consequence is specific: **nothing in this repository can now
+fail because a prompt tier lost a rule.** The rules that survived the
+compression pass are held by the words on this page and by the files
+themselves. When a tier is edited, these are the parts to read first:
 
-The figures this table carried before were measured on 2026-11-21, before the
-two tools changed in six commits, so they are not comparable line for line.
-The overlay's row is a structural fact rather than a tool defect: its
-paragraphs are merged blocks with no blank line between them, so a deleted
-sentence is still covered by the sentences around it, and only 7 of the 31
-rules the tool collects can be deleted cleanly enough for the test to mean
-anything. That is why the overlay's exact strings are held by the
-protected-content contract and not by the rule check.
+- the four thresholds, the read budget and the verification budget, in
+  `config/prompt-overlay.md` sections 2.2.1, 2.2.2 and 2.2.5, and in
+  `config/skills/swarm-engineering/SKILL.md` sections 2.3.1, 2.3.2 and 2.3.5;
+- the end event and the closed set of calls it allows, in overlay section 2.2.3
+  and skill section 2.3.3;
+- the frozen target set and the re-read rule, in overlay section 2.2.4 and
+  skill section 2.3.4;
+- the brief contract in `config/swarm-prompt.md`, and the heading numbers and
+  titles that this README and the three prompt files point at.
 
-`rule-drop` reported no false positives on any tier: after a deletion, it
-never reported a surviving rule as gone. `rule-inventory` reported 5 false
-positives on the swarm prompt.
-
-The two tools collect different rule sets, so each is measured on the rules
-it collects. `rule-inventory` collects a rule per sentence and per bullet
-line. `rule-drop` collects a rule per bullet and per sentence of a paragraph.
-
-It is still a measure, not a proof. A rule whose claim was reworded into
-different words can score below the threshold, and a rule whose claim was
-dropped can survive the threshold because its words appear in an unrelated
-rule. So a passing `rule-drop` is necessary and not sufficient, and the
-protected-content contract is what holds the exact strings.
-
-Both are worth running by hand:
-
-```bash
-./scripts/rule-drop config/swarm-prompt.md --before HEAD
-./scripts/rule-inventory config/swarm-prompt.md --before HEAD
-./scripts/measure-rule-tools config/swarm-prompt.md HEAD
-```
-
-`rule-inventory` is the triage aid, and reports the rules with no counterpart
-along with the ones whose rarest word did not survive. `rule-drop` is the
-gate, and reports the rules that fell below the content-word threshold. The
-gate is run by `prompt-verify`, which fails when `rule-drop` reports a
-dropped rule at all.
-
-### Repairing a thin rule
-
-A rule that scores thin is usually worded differently in the rewrite, not
-missing. The natural repair is to substitute a sentence that carries the
-missing content words, and the natural repair is also where the damage
-happens. A sentence that serves two rules can carry the words of one and
-drop the words of the other.
-
-The case is concrete. In the overlay, "Do not restart the entire lifecycle
-for a localized finding" scores 67 percent. The cheap repair drops the
-enumeration of evidence kinds and scores 100 on its own rule, 106 bytes
-cheaper than the safe repair. But that enumeration is itself a baseline rule
-at 96 percent, and the cheap repair drops it to 52 percent, which is a
-dropped rule. Only the 36-byte repair keeps the enumeration at 96 and lifts
-the lifecycle rule to 100.
-
-Reading does not catch that. Scoring every rule before and after the
-substitution does, because the enumeration rule's score moves.
-
-```bash
-./scripts/rule-repair config/prompt-overlay.md --before HEAD
-./scripts/rule-repair <candidate> --file config/skills/swarm-engineering/SKILL.md --before HEAD
-```
-
-`rule-repair` lists every rule scoring below 75 percent, with its content
-words, the missing words, and the best candidate sentence. With `--repair` it
-takes a JSON file of proposed substitutions and measures each one against the
-whole file. A repair is usable only if it lifts the target rule and leaves
-every other rule's score unchanged or higher. One that trades a rule for
-another is rejected with the rule it broke named.
-
-The best candidate it prints is the sentence that shares the most content
-words with the rule, not the sentence that expresses the claim. Use it to
-find where the words are, not to decide which sentence carries the claim.
-
-### Proving the gate fails
-
-A gate that passes tells you nothing until you know it fails when it should.
-`scripts/inject-defect` injects one defect at a time into the three tiers and
-checks that each is caught: a dropped protected string, a changed protected
-heading, a `section 7A` reference, a heading that gains trailing
-punctuation, a long line, and trailing whitespace. Every file is restored
-after each injection and again at the end.
-
-Two findings came out of running it. A line over the width the file uses is
-caught by `scripts/test` but not by the contract, because the contract holds
-strings and headings and says nothing about layout. And a heading with
-trailing prose produces two independent failures in one edit, a
-`not_contains` violation and a heading-shape violation, while the heading
-count does not move. A checker that counts headings misses it.
-
-`scripts/test` runs the real `scripts/install` and `scripts/uninstall`, not a
-copy of their logic. Every check drives the actual script with `HOME` pointed
-at a throwaway directory and asserts on the real output and the real filesystem
-state. The sandbox is removed on exit, and the real `~/.jcode` is never
-touched.
-
-It covers the paths that are easy to get wrong: that `--dry-run` and
-`--check` write nothing, that `--dry-run` exits 0 on a clean `HOME`, that
-neither dry-run claims it installed or removed something, that a real install
-writes all three of config, skills and state, that a second install changes
-nothing, and that `uninstall` never reaches the jcode binary.
-
-It also covers the files this repo does not manage. One artifact per
-category is planted, and the suite asserts that the install and
-`uninstall --full` both leave every one of them byte-identical: the
-sessions, the goal history, `servers.json`, `mcp.json`, `~/AGENTS.md`,
-the binary, and a skill this repo does not own.
-
-And it covers the dependency check. The installer parses the config with
-`tomllib`, so `python3` has to be 3.11 or newer. The suite runs the
-installer against a `python3` that reports itself as 3.10 and asserts
-that preflight refuses it, that the refusal names the version, and that
-nothing was written when it refused.
-
-It also checks fidelity. For each shape of home directory, the `--dry-run`
-and the real install have to reach the same verdict, because a preview that
-promises a success the real run cannot deliver is worse than no preview.
-That includes the repo boundary: a dry run against a redirected path refuses
-the same way the real run does.
-
-It also covers the edges of the skill list. A repo with no skills at all
-installs cleanly and records an empty list, and a repo with two skills
-installs and removes both of them.
-
-And it checks the repo boundary. The scripts are pointed at a throwaway copy
-of this repo with `~/.jcode` symlinked into it, and the suite asserts that
-the copy comes out byte-identical, that the scripts exit non-zero, and that
-a refused uninstall removes nothing at all.
-
-It also checks the two ways the live config can be wrong. A live `config.toml`
-that is a symlink is refused by name, and the suite asserts the file it
-points at comes out byte-identical. A live config whose content has drifted
-from `config/config.toml` is reported by `--check` as a failure, and a real
-install puts the repo's copy back.
-
-It also checks the read-phase safeguard. Section 30 asserts that all three
-prompt files carry the rule, that they quote the same measured numbers, and
-that every budget they quote is 45 tool calls or 20 tool calls. The legacy swarm
-safeguard is asserted still to be present, because the two are separate
-mechanisms and this one does not replace it.
-
-Section 31 does the same for the verification phase. It asserts that all three
-prompt files carry that rule, that the developer exit criteria, the tester
-exit criteria and the coordinator's own bullet point at it, and that the three
-of them quote the same post-write tail.
-
-The assertions against the prompt files match across line breaks rather than
-line by line. A Markdown file is hard-wrapped prose, so a sentence's words
-routinely straddle a line break, and a check that matched the current
-wrapping would be a test of the wrapping rather than of the claim. Matching
-the sentence means re-wrapping a paragraph does not break the suite, while a
-reworded claim still does.
-
-`scripts/doc-check` checks the other direction. It reads this README and
-turns its claims into assertions: that the phase list matches the installer's
-real phases, that the refusal message quoted above is the message the
-installer actually prints, that the paths this section lists are the paths
-that are refused, and that a refusal leaves the repo byte-identical. It fails
-if this file and the scripts disagree.
-
-It also checks the claims that only this repo can check. The historical
-statement about the removed helper CLIs is verified against the git history
-and against the current tree, and the config's record of the removed
-`[hooks]` block is checked to be a record and not a live block. The
-`scripts/test` header is compared against that file's own section banners,
-so the list of checks cannot quietly stop describing the file.
-
-It also checks the read-phase section of this README. The claims it makes
-are quoted back and asserted, the section numbers it points at are checked
-against the actual headings in the prompt files, and the headings are checked
-by number *and* title, because a section can keep its number and change
-what it holds.
-
-It checks the verification-phase section of this README the same way: its
-claims are quoted back and asserted, the section numbers it points at are
-checked against the actual headings in the prompt files, and the headings are
-checked by number *and* title.
-
-That matters because a README can drift from the code while every other test
-still passes. A claim in prose has no test behind it unless something checks
-it, and a check that only reads this file would only prove the file is
-self-consistent. So `doc-check` runs the real scripts and compares what they
-do against what is written here.
-
-A refusal has to be a refusal, not just a failure. The boundary checks ask
-whether the installer refused *for the repo boundary*, not whether it exited
-non-zero. An installer that failed for some unrelated reason would satisfy a
-weaker check, and the boundary claim would look proven by a script that never
-checked a single path. The refusal also has to name the path it is about, so
-a refusal about some other path cannot satisfy a check about this one.
-
-The fingerprint those checks rest on hashes file *content*, not file size.
-A size-only fingerprint misses any change that keeps the same length, and
-`state.json` is exactly that case: a different timestamp of exactly the same
-length.
-
-Every check has been shown to fail against the code it is meant to catch:
-each fix was reverted in a scratch copy and the suite was confirmed to fail
-against the broken code. The same is true of the claims in this README that
-are about this repo's own behavior: each one has been broken in a scratch
-copy and confirmed to fail the check written for it.
-
-That last sentence is scoped to the claims this repo can check. It does not
-cover the two kinds of claim that no script in this repo could ever break:
-
-- The provider measurements above, which are computed from a production log
-  on one machine. The analysis script is kept outside this repo and is
-  reproduced by hand against that log, not by `doc-check`.
-- The historical statements about what happened on the development machine,
-  such as the removed helper CLIs. `doc-check` checks the repo side of
-  those claims, which is the part that can still be wrong. It cannot check
-  what another machine's `~/.local/bin` contains.
-
-Exit code 0 means every check passed.
+`git show 39ce723:scripts/prompt-contract.json` returns the contract, and
+`git show 39ce723:scripts/test` returns the suite, if either is wanted back.
 
 ## Requirements
 
