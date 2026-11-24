@@ -88,12 +88,9 @@ is the small part. The rest of the value is structural: the overlay is a
 system-prompt layer that can be edited on its own, and the two files have
 different reload behaviour, described below.
 
-Those byte counts describe one revision and will drift. The current sizes are
-not the measured ones above, because the tiers have changed since: the bounded
-investigation, read-phase and verification-phase safeguards were added after
-the measurement, and a later compression pass brought all three tiers back
-under their ceilings. Check the live sizes against the files themselves,
-`wc -c`, before trusting any figure in this file.
+Those byte counts describe one revision and will drift. The sizes in the table
+below are measured again after every change to the tiers. Check them against
+the files themselves, `wc -c`, before trusting any figure in this file.
 
 The swarm prompt's size is the one that matters for cost, because it is sent on
 every request in every session. It is held under a ceiling, and the ceiling is
@@ -102,33 +99,25 @@ a number to check by hand rather than a judgement to leave to review.
 All three tiers are held under a ceiling now, at the size each one can carry
 without losing policy:
 
-| Tier | Ceiling | Size at `235b19b` | Why its bytes cost |
-| --- | --- | --- | --- |
-| `config/swarm-prompt.md` | 6,000 | 5,999 | sent on every request in every session |
-| `config/prompt-overlay.md` | 33,500 | 33,490 | loaded once per session |
-| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 37,091 | loaded only when the Skill is activated |
+| Tier | Ceiling | Size now | Headroom | Why its bytes cost |
+| --- | --- | --- | --- | --- |
+| `config/swarm-prompt.md` | 6,000 | 5,959 | 41 | sent on every request in every session |
+| `config/prompt-overlay.md` | 33,500 | 33,180 | 320 | loaded once per session |
+| `config/skills/swarm-engineering/SKILL.md` | 37,500 | 35,934 | 1,566 | loaded only when the Skill is activated |
 
 The swarm prompt's ceiling is the strict one, because it is the only tier whose
 bytes are paid on every request, and the two always-on tiers sit close to
-theirs: 1 byte of headroom on the swarm prompt and 10 on the overlay, as of
-the revision named in the table. `wc -c` against the files themselves is the
-check now. Nothing fails when a tier grows past its number; the number is here
-so that the growth is visible.
+theirs. `wc -c` against the files themselves is the check now. Nothing fails
+when a tier grows past its number; the number is here so that the growth is
+visible.
 
-A ceiling is a measured target, not a guess. The overlay and the Skill
-each carry a ceiling that is the size of the compressed file rounded up to
-the next 500 bytes, plus 500 bytes of working margin, so a file that grows
-well past the size it actually needs is visible. The swarm prompt keeps the
-6,000 it was given rather than a re-derived number. That is deliberate,
-because it is the only tier whose bytes are paid on every request and the
-strictest number is the one worth keeping there.
-
-A ceiling derived from the current size is a change detector, not a budget:
-it cannot tell you that a file is too large for its purpose, only that it
-grew. The first set of ceilings was measured against the upstream files,
-before the bounding rules existed, and it was never re-derived after the
-bounding machinery grew the overlay and the Skill. The numbers above are the
-re-measured ones.
+A ceiling is a measured target, not a guess. The three ceilings were
+re-measured at revision `349d065`, where the files weighed 5,999, 33,490 and
+37,091 bytes, and each ceiling is that size rounded up to the next 500 bytes:
+6,000, 33,500 and 37,500. The ceilings do not move with the files; the sizes
+in the table do. A ceiling derived from the current size would be a change
+detector rather than a budget: it could tell you that a file grew, but not
+that it is too large for its purpose.
 
 The structure of the tiers was asserted the same way, by a suite that is no
 longer in the tree. What it checked is worth keeping in the reader's head:
@@ -202,7 +191,7 @@ directory. It is a read-only script, and the pairing rule it applies is
 described below. Running it against the same log window reproduces the
 figures: 694 paired rows, 105 shape groups, 24 split groups, and the delta
 histogram `{1: 3, 107: 1, 108: 16, 109: 4}`. What is *not* reproducible is
-anything that needed the captured wire bodies, because that capture set was
+anything that relied on the captured wire bodies, because that capture set was
 deleted. The section below says which is which.
 
 The pairing rule matters here, so it is stated rather than assumed. The log
@@ -317,6 +306,8 @@ named thresholds rather than a judgement call. The first match wins:
 | Budget reached | The tool-call budget is spent. Report what is done, mark the rest unverified, stop. |
 | Blocked | The next question needs access the worker does not have. Report the blocker, do not widen the search. |
 
+**A lane that is blocked at the budget ends on "blocked", not "budget reached".**
+
 A new question reopens a closed investigation only when it could change a
 verdict already reported, contradicts evidence already collected, or covers
 an acceptance criterion never checked. "It would be nice to confirm" is not
@@ -335,6 +326,7 @@ The escalation order is fixed:
 1. Check the lane with `swarm list`, which shows status, last activity age,
    and stall state.
 2. Message the lane, asking for what it has with the rest marked unverified.
+   Name the requirement it still owes, and say it must not open new targets.
 3. Do not repeat the message. A worker that ignored one request to wrap up
    has shown it will not honour a soft instruction.
 4. `swarm stop` the lane. The coordinator owns its own spawned workers, so
@@ -368,7 +360,8 @@ bound. A direct task has no brief, so nothing bounded its read phase. That is
 where the same failure appeared, and it was the larger half of it.
 
 The evidence, from a corpus of 334 sessions with at least 20 messages, 191 of
-them root sessions and 143 swarm workers:
+them root sessions and 143 swarm workers. Every figure in the table below is a
+measurement of this repository's own corpus of sessions, not a budget:
 
 | Measurement | Value |
 | --- | --- |
@@ -378,7 +371,7 @@ them root sessions and 143 swarm workers:
 | Read-tool calls that repeated a path already read in full earlier in the same session | 43% of 7,269 |
 | Sessions containing at least one repeated read | 44% |
 | Tool calls before the first mutation, median | 39 |
-| Sessions whose first mutation came after more than 60 calls | 31% |
+| Sessions whose first mutation came after more than 60 calls, measured in that corpus | 31% |
 | Tool calls *after* the last mutation, median | 14 |
 | Worst observed tail after the last mutation | 774 calls, with the target change unimplemented |
 
@@ -394,11 +387,14 @@ state, not a sentence the agent writes. A threshold is met, the phase is over,
 and the next call is bound whether or not the agent says so. The next call is
 one of four: the implementation action the end event was about, a validation
 or test action, a plan or todo write when the task asked for one, or the
-report. It is not another read of the same subject. One exception per phase,
-and only before the budget is spent: when a named acceptance criterion is still
-unanswered, one targeted read that answers it is allowed, and that read is the
-last of the phase. A second request for another look is an escalation, not a
-read.
+report. It must not be another read, search, or browse of the same subject.
+One exception per phase, and only before the budget is spent: when a named
+acceptance criterion is still unanswered, one targeted read that answers it is
+allowed, and that read is the last of the phase. The same rule governs a
+declaration of incompleteness ("I have the implementation shape, but I need to
+check the migration"): it licenses exactly one read with a named target, and a
+second read is not licensed. A second request for another look is an
+escalation, not a read.
 
 **A direct task has a frozen target set and a budget.**
 The target set is frozen when it is written, and it is written before the
@@ -407,7 +403,8 @@ acceptance criteria and their source, the files the change touches, the
 conventions to follow, and the risk that could change the approach. When every
 item has a verdict, the read phase is over. A question that appears later is an
 uncovered item, or one logged target-set change, which counts against the
-budget.
+budget. Broadening the target set after the verdict is established, beyond that
+one logged change, is a reportable failure, not diligence.
 
 The end criterion is countable in both phases. Every target item and every
 acceptance criterion ends with a conclusion that names its source: a file and
@@ -460,7 +457,7 @@ The verification phase ends at the first of four conditions.
 | --- | --- |
 | Criteria checked | Every acceptance criterion has been checked, and the evidence recorded. |
 | A check that cannot fail | A check that passes whatever happens is not evidence. Repair it, run it once, move on. |
-| A question that could change the result | The remaining question is worth a call only if its answer would change what is delivered. |
+| A question that could change the result | The remaining question is worth a call only if its answer would change what is delivered. That is implementation work, not verification: make the change, then verify the criterion it affects. If it cannot, it is not a reason to keep verifying. |
 | The budget reached | The budget is spent. Report what was verified, and mark the rest unverified. |
 
 The verification phase has a target set too, and it is the acceptance criteria:
@@ -485,7 +482,7 @@ than one that claims everything was checked.
 | File | What it holds |
 | --- | --- |
 | `config/prompt-overlay.md` | Section 2.2.5 bounds the verification phase. |
-| `config/swarm-prompt.md` | The coordinator's own tail, and the lane's completion criteria as its verification target set. |
+| `config/swarm-prompt.md` | The coordinator's own tail, and the lane's acceptance criteria as its verification target set. |
 | `config/skills/swarm-engineering/SKILL.md` | Section 2.3.5 carries the same rule for a worker, with the developer and tester exit criteria and a coordinator bullet in section 11 pointing at it. |
 
 The same limit applies as before: these are model-guidance rules, not runtime
@@ -502,14 +499,14 @@ completeness.
 | Rule | Audience | Trigger | End | Exception | Enforcer | Where it is stated |
 | --- | --- | --- | --- | --- | --- | --- |
 | Threshold | both | One of four thresholds is met: target exhausted, verdict established, budget reached, or blocked. | The investigation ends; the next call is bound by the closed set. | none | The report names the threshold; the coordinator checks it against the target list and budget. | `config/prompt-overlay.md` section 2.2.1 and `config/skills/swarm-engineering/SKILL.md` section 2.3.1, both titled "Evidence Thresholds" |
-| Budget | both | The number is written down before the first read: 45 tool calls for a direct task, scaled at 5 tool calls per target item, floor 20, cap 45, 20 tool calls for an investigation lane, 2 tool calls per acceptance criterion capped at 20 for verification. | The budget is spent; the report is the only action left. | none | The brief carries the number; only a coordinator raises one, before dispatch. The coordinator's own read phase follows the same rules. | `config/prompt-overlay.md` section 2.2.2 and `config/skills/swarm-engineering/SKILL.md` section 2.3.2, both titled "Tool-Call Budgets"; the skill's read budget is in section 11 and its verification budget in section 2.3.5; `config/swarm-prompt.md`, brief contract, evidence budget |
+| Budget | both | Each budget is written down when its phase starts: the direct task's read budget, 45 tool calls scaled at 5 tool calls per target item with a floor of 20 and a cap of 45, set before the first read; an investigation lane's 20 tool calls, set before the work starts; the verification budget, 2 tool calls per acceptance criterion capped at 20, set before the verification phase starts. | The budget is spent; the report is the only action left. | The one exception is licensed before the budget is spent. | The brief carries the number; only a coordinator raises one, before dispatch. The coordinator's own read phase follows the same rules. | `config/prompt-overlay.md` section 2.2.2 and `config/skills/swarm-engineering/SKILL.md` section 2.3.2, both titled "Tool-Call Budgets"; the skill's read budget is in section 11 and its verification budget in section 2.3.5; `config/swarm-prompt.md`, brief contract, evidence budget, and the coordinator's own read phase for its 45-call read budget |
 | End event | both | A threshold is met. The end event does not wait for an announcement: an agent that met a threshold is bound whether or not it says so. | The phase ends; the next call is bound. | none | The report records the end event; the coordinator checks the next call. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action"; `config/swarm-prompt.md`, the coordinator's own read phase |
 | Closed set | both | The end event has happened. | The next call is one of four: the implementation action the end event was about, a validation or test action, a plan or todo write when the task asked for one, or the report. | one targeted read that answers a named acceptance criterion | The report shows the next call; the coordinator stops a lane that reads. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
-| One exception | both | A named acceptance criterion is still unanswered when the end event happens, and the budget is not yet spent. | One more targeted read answers it, and that read is the last of the phase. A second request for another look is an escalation, not a read. | none | The report names the criterion and the read; the coordinator takes the escalation. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action" |
-| Frozen target set | both | Before the first read the target set is written. Each item is a path and the question it answers: the acceptance criteria and their source, the files the change touches. | Every item has a verdict, or the item is listed as uncovered in the report. | one logged target-set change, which counts against the budget | The brief carries the target list; the report lists the items not covered; the coordinator stops a widened set. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/swarm-prompt.md`, brief contract, target list; `config/skills/swarm-engineering/SKILL.md` section 2.3.1 Evidence Thresholds |
+| One exception | both | A named acceptance criterion is still unanswered when the end event happens. The same rule governs a declaration of incompleteness. | One more targeted read answers it, and that read is the last of the phase. A second request for another look is an escalation, not a read. | none | The report names the criterion and the read; the coordinator takes the escalation. | `config/prompt-overlay.md` section 2.2.3 and `config/skills/swarm-engineering/SKILL.md` section 2.3.3, both titled "The End Event Binds the Next Action"; the precondition that the budget is not yet spent is stated in section 2.2.2 and section 2.3.2, where the budget lives |
+| Frozen target set | both | Before the first read the target set is written. Each item is a path and the question it answers: the acceptance criteria and their source, the files the change touches. | Every item has a verdict, or the item is listed as uncovered in the report. | one logged target-set change, which counts against the budget; broadening the target set after the verdict is established, beyond that one logged change, is a reportable failure, not diligence | The brief carries the target list; the report lists the items not covered; the coordinator stops a widened set. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/swarm-prompt.md`, brief contract, target list; `config/skills/swarm-engineering/SKILL.md` section 2.3.1 Evidence Thresholds |
 | Re-read rule | both | A path is read again. The count is by path, not by call, so a slice, a grep, or a search over a path already read in full counts as a read of that path. | The third read of the same path stops it; the second read needs a stated reason. | one second read of the same path, with a stated reason | The report records the reads; the coordinator stops the third. | `config/prompt-overlay.md` section 2.2.4 Bounding the Read Phase of a Direct Task; `config/skills/swarm-engineering/SKILL.md` section 2.3.4 No Third Read of the Same Path; `config/swarm-prompt.md`, the coordinator's own read phase |
 | Verification phase | both | The deliverable is written. The target set is the acceptance criteria, one check each, run as the project's own checks. | The first of four conditions: criteria checked, a check that cannot fail, a question that could change the result, or the budget of 2 tool calls per acceptance criterion reached. | none | The report names each criterion checked and each left unverified. | `config/prompt-overlay.md` section 2.2.5 and `config/skills/swarm-engineering/SKILL.md` section 2.3.5, both titled "Bounding the Verification Phase"; `config/swarm-prompt.md`, the coordinator's own tail |
-| Lane conclusion | lane | The lane's budget is spent, or its target set is answered. An open question becomes a coordinator task only when it affects a declared acceptance criterion. | The lane ends with a conclusion and the items it did not cover. | none | The coordinator closes the lane and records the uncovered items in the todo row. | `config/prompt-overlay.md` section 12.6 Investigation Management and section 12.8 Enforcing a Lane's Bound; `config/swarm-prompt.md`, brief contract, stop condition; `config/skills/swarm-engineering/SKILL.md` section 11.1 Stopping a Lane That Overran Its Brief, for a lane stopped at its bound |
+| Lane conclusion | lane | The lane ends on one of the four thresholds: target exhausted, verdict established, budget reached, or blocked, and the worker names the one that ended it. An open question becomes a coordinator task only when it affects a declared acceptance criterion. | The lane ends with a conclusion and the items it did not cover. | none | The coordinator closes the lane and records the uncovered items in the todo row. A lane ending on "budget reached" or "target exhausted" is a completed lane with a reported gap; one ending on "verdict established" is a completed lane; one ending on "blocked" is a completed lane with a reported blocker. | `config/prompt-overlay.md` section 12.6 Investigation Management and section 12.8 Enforcing a Lane's Bound; `config/swarm-prompt.md`, brief contract, stop condition; `config/skills/swarm-engineering/SKILL.md` section 11.1 Stopping a Lane That Overran Its Brief, for a lane stopped at its bound |
 | Brief completeness | root | A brief is written for a lane. | The brief carries the role and objective, the scope, the evidence, the acceptance criteria, the validation, the ownership, the dependencies, the report contract, the target list, the evidence budget and the stop condition. A brief without a target list, an evidence budget, or a stop condition is not ready to dispatch. | none | The coordinator names the missing field instead of assuming it. | `config/prompt-overlay.md` section 12.5 Assignment Brief; `config/swarm-prompt.md`, brief contract |
 
 ## Native review surfaces
@@ -560,8 +557,12 @@ The one-shot children are created with `autoreview_enabled` and
 `autojudge_enabled` set to false, so a review does not spawn a review of
 itself.
 
-This is why the overlay, the skill, and `swarm-prompt.md` tell the agent to
-request a review with `now` instead of assuming the flag produced one.
+This is why the overlay, the skill and `swarm-prompt.md` all tell the agent not
+to assume the flag produced a review. The skill asks for the review with
+`/autoreview now` or `/review`; the overlay says in its report that
+independent verification is required and lets the user run `/autoreview now`;
+`swarm-prompt.md` says the commands are typed by the user and names the review
+in the report.
 
 ## Install
 
@@ -822,8 +823,8 @@ themselves. When a tier is edited, these are the parts to read first:
   `config/skills/swarm-engineering/SKILL.md` sections 2.3.1, 2.3.2 and 2.3.5;
 - the end event and the closed set of calls it allows, in overlay section 2.2.3
   and skill section 2.3.3;
-- the frozen target set and the re-read rule, in overlay section 2.2.4 and
-  skill section 2.3.4;
+- the frozen target set, in overlay section 2.2.4 and skill section 2.3.1, and
+  the re-read rule, in overlay section 2.2.4 and skill section 2.3.4;
 - the brief contract in `config/swarm-prompt.md`, and the heading numbers and
   titles that this README and the three prompt files point at.
 
