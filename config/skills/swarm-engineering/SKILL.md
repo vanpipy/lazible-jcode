@@ -45,7 +45,8 @@ unrelated modules for context.
 #### 2.3.1 Evidence Thresholds
 
 **Sufficiency has to be decidable, not a judgement call.** Use the thresholds
-in section 2.3.1 and name the one that ended the investigation.
+in section 2.3.1, checked in order; the first match wins, and name the one
+that ended the investigation.
 
 The target set is written before the first read and frozen when it is written.
 Each item is a path and the question it answers. A question that appears
@@ -189,7 +190,7 @@ outside the assignment.
 
 ### 2.7 Code Health and Change Risk Assessment
 
-They support the
+These support the
 Coordinator's policy in `prompt-overlay.md` and do not replace the assignment's
 requirements or authorize unrelated refactoring.
 
@@ -634,8 +635,9 @@ A complete assignment should specify label, role, objective, context, known
 facts and evidence, open questions, scope, out-of-scope boundaries,
 constraints, expected output, acceptance criteria, dependencies, ownership, a
 target list, an evidence budget, a stop condition (the exit criteria the role
-lists below name), and validation expectations. A brief without a target list,
-an evidence budget, or a stop condition is not ready to dispatch.
+lists below name), a report contract, and validation expectations. A brief
+without a target list, an evidence budget, or a stop condition is not ready to
+dispatch.
 
 If essential information is missing, identify it. Do not compensate for an
 unclear assignment with unbounded investigation.
